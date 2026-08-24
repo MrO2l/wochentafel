@@ -62,6 +62,14 @@
   </div>
 </div>
 
+<!-- AP0.2 (Bootstrap-Migrationsplan): vendor/bootstrap/js/bootstrap.bundle.min.js war bislang
+     nirgends eingebunden (totes Vendor-Asset). Hier erstmals real geladen, weil AP0.4 (natives
+     Bootstrap-Tab-Pattern fuer die Login-/Registrierungs-Tabs, data-bs-toggle="tab") direkt im
+     Anschluss dessen Tab-Komponente benoetigt -- siehe dortiger Kommentar/Commit. In diesem
+     Zwischenstand (nur die Einbindung, noch kein data-bs-toggle im Markup) ist das Skript geladen,
+     aber noch ungenutzt: es registriert lediglich seine eigenen document-weiten Event-Delegationen,
+     ohne dass etwas im aktuellen Markup sie bislang auslöst. -->
+<script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script src="login.js"></script>
 </body>
 </html>
