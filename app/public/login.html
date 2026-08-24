@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Anmelden – Familien-Wochenplan</title>
+<!-- AP0.3 (Bootstrap-Migrationsplan): Bootstrap/Bootstrap Icons/Open Sans lokal vendored, analog
+     index.html (Zeile 8ff. dort) -- fehlte auf dieser Seite bislang komplett (siehe plan.md,
+     "Ausgangslage"), wodurch form-control/form-label sowie das native Bootstrap-Tab-Pattern (siehe
+     unten) hier nicht funktionierten. Reihenfolge wie in index.html: Bootstrap-CSS zuerst, danach
+     style-v2.css/style.css, damit die eigenen Regeln bei gleicher Spezifitaet wie gewohnt gewinnen. -->
+<link rel="stylesheet" href="vendor/bootstrap/css/bootstrap.min.css">
+<link rel="stylesheet" href="vendor/bootstrap-icons/bootstrap-icons.css">
+<link rel="stylesheet" href="vendor/fonts/open-sans/open-sans.css">
 <!-- style-v2.css muss VOR style.css geladen werden: style.css leitet seine eigenen
      Bildschirm-Variablen (u.a. --accent, --border-color, --radius) inzwischen komplett auf die
      Design-v2-Variablen aus style-v2.css um (siehe :root-Kommentar dort) und faellt ohne sie auf
@@ -15,43 +23,62 @@
 </head>
 <body>
 <div class="auth-wrap">
-  <div class="auth-card">
+  <div class="auth-card tab-content">
     <h1>Familien-Wochenplan</h1>
     <p class="lead">Ein Plan für die ganze Familie – am Rechner ausfüllen, auf A4 ausdrucken, vom Handy nachschauen.</p>
 
-    <div class="tabs">
-      <button id="tabLogin"    aria-selected="true">Anmelden</button>
-      <button id="tabRegister" aria-selected="false">Neu hier</button>
+    <!-- AP0.4: natives Bootstrap-Tab-Pattern (data-bs-toggle="tab") statt reiner Handklick-Logik.
+         Bootstraps Tab-Komponente (vendor/bootstrap/js/bootstrap.bundle.min.js, AP0.2) verwaltet
+         role="tab"/aria-selected/tabindex auf den Buttons sowie role="tabpanel" auf dem Ziel-
+         Panel selbststaendig (setzt sie nur, wenn nicht bereits vorhanden -- hier trotzdem
+         explizit im Markup gesetzt, fuer Klarheit/No-JS-Fallback) und bringt Pfeiltasten-/Home-/
+         End-Tastaturnavigation zwischen den Tabs automatisch mit (siehe Kommentar in login.js).
+         Wichtig: der jeweils anfangs aktive Trigger-Button braucht zusaetzlich class="active"
+         (nicht nur aria-selected="true") -- Bootstraps Tab-Komponente ermittelt darueber, welcher
+         zuvor aktive Tab beim naechsten Wechsel deaktiviert werden muss (".active[data-bs-toggle]"-
+         Selektor intern); ohne das blieb beim ersten Tab-Wechsel das alte Panel faelschlich
+         sichtbar (in der Regressionspruefung so aufgefallen und hier korrigiert).
+         Die eigene .tabs-Optik (Taupe-Palette, siehe style.css) bleibt unangetastet: es werden
+         gezielt nur role/data-bs-*-Attribute ergaenzt, keine Bootstrap-eigenen .nav/.nav-tabs-
+         Klassen uebernommen -- das waere eine optische Neugestaltung gewesen, die hier
+         ausdruecklich nicht beauftragt ist. -->
+    <div class="tabs" role="tablist">
+      <button id="tabLogin" type="button" role="tab" aria-selected="true" class="active"
+              data-bs-toggle="tab" data-bs-target="#formLogin" aria-controls="formLogin">Anmelden</button>
+      <button id="tabRegister" type="button" role="tab" aria-selected="false"
+              data-bs-toggle="tab" data-bs-target="#formRegister" aria-controls="formRegister">Neu hier</button>
     </div>
 
-    <form id="formLogin">
-      <label for="le">E-Mail</label>
-      <input id="le" type="email" autocomplete="username" required>
-      <label for="lp">Passwort</label>
-      <input id="lp" type="password" autocomplete="current-password" required>
+    <form id="formLogin" class="tab-pane active" role="tabpanel" aria-labelledby="tabLogin">
+      <label for="le" class="form-label">E-Mail</label>
+      <input id="le" type="email" class="form-control" autocomplete="username" required>
+      <label for="lp" class="form-label">Passwort</label>
+      <input id="lp" type="password" class="form-control" autocomplete="current-password" required>
       <button class="legacy-btn primary" type="submit">Anmelden</button>
     </form>
 
-    <form id="formRegister" hidden>
-      <label for="rn">Dein Name</label>
-      <input id="rn" type="text" autocomplete="name" required>
-      <label for="re">E-Mail</label>
-      <input id="re" type="email" autocomplete="username" required>
-      <label for="rp">Passwort (mindestens 10 Zeichen)</label>
-      <input id="rp" type="password" autocomplete="new-password" minlength="10" required>
+    <form id="formRegister" class="tab-pane tab-content" role="tabpanel" aria-labelledby="tabRegister">
+      <label for="rn" class="form-label">Dein Name</label>
+      <input id="rn" type="text" class="form-control" autocomplete="name" required>
+      <label for="re" class="form-label">E-Mail</label>
+      <input id="re" type="email" class="form-control" autocomplete="username" required>
+      <label for="rp" class="form-label">Passwort (mindestens 10 Zeichen)</label>
+      <input id="rp" type="password" class="form-control" autocomplete="new-password" minlength="10" required>
 
-      <div class="tabs tabs-mode">
-        <button type="button" id="modeNew"    aria-selected="true">Neuer Haushalt</button>
-        <button type="button" id="modeInvite" aria-selected="false">Einladung</button>
+      <div class="tabs tabs-mode" role="tablist">
+        <button type="button" id="modeNew" role="tab" aria-selected="true" class="active"
+                data-bs-toggle="tab" data-bs-target="#boxNew" aria-controls="boxNew">Neuer Haushalt</button>
+        <button type="button" id="modeInvite" role="tab" aria-selected="false"
+                data-bs-toggle="tab" data-bs-target="#boxInvite" aria-controls="boxInvite">Einladung</button>
       </div>
 
-      <div id="boxNew">
-        <label for="rh">Name des Haushalts</label>
-        <input id="rh" type="text" placeholder="Familie Muster">
+      <div id="boxNew" class="tab-pane active" role="tabpanel" aria-labelledby="modeNew">
+        <label for="rh" class="form-label">Name des Haushalts</label>
+        <input id="rh" type="text" class="form-control" placeholder="Familie Muster">
       </div>
-      <div id="boxInvite" hidden>
-        <label for="ri">Einladungscode</label>
-        <input id="ri" type="text" placeholder="A1B2C3D4E5" class="upper">
+      <div id="boxInvite" class="tab-pane" role="tabpanel" aria-labelledby="modeInvite">
+        <label for="ri" class="form-label">Einladungscode</label>
+        <input id="ri" type="text" class="form-control upper" placeholder="A1B2C3D4E5">
       </div>
 
       <button class="legacy-btn primary" type="submit">Konto anlegen</button>
@@ -62,13 +89,6 @@
   </div>
 </div>
 
-<!-- AP0.2 (Bootstrap-Migrationsplan): vendor/bootstrap/js/bootstrap.bundle.min.js war bislang
-     nirgends eingebunden (totes Vendor-Asset). Hier erstmals real geladen, weil AP0.4 (natives
-     Bootstrap-Tab-Pattern fuer die Login-/Registrierungs-Tabs, data-bs-toggle="tab") direkt im
-     Anschluss dessen Tab-Komponente benoetigt -- siehe dortiger Kommentar/Commit. In diesem
-     Zwischenstand (nur die Einbindung, noch kein data-bs-toggle im Markup) ist das Skript geladen,
-     aber noch ungenutzt: es registriert lediglich seine eigenen document-weiten Event-Delegationen,
-     ohne dass etwas im aktuellen Markup sie bislang auslöst. -->
 <script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script src="login.js"></script>
 </body>

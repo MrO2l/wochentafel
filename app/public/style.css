@@ -94,16 +94,53 @@ button,input,select{font:inherit}
 
 /* ---------------- Anmeldeseite ---------------- */
 .auth-wrap{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px}
-.auth-card{background:var(--surface); border-radius:14px; box-shadow:0 6px 28px rgba(0,0,0,.12); padding:26px 28px; width:100%; max-width:420px}
-.auth-card h1{margin:0 0 4px; font-size:21px; color:var(--accent)}
-.auth-card p.lead{margin:0 0 18px; color:var(--muted); font-size:14px}
+/* line-height:normal hier bewusst explizit (AP0.3, Bootstrap-Migrationsplan): Bootstraps Reboot
+   setzt global eine line-height von 1.5 auf body, die zuvor (ohne Bootstrap-CSS) gar nicht
+   existierte -- jedes Kindelement ohne eigene line-height (p.lead, label, .msg, Tab-/Legacy-Buttons,
+   Inputs) erbte vorher stattdessen den Browser-Standard "normal" (~1.2). Ohne diese Ergaenzung
+   wuerde die Karte insgesamt spuerbar hoeher werden und dadurch (ueber die vertikale Zentrierung in
+   .auth-wrap) komplett anders positioniert sein, obwohl keine einzelne Regel absichtlich geaendert
+   wurde -- im Regressionstest gegen die AP0.0-Baseline so aufgefallen (Karte 20px hoeher). h1 ist
+   davon nicht betroffen: Bootstrap setzt dafuer ohnehin eine eigene, direkte h1{line-height:1.2}-
+   Regel, die staerker wirkt als eine vererbte Eigenschaft. */
+.auth-card{background:var(--surface); border-radius:14px; box-shadow:0 6px 28px rgba(0,0,0,.12); padding:26px 28px; width:100%; max-width:420px; line-height:normal}
+/* font-weight hier bewusst explizit (AP0.3, Bootstrap-Migrationsplan): seit login.html Bootstrap-
+   CSS einbindet, greifen dessen Reboot-/Utility-Defaults fuer diese Elemente (h1{font-weight:500}
+   bzw. .lead{font-weight:300}), die zuvor mangels Bootstrap-CSS gar nicht existierten -- vorher
+   fiel h1 auf den Browser-Standard fuer Ueberschriften (bold/700) zurueck, p.lead auf normal/400.
+   Ohne diese Ergaenzung wuerde sich die Schriftbreite minimal aendern und den Zeilenumbruch des
+   Lead-Absatzes verschieben (im Regressionstest gegen die AP0.0-Baseline so aufgefallen) --
+   deshalb hier explizit auf die bisherigen Werte zurueckgesetzt, keine optische Aenderung. */
+.auth-card h1{margin:0 0 4px; font-size:21px; font-weight:700; color:var(--accent)}
+.auth-card p.lead{margin:0 0 18px; color:var(--muted); font-size:14px; font-weight:400}
 .auth-card label{display:block; font-size:13px; color:var(--muted); margin:12px 0 4px}
 /* Design-Mischmasch-Fix, vierte Runde (ANORAK-Rueckmeldung 2026-08-19): #c3c9d0/#f7f8fa waren
    eigenstaendige, nie an eine Variable gebundene Kuehlgrau-Blau-Toene der alten Design-Linie
    (Eingabefeld-Rahmen, unausgewaehlter Tab-Button) -- auf die Design-v2-Rahmen-/Flaechenfarben
    umgestellt, analog zu anderen bereits migrierten Formularelementen (siehe input[type=date]
    weiter unten). */
-.auth-card input{width:100%; padding:9px 11px; border:1px solid var(--border-color); border-radius:8px}
+.auth-card input{width:100%; padding:9px 11px; border:1px solid var(--border-color); border-radius:8px; line-height:normal; background:#fff; color:var(--ink)}
+/* AP0.3 (Bootstrap-Migrationsplan): Eingabefelder nutzen jetzt Bootstraps .form-control-Klasse
+   (login.html), die App-eigene Regel oben (".auth-card input", Spezifitaet Klasse+Element)
+   ueberschreibt weiterhin alle relevanten Basis-Eigenschaften unveraendert -- inklusive line-height,
+   extra ergaenzt: .form-control setzt line-height:1.5 DIREKT (nicht nur vererbt, siehe
+   vendor/bootstrap/css/bootstrap.min.css), das ".auth-card{line-height:normal}" oben (siehe dortiger
+   Kommentar) deshalb NICHT erfasst -- eine direkt am Element ansetzende Regel schlaegt reine
+   Vererbung unabhaengig von der Spezifitaet der vererbenden Regel. Ohne diese Ergaenzung waeren die
+   Eingabefelder ca. 5px hoeher als in der AP0.0-Baseline gewesen (im Regressionstest so aufgefallen).
+   Zusaetzliche Ueberraschung: ".form-control" ist bereits app-weit belegt -- style-v2.css definiert
+   dafuer einen bewusst anderen "Lines-Look" (transparenter Hintergrund, nur Unterrand, siehe dortiger
+   Kommentar "Abschnitt 4.1") fuer die Fokusbloecke-Inline-Felder. Background/Textfarbe werden von
+   jener Regel mangels eigener Ueberschreibung hier durchgereicht (gleiche Spezifitaet wie Bootstraps
+   eigene .form-control-Regel, aber spaeter geladen) -- deshalb hier explizit auf die bisherigen Werte
+   (weisser Hintergrund, geerbte Standard-Textfarbe --ink) zurueckgesetzt.
+   Bootstraps eigene .form-control:focus-Regel setzt aber hart-codierte Werte (kein --bs-*-Variablen-
+   Redirect moeglich, siehe vendor/bootstrap/css/bootstrap.min.css) fuer einen blauen Fokusring/-rahmen --
+   ohne diese gezielte Override-Regel wuerde beim Fokussieren kurz Bootstraps Standardblau statt
+   der Taupe-Palette aufblitzen. Bewusst ohne !important: ".auth-card input:focus" hat durch die
+   zusaetzliche Pseudoklasse dieselbe/hoehere Spezifitaet und gewinnt allein durch die Ladereihenfolge
+   (style.css zuletzt), identisches Muster wie der Rest dieser Datei. */
+.auth-card input:focus{border-color:var(--primary); outline:0; box-shadow:0 0 0 .25rem var(--secondary)}
 .auth-card .legacy-btn{width:100%; margin-top:18px; padding:10px}
 .tabs{display:flex; gap:6px; margin-bottom:6px}
 .tabs.tabs-mode{margin-top:16px}

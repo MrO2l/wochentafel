@@ -2,24 +2,17 @@ const $ = s => document.querySelector(s);
 const msg = (text, cls) => { const m = $('#msg'); m.textContent = text; m.className = 'msg ' + cls; };
 let inviteMode = false;
 
-function showTab(login) {
-  $('#tabLogin').setAttribute('aria-selected', String(login));
-  $('#tabRegister').setAttribute('aria-selected', String(!login));
-  $('#formLogin').hidden = !login;
-  $('#formRegister').hidden = login;
-  $('#msg').className = 'msg';
-}
-$('#tabLogin').onclick = () => showTab(true);
-$('#tabRegister').onclick = () => showTab(false);
-$('#modeNew').onclick = () => setMode(false);
-$('#modeInvite').onclick = () => setMode(true);
-function setMode(invite) {
-  inviteMode = invite;
-  $('#modeNew').setAttribute('aria-selected', String(!invite));
-  $('#modeInvite').setAttribute('aria-selected', String(invite));
-  $('#boxNew').hidden = invite;
-  $('#boxInvite').hidden = !invite;
-}
+/* AP0.4: Tab-Umschaltung (role="tab"/aria-selected/Panel-Sichtbarkeit/Tastaturnavigation) uebernimmt
+   jetzt Bootstraps native Tab-Komponente (data-bs-toggle="tab" im Markup, siehe login.html) --
+   dieses Skript reagiert nur noch auf das von ihr ausgeloeste "shown.bs.tab"-Ereignis, um die
+   eigene App-Logik (Fehlermeldung zuruecksetzen, inviteMode-Flag) synchron zu halten. Bewusst NICHT
+   mehr an "click" gebunden: ein per Pfeiltaste/Home/End angesteuerter Tab wird von Bootstrap ohne
+   echtes Klick-Ereignis aktiviert -- eine reine Klick-Bindung wuerde bei Tastaturbedienung
+   unbemerkt aus dem Tritt geraten (z.B. inviteMode faelschlich auf dem alten Stand bleiben). */
+$('#tabLogin').addEventListener('shown.bs.tab', () => { $('#msg').className = 'msg'; });
+$('#tabRegister').addEventListener('shown.bs.tab', () => { $('#msg').className = 'msg'; });
+$('#modeNew').addEventListener('shown.bs.tab', () => { inviteMode = false; });
+$('#modeInvite').addEventListener('shown.bs.tab', () => { inviteMode = true; });
 
 async function post(url, body) {
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
