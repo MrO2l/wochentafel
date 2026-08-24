@@ -52,6 +52,26 @@
      .app-main, statt pro Ansicht dupliziert zu werden. ================= -->
 <div class="app-shell d-flex">
 
+  <!-- AP1.2 (Bootstrap-Migrationsplan) -- geprueft und bewusst NICHT auf Bootstraps
+       Offcanvas-Komponente umgestellt, Begruendung:
+       Bootstraps ".offcanvas"/".offcanvas-*" ist grundsaetzlich ein Ein-/Ausblend-Element: die
+       Basisregel setzt "position:fixed; visibility:hidden" (siehe vendor/bootstrap/css/
+       bootstrap.min.css), die responsiven Varianten (".offcanvas-lg" etc.) heben das NUR
+       AB der jeweiligen Bildschirmbreite per "!important" wieder auf ("visibility:visible
+       !important" usw.) -- UNTERHALB der Schwelle bleibt es ein verstecktes, per JS
+       auf-/zuklappbares Element, das einen Umschalt-Knopf braucht. Dieses Linksmenue ist aber
+       auf JEDER Bildschirmgroesse dauerhaft sichtbar (Desktop: linke Spalte, Handy: untere
+       Tab-Leiste, siehe style-v2.css) -- eine bewusste, mit dem Nutzer bereits abgestimmte
+       Design-Entscheidung (siehe dortiger Kommentar "reine responsive Anpassung ..., keine
+       inhaltliche Aenderung der Navigation"), es gibt keinen Umschalt-Knopf und soll auch
+       keinen bekommen. Bootstraps eigene Sichtbarkeits-Regeln mit "!important" zu
+       ueberschreiben, nur um sie sofort wieder unwirksam zu machen, waere genau der
+       "!important-Kampf", den dieser Plan an anderer Stelle (AP0.3) ausdruecklich vermeiden
+       soll -- und haette am Ende schlechteren, fragileren Code als das bestehende, bereits
+       funktionierende ".app-sidebar"-CSS zur Folge, ohne jeden Nutzen (keine echte Verstecken/
+       Zeigen-Funktion wird hier gebraucht). Analog zur bereits im Plan verankerten Entscheidung
+       fuer die Overlays (natives <dialog> statt Bootstrap-Modal-JS, siehe plan.md) bleibt das
+       bestehende, eigene CSS daher unveraendert bestehen -- an ANORAK zurückgemeldet. -->
   <aside class="app-sidebar">
     <div class="brand" aria-hidden="true"><i class="bi bi-house-heart-fill"></i></div>
     <nav class="app-nav" aria-label="Hauptnavigation">
