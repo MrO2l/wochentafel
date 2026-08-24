@@ -15,9 +15,9 @@
      vollstaendig in der bisherigen Design-Linie (AP3.2-Entscheidung, siehe plan.md). Auf
      ausdruecklichen Wunsch des Nutzers wurden davon inzwischen gezielt einzelne, durchgaengig
      sichtbare Bereiche auf die Design-v2-Palette (--primary/--secondary/--background/
-     --border-color/--text-body aus style-v2.css) umgestellt: Werkzeugleiste (".toolbar .btn"
-     gezielt vor der app-weit geteilten ".btn"-Basisregel, die selbst unveraendert bleibt, siehe
-     Kommentar dort), Piktogramm-Palette (.palette/.pgroup/.pbtn) und der Tabellenkopf (thead) des
+     --border-color/--text-body aus style-v2.css) umgestellt: Werkzeugleiste (".toolbar .legacy-btn"
+     gezielt vor der app-weit geteilten ".legacy-btn"-Basisregel, die selbst unveraendert bleibt,
+     siehe Kommentar dort), Piktogramm-Palette (.palette/.pgroup/.pbtn) und der Tabellenkopf (thead) des
      Hauptrasters (gezielt per "#grid"-Praefix, siehe dortiger Kommentar), dazu die vier
      Personenzeilen-Akzentfarben (--fam-a..--fam-d) und die Liste-Link-Buttons (.listlink, siehe
      eigener Kommentar dort). Der restliche Blattkoerper (.head, Zellrahmen/-toenungen im
@@ -27,10 +27,14 @@
      Nur das neue Linksmenue/die Ansichts-Container (.app-shell/.app-view) sowie die beiden
      neuen Ansichten "Einkaufen"/"Essen" nutzen style-v2.css/Bootstrap vollstaendig.
      Ladereihenfolge bewusst so gewaehlt, dass style.css ZULETZT geladen wird: bei gleicher
-     Selektor-Spezifitaet gewinnt dadurch immer die bestehende Regel (z. B. ".btn", ".badge")
-     gegenueber Bootstraps gleichnamigen Basis-Klassen -- die bestehende Oberflaeche bleibt so
-     optisch/funktional unangetastet, ohne dass im bestehenden Markup Klassen umbenannt werden
-     mussten. -->
+     Selektor-Spezifitaet gewinnt dadurch immer die bestehende Regel (z. B. ".badge") gegenueber
+     Bootstraps gleichnamigen Basis-Klassen -- die bestehende Oberflaeche bleibt so optisch/
+     funktional unangetastet, ohne dass im bestehenden Markup Klassen umbenannt werden mussten.
+     Namenskollision AP0.1 (Bootstrap-Migrationsplan): die eigene ".btn"/".btn.primary"-Klasse
+     verliess sich auf genau diesen Ladereihenfolge-Trick, kollidierte dabei aber mit Bootstraps
+     eigenem Modifier-Schema (".btn-primary" statt ".btn.primary") und blockierte die Verwendung
+     von Bootstraps echter .btn-Klasse app-weit. Deshalb umbenannt auf ".legacy-btn" (siehe
+     dortiger Kommentar in style.css) -- rein mechanisch, keine optische/funktionale Aenderung. -->
 <link rel="stylesheet" href="vendor/bootstrap/css/bootstrap.min.css">
 <link rel="stylesheet" href="vendor/bootstrap-icons/bootstrap-icons.css">
 <link rel="stylesheet" href="vendor/fonts/open-sans/open-sans.css">
@@ -70,25 +74,25 @@
 
 <div class="toolbar">
   <div class="tb-row">
-    <button class="btn primary" id="btnPrint">Drucken</button>
+    <button class="legacy-btn primary" id="btnPrint">Drucken</button>
     <div class="sep hide-sm"></div>
-    <button class="btn" id="btnPrev" title="Woche zurück">&#9664;</button>
+    <button class="legacy-btn" id="btnPrev" title="Woche zurück">&#9664;</button>
     <input type="date" id="monday">
-    <button class="btn" id="btnNext" title="Woche vor">&#9654;</button>
-    <button class="btn hide-sm" id="btnToday">Diese Woche</button>
+    <button class="legacy-btn" id="btnNext" title="Woche vor">&#9654;</button>
+    <button class="legacy-btn hide-sm" id="btnToday">Diese Woche</button>
     <select id="archive" class="hide-sm" title="Gespeicherte Wochen"><option value="">Archiv …</option></select>
     <div class="sep hide-sm cal-only"></div>
-    <button class="btn hide-sm cal-only" id="btnTemplateApply">Vorlage einfügen</button>
-    <button class="btn hide-sm cal-only" id="btnTemplateSave">Als Vorlage sichern</button>
+    <button class="legacy-btn hide-sm cal-only" id="btnTemplateApply">Vorlage einfügen</button>
+    <button class="legacy-btn hide-sm cal-only" id="btnTemplateSave">Als Vorlage sichern</button>
     <div class="sep hide-sm cal-only"></div>
-    <button class="btn hide-sm cal-only" id="btnAddPerson">+ Person</button>
-    <button class="btn hide-sm cal-only" id="btnAddShared">+ Zeile</button>
+    <button class="legacy-btn hide-sm cal-only" id="btnAddPerson">+ Person</button>
+    <button class="legacy-btn hide-sm cal-only" id="btnAddShared">+ Zeile</button>
     <div class="sep hide-sm cal-only"></div>
-    <button class="btn cal-only" id="btnView">Tagesansicht</button>
-    <button class="btn only-day" id="btnIcons">Symbole</button>
+    <button class="legacy-btn cal-only" id="btnView">Tagesansicht</button>
+    <button class="legacy-btn only-day" id="btnIcons">Symbole</button>
     <div class="grow"></div>
     <span class="status" id="status">…</span>
-    <button class="btn small" id="btnMenu">Konto</button>
+    <button class="legacy-btn small" id="btnMenu">Konto</button>
   </div>
   <div class="tb-row palette-wrap">
     <div class="palette" id="palette"></div>
@@ -235,8 +239,8 @@
         <div class="sub" id="dlSub"></div>
       </div>
       <div class="grow"></div>
-      <button class="btn" id="dlPrint" title="Nur diese Liste drucken">Drucken</button>
-      <button class="btn primary" id="dlClose" title="Schließen">Schließen</button>
+      <button class="legacy-btn" id="dlPrint" title="Nur diese Liste drucken">Drucken</button>
+      <button class="legacy-btn primary" id="dlClose" title="Schließen">Schließen</button>
     </div>
     <div class="daylist-body" id="dlBody"></div>
   </div>
@@ -254,8 +258,8 @@
         <div class="sub" id="mpSub"></div>
       </div>
       <div class="grow"></div>
-      <button class="btn" id="mpPrint" title="Nur den Essensplan drucken (A4 quer)">Drucken</button>
-      <button class="btn primary" id="mpClose" title="Schließen">Schließen</button>
+      <button class="legacy-btn" id="mpPrint" title="Nur den Essensplan drucken (A4 quer)">Drucken</button>
+      <button class="legacy-btn primary" id="mpClose" title="Schließen">Schließen</button>
     </div>
     <div class="daylist-body">
       <div class="mealplan-toolbar" id="mealplanToolbar">

@@ -1065,14 +1065,14 @@ function openMenu() {
       <h2>Konto</h2>
       <p class="acct-who"></p>
       <div class="acct-actions">
-        <button class="btn" data-act="invite">Familienmitglied einladen</button>
-        <button class="btn" data-act="export">Diese Woche als Datei sichern</button>
-        <button class="btn" data-act="import">Datei einlesen</button>
-        <button class="btn" data-act="template-del">Vorlage löschen</button>
-        <button class="btn" data-act="logout">Abmelden</button>
+        <button class="legacy-btn" data-act="invite">Familienmitglied einladen</button>
+        <button class="legacy-btn" data-act="export">Diese Woche als Datei sichern</button>
+        <button class="legacy-btn" data-act="import">Datei einlesen</button>
+        <button class="legacy-btn" data-act="template-del">Vorlage löschen</button>
+        <button class="legacy-btn" data-act="logout">Abmelden</button>
       </div>
       <div class="acct-out" data-out></div>
-      <div class="acct-foot"><button class="btn" data-act="close">Schließen</button></div>
+      <div class="acct-foot"><button class="legacy-btn" data-act="close">Schließen</button></div>
     </div>`;
   dlg.querySelector('p').textContent = `${state.user.name} · ${state.user.email} · Haushalt „${state.user.householdName}“`;
   const out = dlg.querySelector('[data-out]');

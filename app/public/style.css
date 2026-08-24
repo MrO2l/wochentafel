@@ -22,7 +22,7 @@
      Rundumschlag"): dasselbe Umleitungs-Muster jetzt auch auf --tint/--tint2/--surface
      angewendet — auch diese drei trugen noch die urspruengliche helle Blau-Toenung und wurden an
      zahlreichen, bislang nicht einzeln migrierten Stellen als Hintergrund verwendet (u. a.
-     Werkzeugleiste, generische .btn-Klasse, Konto-/Login-Karte, Tagesliste-/Essensplan-
+     Werkzeugleiste, generische .legacy-btn-Klasse, Konto-/Login-Karte, Tagesliste-/Essensplan-
      Overlaykarte, mobile Tagesansicht). Alle drei werden bereits vollstaendig und unabhaengig im
      @media print-:root weiter unten zurueckgesetzt (--tint/--tint2/--surface dort auf eigene,
      neutrale Druckwerte) — die Umleitung hier ist also ebenso gefahrlos wie bei --accent. */
@@ -104,7 +104,7 @@ button,input,select{font:inherit}
    umgestellt, analog zu anderen bereits migrierten Formularelementen (siehe input[type=date]
    weiter unten). */
 .auth-card input{width:100%; padding:9px 11px; border:1px solid var(--border-color); border-radius:8px}
-.auth-card .btn{width:100%; margin-top:18px; padding:10px}
+.auth-card .legacy-btn{width:100%; margin-top:18px; padding:10px}
 .tabs{display:flex; gap:6px; margin-bottom:6px}
 .tabs.tabs-mode{margin-top:16px}
 .upper{text-transform:uppercase}
@@ -116,30 +116,35 @@ button,input,select{font:inherit}
 .switch-hint{margin-top:14px; font-size:12.5px; color:var(--muted); text-align:center}
 
 /* ---------------- Werkzeugleiste ----------------
-   ".btn"/".btn.primary" sind eine app-weit geteilte Klasse (auch in Tagesliste-/Essensplan-
-   Overlay, Kontomenue und Login-Seite verwendet, siehe dortige Vorkommen). Die Grundregeln hier
-   nutzen weiterhin --accent/--accent-tint (siehe :root oben) -- seit der zweiten Migrationsrunde
-   (Nutzer-Feedback 2026-08-19) zeigen diese Variablen selbst auf die Design-v2-Palette, die
-   Grundregeln muessen deshalb nicht mehr einzeln umgeschrieben werden. */
+   ".legacy-btn"/".legacy-btn.primary" sind eine app-weit geteilte Klasse (auch in Tagesliste-/
+   Essensplan-Overlay, Kontomenue und Login-Seite verwendet, siehe dortige Vorkommen). Umbenannt
+   von urspruenglich ".btn"/".btn.primary" (AP0.1, Bootstrap-Migrationsplan): Bootstrap 5.3 bringt
+   eine eigene, kanonische ".btn"-Klasse mit anderem Modifier-Schema (".btn-primary" statt
+   ".btn.primary") mit -- bei gleicher Spezifitaet gewinnt die spaeter geladene Bootstrap-Regel,
+   das kollidierte mit dieser eigenstaendigen Klasse hier. Rein mechanische Umbenennung, keine
+   optische/funktionale Aenderung. Die Grundregeln hier nutzen weiterhin --accent/--accent-tint
+   (siehe :root oben) -- seit der zweiten Migrationsrunde (Nutzer-Feedback 2026-08-19) zeigen diese
+   Variablen selbst auf die Design-v2-Palette, die Grundregeln muessen deshalb nicht mehr einzeln
+   umgeschrieben werden. */
 .toolbar{position:sticky; top:0; z-index:50; background:var(--surface); border-bottom:1px solid var(--line-soft); padding:9px 14px; box-shadow:0 1px 6px rgba(0,0,0,.06)}
 .tb-row{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
 .tb-row+.tb-row{margin-top:8px}
-.btn{font-size:13px; padding:6px 11px; border-radius:7px; border:1px solid var(--line-soft); background:var(--surface); color:var(--ink); cursor:pointer}
-.btn:hover{background:var(--accent-tint)}
-.btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
-.btn.primary:hover{filter:brightness(1.12)}
-.btn.small{padding:4px 8px; font-size:12px}
+.legacy-btn{font-size:13px; padding:6px 11px; border-radius:7px; border:1px solid var(--line-soft); background:var(--surface); color:var(--ink); cursor:pointer}
+.legacy-btn:hover{background:var(--accent-tint)}
+.legacy-btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+.legacy-btn.primary:hover{filter:brightness(1.12)}
+.legacy-btn.small{padding:4px 8px; font-size:12px}
 /* Aus der ersten Migrationsrunde (Nutzer-Feedback 2026-08-19): die Buttons/Formularelemente
    INNERHALB der Werkzeugleiste referenzieren die Design-v2-Variablen (--primary/--secondary/
    --border-color, siehe :root in style-v2.css) direkt statt ueber --accent, per ".toolbar"-
-   Praefix gezielt von den ".btn"-Grundregeln abgegrenzt. Seit der zweiten Migrationsrunde
+   Praefix gezielt von den ".legacy-btn"-Grundregeln abgegrenzt. Seit der zweiten Migrationsrunde
    fuehrt --accent selbst ebenfalls zur Design-v2-Palette (siehe :root oben) -- diese direkten
    Referenzen bleiben unveraendert bestehen, sind funktional aber deckungsgleich mit den
-   .btn-Grundregeln geworden. */
-.toolbar .btn{border-radius:var(--radius); border-color:var(--border-color); background:var(--background); color:var(--text-body)}
-.toolbar .btn:hover{background:var(--secondary)}
-.toolbar .btn.primary{background:var(--primary); border-color:var(--primary)}
-.toolbar .btn.primary:hover{background:var(--primary-dark); border-color:var(--primary-dark); filter:none}
+   .legacy-btn-Grundregeln geworden. */
+.toolbar .legacy-btn{border-radius:var(--radius); border-color:var(--border-color); background:var(--background); color:var(--text-body)}
+.toolbar .legacy-btn:hover{background:var(--secondary)}
+.toolbar .legacy-btn.primary{background:var(--primary); border-color:var(--primary)}
+.toolbar .legacy-btn.primary:hover{background:var(--primary-dark); border-color:var(--primary-dark); filter:none}
 .tb-label{font-size:12px; color:var(--muted)}
 .sep{width:1px; align-self:stretch; background:var(--border-color); margin:0 3px}
 .grow{flex:1}
@@ -677,13 +682,13 @@ body:not(.section-wochenuebersicht) .cal-only{display:none !important}
   body.printing-daylist #daylistOverlay{position:static; background:none; padding:0; display:block}
   body.printing-daylist .daylist{max-width:none; box-shadow:none; border-radius:0; background:#fff; page:daylist-print}
   body.printing-daylist .daylist-head{background:#f2f4f6}
-  body.printing-daylist .daylist-head .btn{display:none}
+  body.printing-daylist .daylist-head .legacy-btn{display:none}
 
   body.printing-mealplan > *:not(#mealplanOverlay){display:none !important}
   body.printing-mealplan #mealplanOverlay{position:static; background:none; padding:0; display:block}
   body.printing-mealplan .mealplan{max-width:none; box-shadow:none; border-radius:0; background:#fff}
   body.printing-mealplan .daylist-head{background:#f2f4f6}
-  body.printing-mealplan .daylist-head .btn{display:none}
+  body.printing-mealplan .daylist-head .legacy-btn{display:none}
   /* A4 quer auf einer Seite: 277×190mm nutzbare Flaeche bei 10mm Rand (Standard-@page ist
      bereits Querformat, siehe oben — hier nur die Tabellenmasse ans Papier angepasst).
      4 Mahlzeiten-Zeilen a 30mm + 12mm Kopfzeile = 132mm, bleibt darunter — bewusst grosszuegig,
