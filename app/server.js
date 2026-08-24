@@ -430,8 +430,41 @@ app.use((req, res, next) => {
   next();
 });
 
+/* ------------------------------------------------------------------ *
+ * Zwei getrennte Session-Bereiche (AP2.1, Wochenplaner-Admin-Bereich):
+ * Haushalts-Sessions (bestehend, req.session.userId/householdId) und
+ * Admin-Sessions (neu, req.session.adminId) laufen ueber ZWEI eigene
+ * express-session-Middlewares mit unterschiedlichem Cookie-Namen
+ * ('wochenplan.sid' vs. 'wochenplan.admin.sid'), aber demselben
+ * PgSession-Store (dieselbe `session`-Tabelle, keine neue Migration
+ * noetig -- der Haushaltsbezug bzw. Admin-Bezug steckt jeweils nur im
+ * sess-JSON, siehe ap1.1-datenmodell.md Abschnitt 4).
+ *
+ * WARUM zwei Middlewares statt einer gemeinsamen mit einem zusaetzlichen
+ * "isAdmin"-Flag im selben req.session: express-session haengt IMMER an
+ * genau EINEM req.session-Objekt, das aus GENAU EINEM Request-Cookie
+ * gelesen wird. Eine gemeinsame Session wuerde bedeuten, dass ein und
+ * dasselbe Cookie sowohl Haushalts- als auch Admin-Zugriff traegt -- ein
+ * gestohlenes Haushalts-Cookie haette dann potenziell denselben
+ * Angriffsvektor auf den Admin-Bereich wie ein gestohlenes Admin-Cookie.
+ * Mit zwei komplett getrennten Cookies/Sessions ist ein Haushalts-Login
+ * strukturell unfaehig, jemals adminId zu tragen (die Admin-Login-Route
+ * unten schreibt ausschliesslich in die admin-Session, nie in die
+ * Haushalts-Session) -- "keine Vermischung mit Haushalts-Sessions"
+ * (Auftrag AP2.1) ist damit auf Code-Ebene erzwungen, nicht nur Konvention.
+ *
+ * mountUnless() sorgt dafuer, dass auf /api/admin/* NUR die Admin-Session-
+ * Middleware laeuft (nicht zusaetzlich, verschwendet, die Haushalts-
+ * Middleware) und auf allen anderen Pfaden weiterhin NUR die bestehende
+ * Haushalts-Session-Middleware -- unveraendertes Verhalten fuer alle
+ * bereits bestehenden Routen (keine Regression).
+ * ------------------------------------------------------------------ */
 const PgSession = connectPgSimple(session);
-app.use(session({
+function mountUnless(prefix, middleware) {
+  return (req, res, next) => (req.path.startsWith(prefix) ? next() : middleware(req, res, next));
+}
+
+const householdSessionMiddleware = session({
   // Session-Store laeuft ueber die eingeschraenkte Laufzeit-Rolle (appPool) --
   // `session` traegt bewusst keine RLS (keine household_id-Spalte, ephemer,
   // siehe ap1.2-rls-konzept.md Abschnitt 3), Rechte darauf bereits per
@@ -448,32 +481,107 @@ app.use(session({
     secure: SECURE_COOKIES,
     maxAge: 1000 * 60 * 60 * 24 * 60      // 60 Tage
   }
-}));
+});
+app.use(mountUnless('/api/admin', householdSessionMiddleware));
 
-/* --- einfache Bremse gegen Passwortraten (pro E-Mail-Adresse) ------ */
-const attempts = new Map();
-function throttle(key) {
-  const now = Date.now();
-  const rec = attempts.get(key) || { n: 0, until: 0, last: 0 };
-  if (rec.until > now) return Math.ceil((rec.until - now) / 1000);
-  return 0;
+// Admin-Session bewusst deutlich kuerzer als die 60-Tage-Haushalts-Session:
+// der Admin-Bereich hat Lösch-/Sperrrechte auf alle Kundendaten (plan.md,
+// Risiko "Unautorisierter Zugriff auf Admin-Endpunkte") -- ein
+// liegengelassenes, noch gueltiges Admin-Cookie ueber Wochen/Monate waere
+// ein unverhaeltnismaessig grosses Zeitfenster fuer diese Rechte. 8 Stunden
+// (rolling, verlaengert sich bei Aktivitaet) ist eine bewusste
+// sicherheitsrelevante Annahme dieser Implementierung, im Plan nicht
+// explizit vorgegeben -- Hinweis fuer ZANDORs Review (AP2.2), bei Bedarf
+// leicht per Konstante anpassbar.
+const ADMIN_SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 8;
+const adminSessionMiddleware = session({
+  store: new PgSession({ pool: appPool, tableName: 'session', createTableIfMissing: false }),
+  name: 'wochenplan.admin.sid',
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  rolling: true,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: SECURE_COOKIES,
+    maxAge: ADMIN_SESSION_MAX_AGE_MS
+  }
+});
+app.use('/api/admin', adminSessionMiddleware);
+
+/* --- Bremse gegen Passwortraten: wiederverwendbare Fabrikfunktion --
+ * (AP2.1: "Rate-Limiting analog bestehendem Muster" fuer den Admin-Login.
+ * Urspruenglich fest verdrahtete Modul-Funktionen, hier zu einer Fabrik
+ * gemacht, damit Haushalts- und Admin-Login je eine eigene, unabhaengige
+ * Zaehler-Map bekommen -- sonst koennte ein Angreifer, der viele
+ * Haushalts-Login-Fehlversuche mit einer E-Mail-Adresse erzeugt, die
+ * zufaellig dem Admin-Benutzernamen entspricht, den echten Admin-Login
+ * mit aussperren (und umgekehrt).
+ *
+ * ESKALIERENDE SPERRDAUER (Fix fuer ZANDORs Sicherheitsreview AP2.2, Fund 1
+ * -- "Admin-Login-Lockout-DoS", 2026-08-24): Beim Haushalts-Login ist eine
+ * fixe 5-Minuten-Sperre unkritisch (viele unabhaengige Accounts, ein
+ * gesperrter Account blockiert nur sich selbst). Beim Admin-Login (F2:
+ * genau EIN Account, kein Mehrbenutzermodell) reicht eine fixe, kurze
+ * Sperre dagegen einem Angreifer, um mit vergleichsweise wenigen Requests
+ * (< adminAuthLimiter-Schwelle von 30/15min) den EINZIGEN Admin-Zugang
+ * dauerhaft lahmzulegen: 15 gezielte Fehlversuche pro 15-Minuten-Fenster
+ * genuegen, um die 5-Minuten-Sperre lueckenlos am Laufen zu halten. Die
+ * `escalating`-Option laesst die Sperrdauer bei jedem erneuten Erreichen
+ * des Schwellenwerts eine Stufe weiterwandern (5min -> 15min -> 60min ->
+ * 240min -> 1440min, danach Obergrenze bei 24h) statt immer wieder bei 5
+ * Minuten neu zu beginnen -- ein Angreifer muesste die Anfragerate mit
+ * jeder Eskalationsstufe drastisch absenken, waehrend ein einzelner
+ * verpasster Login-Fehlversuch (z. B. Tippfehler) fuer den echten Admin
+ * weiterhin nur eine kurze Anfangssperre ausloest. Verhalten des
+ * Haushalts-Logins (`escalating: false`, Default) bleibt exakt wie zuvor
+ * (5 Fehlversuche -> fixe 5 Minuten Sperre, keine Eskalation). */
+function createLoginThrottle({ escalating = false } = {}) {
+  const attempts = new Map();
+  // Eskalationsleiter, nur wirksam mit escalating:true. Letzter Wert wirkt
+  // als Obergrenze (Array-Index wird bei weiteren Wiederholungen gekappt),
+  // damit ein dauerhaft angreifender Client nicht unbegrenzt lange sperrt.
+  const ESCALATION_STEPS_MS = [5, 15, 60, 240, 1440].map(minutes => minutes * 60 * 1000);
+  function throttle(key) {
+    const now = Date.now();
+    const rec = attempts.get(key) || { n: 0, until: 0, last: 0, escalationLevel: 0 };
+    if (rec.until > now) return Math.ceil((rec.until - now) / 1000);
+    return 0;
+  }
+  function noteFailure(key) {
+    const now = Date.now();
+    const rec = attempts.get(key) || { n: 0, until: 0, last: 0, escalationLevel: 0 };
+    rec.n += 1;
+    rec.last = now;
+    if (rec.n >= 5) {
+      if (escalating) {
+        const stepIndex = Math.min(rec.escalationLevel, ESCALATION_STEPS_MS.length - 1);
+        rec.until = now + ESCALATION_STEPS_MS[stepIndex];
+        rec.escalationLevel += 1;
+      } else {
+        rec.until = now + 5 * 60 * 1000;
+      }
+      rec.n = 0;
+    }
+    attempts.set(key, rec);
+  }
+  const clearFailures = key => attempts.delete(key);
+  // Ohne Aufraeumen waechst die Map unbegrenzt, wenn jemand viele verschiedene
+  // (auch erfundene) Schluessel durchprobiert. Eintraege, die seit einer
+  // Stunde weder gesperrt sind noch angefasst wurden, koennen weg -- greift
+  // unveraendert auch bei eskalierten, laenger gesperrten Eintraegen (die
+  // Sperre selbst haelt `until` in der Zukunft, das Aufraeumen entfernt sie
+  // erst nach Ablauf UND einer zusaetzlichen Stunde Inaktivitaet).
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of attempts) if (v.until < now && now - v.last > 60 * 60 * 1000) attempts.delete(k);
+  }, 30 * 60 * 1000).unref();
+  return { throttle, noteFailure, clearFailures };
 }
-function noteFailure(key) {
-  const now = Date.now();
-  const rec = attempts.get(key) || { n: 0, until: 0, last: 0 };
-  rec.n += 1;
-  rec.last = now;
-  if (rec.n >= 5) { rec.until = now + 5 * 60 * 1000; rec.n = 0; }
-  attempts.set(key, rec);
-}
-const clearFailures = key => attempts.delete(key);
-// Ohne Aufraeumen waechst die Map unbegrenzt, wenn jemand viele verschiedene
-// (auch erfundene) E-Mail-Adressen durchprobiert. Eintraege, die seit einer
-// Stunde weder gesperrt sind noch angefasst wurden, koennen weg.
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of attempts) if (v.until < now && now - v.last > 60 * 60 * 1000) attempts.delete(k);
-}, 30 * 60 * 1000).unref();
+const { throttle, noteFailure, clearFailures } = createLoginThrottle();
+const { throttle: adminThrottle, noteFailure: adminNoteFailure, clearFailures: adminClearFailures } =
+  createLoginThrottle({ escalating: true });
 
 /* --- generische Rate-Bremse pro IP-Adresse -------------------------
  * Ergaenzt die E-Mail-Bremse oben: die dort ist gezielt gegen
@@ -499,15 +607,41 @@ function rateLimiter({ windowMs, max }) {
     next();
   };
 }
-const apiLimiter    = rateLimiter({ windowMs: 60 * 1000,      max: 120 });  // generelle Bremse ueber alle API-Aufrufe
-const authLimiter   = rateLimiter({ windowMs: 15 * 60 * 1000, max: 30 });   // Login und Registrierung
-const inviteLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 });   // Einladungscodes erzeugen
+const apiLimiter      = rateLimiter({ windowMs: 60 * 1000,      max: 120 });  // generelle Bremse ueber alle API-Aufrufe
+const authLimiter     = rateLimiter({ windowMs: 15 * 60 * 1000, max: 30 });   // Login und Registrierung
+const inviteLimiter   = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 });   // Einladungscodes erzeugen
+const adminAuthLimiter = rateLimiter({ windowMs: 15 * 60 * 1000, max: 30 }); // Admin-Login (AP2.1, analog authLimiter)
 app.use('/api', apiLimiter);
 
 function requireAuth(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Nicht angemeldet' });
   next();
 }
+
+/* ------------------------------------------------------------------ *
+ * Admin-Auth-Middleware (AP2.1). 403 statt 401 bei fehlender/ungueltiger
+ * Admin-Session -- bewusst einheitlich fuer JEDEN Aufrufer (anonym oder
+ * mit gueltiger Haushalts-Session), weil requireAdminAuth aus der
+ * admin-scoped Session (siehe oben) grundsaetzlich nicht erkennen kann,
+ * ob ein Aufrufer "nur nicht eingeloggt" oder "als Haushalts-Nutzer
+ * eingeloggt, aber kein Admin" ist (beides sieht fuer 'wochenplan.admin.sid'
+ * identisch aus: kein adminId im Session-JSON). 403 deckt in diesem
+ * einheitlichen Fall sowohl den Plan-Wortlaut "403 fuer Haushalts-Nutzer
+ * auf Admin-Routen" als auch das Erfolgskriterium "401/403" ab, siehe
+ * plan.md AP2.1.
+ * ------------------------------------------------------------------ */
+function requireAdminAuth(req, res, next) {
+  if (!req.session.adminId) return res.status(403).json({ error: 'Kein Zugriff' });
+  next();
+}
+
+// Hinweis fuer kuenftige /api/admin/*-Endpunkte (AP3.1-3.3, F1-Feldliste
+// etc.): dieser Datei-Stil deklariert requireAuth/requireAdminAuth explizit
+// PRO ROUTE (kein blanket Router-Gate), analog dem bestehenden Muster bei
+// den Haushalts-Routen unten -- jede neue Admin-Route MUSS requireAdminAuth
+// selbst einbinden, sonst bleibt sie ungeschuetzt. ZANDOR sollte das bei
+// jedem neuen Admin-Endpunkt gezielt gegenpruefen (AP5.1).
+
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 /* ------------------------------------------------------------------ *
@@ -679,6 +813,322 @@ app.post('/api/auth/login', authLimiter, wrap(async (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   req.session.destroy(() => { res.clearCookie('wochenplan.sid'); res.json({ ok: true }); });
 });
+
+/* ------------------------------------------------------------------ *
+ * Admin-Authentifizierung (AP2.1, Wochenplaner-Admin-Bereich)
+ *
+ * Ein-Account-Modell (F2, plan.md "Entscheidungen"): admin_account traegt
+ * bewusst keine Rolle-Spalte, kein Verwaltungs-Endpunkt legt neue
+ * Admin-Accounts an -- Anlage ausschliesslich per CLI-Skript
+ * scripts/create-admin.mjs (analog create-tenant.mjs), siehe dort.
+ *
+ * admin_account hat KEINE Row-Level-Security (005_admin_foundation.sql legt
+ * bewusst kein ENABLE ROW LEVEL SECURITY dafuer an -- anders als
+ * households/users ist diese Tabelle nicht mandantenbezogen, sondern trägt
+ * global genau eine Zeile). Der Lookup unten laeuft daher als normale
+ * Abfrage direkt ueber appPool (wochenplan_app hat SELECT-Grant, siehe
+ * Migration Abschnitt 1) -- anders als beim Haushalts-Login braucht es
+ * dafuer KEINE SECURITY-DEFINER-Funktion wie auth_lookup_by_email().
+ * ------------------------------------------------------------------ */
+app.post('/api/admin/auth/login', adminAuthLimiter, wrap(async (req, res) => {
+  const username = String(req.body.username || '').trim();
+  const password = String(req.body.password || '');
+  const usernameKey = username.toLowerCase();
+  // Throttle-Schluessel bewusst aus Benutzername UND Quell-IP zusammengesetzt
+  // (Fix fuer ZANDORs Fund 1, 2026-08-24 -- Ergaenzung zur Eskalation oben,
+  // siehe Begruendung bei createLoginThrottle()). Wirkung: eine Sperre trifft
+  // ausschliesslich Anfragen von genau dieser IP gegen genau diesen
+  // Benutzernamen -- ein Angreifer kann damit nicht mehr per reinem
+  // Benutzernamen-Keying den EINEN Admin-Account global fuer JEDE IP
+  // (also auch fuer den echten Admin von seiner eigenen IP aus) sperren.
+  // ZANDORs eigene Einordnung gilt unveraendert: das allein reicht NICHT
+  // als alleinige Verteidigung (ein Angreifer mit vielen IPs oder mit
+  // Kenntnis/Kontrolle der Admin-IP umgeht das), daher zusaetzlich zur --
+  // nicht statt der -- Eskalation zu verstehen, reine zusaetzliche
+  // Haertung. req.ip beruecksichtigt bereits TRUST_PROXY (app.set('trust
+  // proxy', 1) oben), identisches Muster wie im bestehenden rateLimiter().
+  const throttleKey = `${usernameKey}|${req.ip}`;
+  const wait = adminThrottle(throttleKey);
+  if (wait) return res.status(429).json({ error: `Zu viele Fehlversuche. Bitte ${wait} Sekunden warten.` });
+
+  const q = await appPool.query(
+    'SELECT id, username, password_hash FROM admin_account WHERE lower(username) = lower($1)', [username]);
+  const row = q.rows[0];
+  // Dummy-Hash-Vergleich bei unbekanntem Benutzernamen (identisches Muster
+  // wie beim Haushalts-Login oben): verhindert, dass die Antwortzeit einen
+  // Rueckschluss zulaesst, ob der Benutzername ueberhaupt existiert.
+  const ok = row ? await bcrypt.compare(password, row.password_hash) : await bcrypt.compare(password, '$2a$12$' + 'x'.repeat(53));
+  if (!row || !ok) {
+    adminNoteFailure(throttleKey);
+    // Audit-Log (ZANDOR AP2.2, Fund 2 -- 006_admin_audit_log.sql): bewusst
+    // AWAIT statt fire-and-forget -- schlaegt der INSERT fehl, soll die
+    // Anfrage mit 500 statt einem stillschweigend unprotokollierten 401
+    // enden (fail-closed, konsistent mit dem bereits etablierten Muster von
+    // set_tenant_context_audited() aus 004, das bei einem Audit-Fehler
+    // ebenfalls die gesamte Anfrage scheitern laesst statt den Fehler zu
+    // verschlucken). admin_id ist bei unbekanntem Benutzernamen NULL (kein
+    // admin_account-Datensatz zum Verknuepfen); detail traegt den
+    // (kleingeschriebenen) versuchten Benutzernamen -- der einzige Admin-
+    // Benutzername, kein Kunden-PII.
+    await appPool.query(
+      `INSERT INTO admin_audit_log(event_type, admin_id, ip_address, detail)
+       VALUES ('admin_login_failure', $1, $2, $3)`,
+      [row ? row.id : null, req.ip, usernameKey]);
+    return res.status(401).json({ error: 'Benutzername oder Passwort stimmt nicht' });
+  }
+
+  adminClearFailures(throttleKey);
+  // regenerate() VOR dem Setzen von adminId: verhindert Session-Fixation
+  // (identisches Muster wie beim Haushalts-Login/Registrierung oben).
+  req.session.regenerate(err => {
+    if (err) return res.status(500).json({ error: 'Anmeldung fehlgeschlagen' });
+    req.session.adminId = row.id;
+    // Audit-Log-Insert liegt bewusst NACH regenerate() (neue Session-ID muss
+    // stehen) und VOR der Erfolgsantwort. Schlaegt der INSERT fehl, wird die
+    // gerade erst regenerierte Session wieder verworfen, statt dem Client
+    // einen 500er zu melden, waehrend das admin.sid-Cookie durch den
+    // automatischen express-session-Save am Response-Ende trotzdem eine
+    // gueltige, eingeloggte Session persistieren wuerde (session.destroy()
+    // verhindert genau dieses Auseinanderlaufen von Client-Antwort und
+    // tatsaechlichem Server-Zustand).
+    appPool.query(
+      `INSERT INTO admin_audit_log(event_type, admin_id, ip_address)
+       VALUES ('admin_login_success', $1, $2)`,
+      [row.id, req.ip]
+    ).then(
+      () => res.json({ admin: { id: row.id, username: row.username } }),
+      auditErr => {
+        console.error('Admin-Audit-Log (Login-Erfolg) fehlgeschlagen:', auditErr);
+        req.session.destroy(() => res.status(500).json({ error: 'Anmeldung fehlgeschlagen' }));
+      }
+    );
+  });
+}));
+
+app.post('/api/admin/auth/logout', (req, res) => {
+  req.session.destroy(() => { res.clearCookie('wochenplan.admin.sid'); res.json({ ok: true }); });
+});
+
+app.get('/api/admin/me', requireAdminAuth, wrap(async (req, res) => {
+  const q = await appPool.query('SELECT id, username FROM admin_account WHERE id=$1', [req.session.adminId]);
+  // admin_account-Zeile koennte zwischen Login und Folge-Request
+  // theoretisch verschwinden (kein Loesch-Endpunkt in diesem Plan
+  // vorgesehen, F2 -- aber Defense-in-Depth statt stillschweigender
+  // Annahme, analog GET /api/me oben).
+  if (!q.rowCount) return req.session.destroy(() => res.status(401).json({ error: 'Nicht angemeldet' }));
+  res.json({ admin: q.rows[0] });
+}));
+
+/* ------------------------------------------------------------------ *
+ * Admin-Uebersicht (AP3.1, Wochenplaner-Admin-Bereich)
+ *
+ * Nutzt ausschliesslich die SECURITY-DEFINER-Funktion admin_list_households()
+ * aus 005_admin_foundation.sql -- kein direkter Tabellenzugriff auf
+ * households (waere durch RLS ohnehin auf den eigenen Sitzungskontext
+ * beschraenkt und liefert fuer eine admin-scoped Session, die keinen
+ * household_id-Kontext setzt, schlicht 0 Zeilen). Die Funktion selbst
+ * braucht keinen p_admin_id-Parameter (reiner Lesezugriff, kein Audit-Feld
+ * zu befuellen) -- anders als bei den kommenden AP3.2/AP3.3-Schreib-
+ * Endpunkten, siehe Hinweis dort.
+ *
+ * Feldliste exakt nach F1-Entscheidung (plan.md "Entscheidungen"): nur
+ * Haushalts-ID, Erstellungsdatum, Mitgliederzahl, Status inkl. Grund-Code
+ * -- kein Klarname, keine E-Mail. admin_list_households() liefert selbst
+ * bereits nur diese Spalten, ein zusaetzliches Whitelisting hier waere
+ * redundant, aber die explizite Spaltenbenennung im SELECT (statt eines
+ * impliziten "alles was die Funktion liefert") macht diese Begrenzung auch
+ * im Anwendungscode sichtbar und robust gegen eine kuenftige, versehentlich
+ * erweiterte Funktionssignatur.
+ * ------------------------------------------------------------------ */
+app.get('/api/admin/households', requireAdminAuth, wrap(async (req, res) => {
+  const q = await appPool.query(
+    `SELECT household_id  AS "householdId",
+            created_at    AS "createdAt",
+            member_count  AS "memberCount",
+            status,
+            status_reason AS "statusReason"
+       FROM admin_list_households()`);
+  res.json({ households: q.rows });
+}));
+
+// Haushalts-ID aus einem URL-Parameter/Body-Feld robust parsen -- nur
+// positive Ganzzahlen sind gueltig, alles andere (leer, NaN, negativ,
+// Bruchzahl, Fuehrungs-/Folgezeichen) liefert null statt eines evtl.
+// missverstaendlichen Postgres-Typkonvertierungsfehlers weiter unten.
+function parseHouseholdId(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Deaktivieren/Reaktivieren/Loeschen (AP3.2/AP3.3, Wochenplaner-Admin-
+ * Bereich) + Session-Invalidierung (AP4.1)
+ *
+ * Alle drei Endpunkte nutzen ausschliesslich die SECURITY-DEFINER-
+ * Funktionen aus 005_admin_foundation.sql/006_admin_audit_log.sql -- kein
+ * direkter Tabellenzugriff auf households (waere durch RLS ohnehin auf den
+ * -- bei einer admin-scoped Session gar nicht gesetzten -- Sitzungskontext
+ * beschraenkt).
+ *
+ * ZANDORs expliziter Pruefpunkt (Ruecklauf aus AP3.1): p_admin_id wird in
+ * ALLEN drei Endpunkten AUSSCHLIESSLICH aus req.session.adminId gelesen,
+ * NIE aus req.body/req.params/req.query -- die Admin-Session ist die
+ * einzige Quelle, wer eine Aenderung vorgenommen hat (auch relevant fuer
+ * die Audit-Log-Eintraege aus 006, die admin_id direkt von hier
+ * uebernehmen).
+ *
+ * CSRF (ZANDORs Fund 5, NIEDRIG, AP2.2): fuer diese drei zustandsaendernden
+ * Endpunkte bewusst KEIN zusaetzliches Double-Submit-Cookie-Token
+ * eingefuehrt, gleiches Muster wie bereits bei /api/admin/auth/login (AP2.1-
+ * Log) und den bestehenden Haushalts-Endpunkten (z. B. DELETE
+ * /api/template) entschieden: SameSite=Lax blockiert bereits
+ * cross-origin-initiierte POST/DELETE-Anfragen in allen gaengigen aktuellen
+ * Browsern, und es existiert aktuell KEIN browserbasiertes Admin-Frontend
+ * (AP2.1-Log: "Kein Admin-Login-UI/HTML gebaut"), das ein Token ohnehin
+ * mitschicken koennte -- ein Token ohne Konsument waere reine Komplexitaet
+ * ohne unmittelbaren Zusatznutzen. Sobald ein Admin-Dashboard gebaut wird
+ * (noch nicht beauftragt), sollte diese Abwaegung neu getroffen werden.
+ * Explizit als offener Punkt fuer ZANDORs AP5.1-Abschlussreview markiert,
+ * NICHT stillschweigend weggelassen -- siehe Ruckmeldung an ANORAK.
+ * ------------------------------------------------------------------ */
+
+app.post('/api/admin/households/:id/deactivate', requireAdminAuth, wrap(async (req, res) => {
+  const householdId = parseHouseholdId(req.params.id);
+  if (householdId == null) return res.status(400).json({ error: 'Ungueltige Haushalts-ID' });
+
+  // status_reason (F5, plan.md): admin_deactivate_household legt den Wert
+  // 'admin_manual' fest im Funktionskoerper fest (005_admin_foundation.sql)
+  // -- bewusst KEIN vom Aufrufer frei waehlbarer Parameter (MORROWs
+  // Begruendung: kleinere Angriffsflaeche als eine generische
+  // admin_set_household_status(status, reason)-Funktion). Dieser Endpunkt
+  // erwartet trotzdem ein status_reason-Feld im Body (Auftrag ANORAK) --
+  // als explizite Bestaetigung/Deklaration der Aufrufabsicht, NICHT als
+  // frei durchgereichter Wert an die DB-Funktion. 'non_payment' bleibt
+  // einer kuenftigen, hier NICHT gebauten Billing-Automatisierung
+  // vorbehalten (eigener, noch nicht existierender Codepfad) -- wird
+  // deshalb hier explizit abgelehnt statt stillschweigend ignoriert.
+  const statusReason = req.body?.status_reason;
+  if (statusReason !== undefined && statusReason !== 'admin_manual') {
+    return res.status(400).json({
+      error: "status_reason muss 'admin_manual' sein -- dieser Endpunkt fuehrt ausschliesslich manuelle " +
+             "Admin-Deaktivierungen aus. 'non_payment' ist fuer eine kuenftige Billing-Automatisierung " +
+             "reserviert und wird von diesem Endpunkt nicht unterstuetzt."
+    });
+  }
+
+  const client = await appPool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT admin_deactivate_household($1, $2)', [householdId, req.session.adminId]);
+    // AP4.1: bereits laufende Sessions dieses Haushalts sofort ungueltig
+    // machen, statt auf den Ablauf der bis zu 60-Tage-rolling-Session zu
+    // warten. In derselben Transaktion wie der Statuswechsel, damit nicht
+    // der Fall entstehen kann "Haushalt deaktiviert, aber alte Session
+    // bleibt wirksam" (z. B. bei einem Fehler zwischen beiden Schritten).
+    // Referenzabfrage: ap1.1-datenmodell.md Abschnitt 4 /
+    // 005_admin_foundation.sql Abschnitt 6.2. connect-pg-simple liest die
+    // Session-Zeile bei JEDEM Request neu aus dieser Tabelle -- ist sie
+    // geloescht, sieht express-session ab dem naechsten Request des
+    // betroffenen Haushalts keine gueltige Session mehr (req.session.userId
+    // ist dann undefined), requireAuth() weist die Anfrage bereits mit dem
+    // bestehenden 401-Pfad ab. Ein zusaetzlicher Statuscheck in requireAuth
+    // war daher fuer DIESES Erfolgskriterium ("beim naechsten Request sofort
+    // ausgeloggt", nicht "sofort waehrend eines noch laufenden Requests")
+    // nicht mehr noetig -- als offener Abwaegungspunkt trotzdem an ANORAK
+    // zurueckgemeldet, siehe dortige Antwort.
+    await client.query(`DELETE FROM session WHERE (sess->>'householdId')::bigint = $1`, [householdId]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === 'P0002') return res.status(404).json({ error: 'Haushalt nicht gefunden' });
+    // ADM01 (ZANDOR AP5.1, Fund A1, 007_admin_status_guards.sql): Haushalt
+    // ist bereits im Zielstatus -- state-transition guard in der DB-Funktion
+    // hat die Anfrage schon abgelehnt, BEVOR ein Update/Audit-Eintrag
+    // stattfand. 409 statt eines generischen 500 (frueher: unbehandelter
+    // CHECK-Constraint-Crash beim Versuch, einen bereits geloeschten
+    // Haushalt zu deaktivieren, siehe Fund A1).
+    if (err.code === 'ADM01') return res.status(409).json({ error: 'Haushalt ist bereits deaktiviert' });
+    throw err;
+  } finally { client.release(); }
+
+  res.json({ ok: true, householdId, status: 'deactivated', statusReason: 'admin_manual' });
+}));
+
+app.post('/api/admin/households/:id/reactivate', requireAdminAuth, wrap(async (req, res) => {
+  const householdId = parseHouseholdId(req.params.id);
+  if (householdId == null) return res.status(400).json({ error: 'Ungueltige Haushalts-ID' });
+
+  try {
+    // Produktentscheidung (offener Punkt aus ap1.1-datenmodell.md Abschnitt
+    // 6, hier von A3CH/ANORAK entschieden): admin_reactivate_household
+    // erlaubt technisch auch die Wiederherstellung aus status='deleted'
+    // (nicht nur 'deactivated'). Dieser Endpunkt schraenkt das NICHT
+    // zusaetzlich ein -- Reaktivierung ist fuer BEIDE Ausgangsstatus
+    // erlaubt. Begruendung: F3 (Soft-Delete) sieht eine Aufbewahrungsfrist
+    // gerade deshalb vor, damit ein Haushalt vor der (optionalen,
+    // noch nicht gebauten) Hard-Purge (AP3.4) wiederherstellbar bleibt --
+    // eine Ablehnung hier wuerde diesen Zweck der Frist faktisch aushebeln
+    // und einen Restore nur per direktem DB-Zugriff erlauben, was dem Sinn
+    // eines Admin-Bereichs widerspraeche. Kein Session-Invalidierungsschritt
+    // noetig: Reaktivierung stellt Zugriff wieder her, sperrt ihn nicht.
+    await appPool.query('SELECT admin_reactivate_household($1, $2)', [householdId, req.session.adminId]);
+  } catch (err) {
+    if (err.code === 'P0002') return res.status(404).json({ error: 'Haushalt nicht gefunden' });
+    // ADM01, siehe Kommentar beim Deaktivieren-Endpunkt oben.
+    if (err.code === 'ADM01') return res.status(409).json({ error: 'Haushalt ist bereits aktiv' });
+    throw err;
+  }
+
+  res.json({ ok: true, householdId, status: 'active' });
+}));
+
+app.delete('/api/admin/households/:id', requireAdminAuth, wrap(async (req, res) => {
+  const householdId = parseHouseholdId(req.params.id);
+  if (householdId == null) return res.status(400).json({ error: 'Ungueltige Haushalts-ID' });
+
+  // Bestaetigungsschritt gegen Fehlbedienung (plan.md AP3.3-Erfolgskriterium).
+  // BEWUSST NICHT per erneuter Eingabe des Haushaltsnamens (wie im Plan als
+  // Beispiel genannt): das wuerde einen neuen Weg brauchen, den Klarnamen
+  // eines Haushalts an den Admin-Bereich offenzulegen, und wuerde damit die
+  // vom Nutzer explizit entschiedene F1-Grenze ("kein Klarname" in der
+  // Admin-Uebersicht, admin_list_households() liefert bewusst keinen Namen)
+  // faktisch unterlaufen. Stattdessen: die Haushalts-ID muss im Body
+  // wiederholt werden -- dem Admin aus der Uebersicht (AP3.1) ohnehin
+  // bekannt, funktional aequivalenter Tippfehler-/Fehlklick-Schutz ohne neue
+  // PII-Exposition.
+  const confirmId = parseHouseholdId(req.body?.confirmHouseholdId);
+  if (confirmId !== householdId) {
+    return res.status(400).json({
+      error: 'Bestaetigung fehlt oder stimmt nicht ueberein: confirmHouseholdId im Body muss der ' +
+             'Haushalts-ID aus der URL entsprechen'
+    });
+  }
+
+  const client = await appPool.connect();
+  try {
+    await client.query('BEGIN');
+    // F3: Soft-Delete, KEIN Hard-DELETE -- admin_soft_delete_household setzt
+    // ausschliesslich status/deleted_at (005_admin_foundation.sql).
+    await client.query('SELECT admin_soft_delete_household($1, $2)', [householdId, req.session.adminId]);
+    // AP4.1, identischer Mechanismus wie beim Deaktivieren-Endpunkt oben --
+    // ein geloeschter Haushalt muss ebenso sofort gesperrt sein.
+    await client.query(`DELETE FROM session WHERE (sess->>'householdId')::bigint = $1`, [householdId]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === 'P0002') return res.status(404).json({ error: 'Haushalt nicht gefunden' });
+    // ADM01 (ZANDOR AP5.1, Fund A1): verhindert, dass ein wiederholter
+    // Loeschaufruf auf einem bereits geloeschten Haushalt deleted_at
+    // stillschweigend erneut auf now() setzt und damit die
+    // F3-Aufbewahrungsfrist verlaengert -- die DB-Funktion lehnt das bereits
+    // ab, bevor irgendein Update stattfindet.
+    if (err.code === 'ADM01') return res.status(409).json({ error: 'Haushalt ist bereits geloescht' });
+    throw err;
+  } finally { client.release(); }
+
+  res.json({ ok: true, householdId, status: 'deleted' });
+}));
 
 app.get('/api/me', wrap(async (req, res) => {
   if (!req.session.userId) return res.status(401).json({ error: 'Nicht angemeldet' });

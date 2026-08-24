@@ -9,6 +9,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "create-tenant": "node scripts/create-tenant.mjs",
+    "create-admin": "node scripts/create-admin.mjs",
     "export-tenant": "node scripts/export-tenant.mjs",
     "import-tenant": "node scripts/import-tenant.mjs"
   },
