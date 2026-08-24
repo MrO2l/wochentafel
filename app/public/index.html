@@ -261,49 +261,55 @@
 <!-- ================= Tagesliste: eine Zeile (Kategorie), ein Tag, eigenstaendig druckbar
      (Hochformat) — geoeffnet ueber die Liste-Links der Zeile "Einkauf & Besorgungen", seit dem
      Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19) ausschliesslich ueber die Ansicht
-     "Einkaufen" im Linksmenue (nicht mehr zusaetzlich aus dem Hauptraster) ================= -->
-<div class="daylist-overlay" id="daylistOverlay">
-  <div class="daylist" id="daylist">
-    <div class="daylist-head">
-      <div>
-        <h2 id="dlTitle" class="font-heading">Tagesliste</h2>
-        <div class="sub" id="dlSub"></div>
-      </div>
-      <div class="grow"></div>
-      <button class="legacy-btn" id="dlPrint" title="Nur diese Liste drucken">Drucken</button>
-      <button class="legacy-btn primary" id="dlClose" title="Schließen">Schließen</button>
+     "Einkaufen" im Linksmenue (nicht mehr zusaetzlich aus dem Hauptraster).
+     AP2.1 (Bootstrap-Migrationsplan): natives <dialog> + showModal()/close() statt reinem
+     div-Overlay (".daylist-overlay"/"body.daylist-open", entfallen) -- analog zum bereits
+     bestehenden, vorbildlichen Kontomenue-Muster (app.js, openMenu()). Der Browser liefert
+     Backdrop (::backdrop, siehe style.css), Fokus-Falle und ESC-zum-Schliessen automatisch,
+     ohne eigenes JS. ".daylist-head"/".daylist-body" behalten ihre gesamte bisherige Optik
+     (unveraendert), bekommen zusaetzlich Bootstraps ".modal-header"/".modal-body" als rein
+     semantische Kennzeichnung (fuer konsistente, wiedererkennbare Struktur, siehe plan.md) --
+     keine Bootstrap-JS-Modal-Komponente, siehe dortige Begruendung (natives <dialog> bleibt
+     das Referenzmuster fuer alle Overlays dieser App). ================= -->
+<dialog class="daylist" id="daylist" aria-labelledby="dlTitle">
+  <div class="daylist-head modal-header">
+    <div>
+      <h2 id="dlTitle" class="font-heading">Tagesliste</h2>
+      <div class="sub" id="dlSub"></div>
     </div>
-    <div class="daylist-body" id="dlBody"></div>
+    <div class="grow"></div>
+    <button class="legacy-btn" id="dlPrint" title="Nur diese Liste drucken">Drucken</button>
+    <button class="legacy-btn primary" id="dlClose" title="Schließen">Schließen</button>
   </div>
-</div>
+  <div class="daylist-body modal-body" id="dlBody"></div>
+</dialog>
 
 <!-- ================= Essensplan: Mahlzeiten × Tage, eine Tabelle fuer die ganze Woche,
      eigenstaendig druckbar im Querformat — geoeffnet ueber den Link der Zeile "Essen & Kochen",
      seit dem Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19) ausschliesslich ueber die
-     Ansicht "Essen & Kochen" im Linksmenue (nicht mehr zusaetzlich aus dem Hauptraster) ================= -->
-<div class="daylist-overlay" id="mealplanOverlay">
-  <div class="mealplan" id="mealplan">
-    <div class="daylist-head">
-      <div>
-        <h2 class="font-heading">Essensplan der Woche</h2>
-        <div class="sub" id="mpSub"></div>
-      </div>
-      <div class="grow"></div>
-      <button class="legacy-btn" id="mpPrint" title="Nur den Essensplan drucken (A4 quer)">Drucken</button>
-      <button class="legacy-btn primary" id="mpClose" title="Schließen">Schließen</button>
+     Ansicht "Essen & Kochen" im Linksmenue (nicht mehr zusaetzlich aus dem Hauptraster).
+     AP2.2: analog AP2.1 (siehe Kommentar oben) auf natives <dialog> umgestellt. ================= -->
+<dialog class="mealplan" id="mealplan" aria-label="Essensplan der Woche">
+  <div class="daylist-head modal-header">
+    <div>
+      <h2 class="font-heading">Essensplan der Woche</h2>
+      <div class="sub" id="mpSub"></div>
     </div>
-    <div class="daylist-body">
-      <div class="mealplan-toolbar" id="mealplanToolbar">
-        <span class="mpt-label">Piktogramm einfügen:</span>
-      </div>
-      <table class="mp-table">
-        <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
-        <thead><tr id="mpHeadRow"><th class="corner">Mahlzeit</th></tr></thead>
-        <tbody id="mpTableBody"></tbody>
-      </table>
-    </div>
+    <div class="grow"></div>
+    <button class="legacy-btn" id="mpPrint" title="Nur den Essensplan drucken (A4 quer)">Drucken</button>
+    <button class="legacy-btn primary" id="mpClose" title="Schließen">Schließen</button>
   </div>
-</div>
+  <div class="daylist-body modal-body">
+    <div class="mealplan-toolbar" id="mealplanToolbar">
+      <span class="mpt-label">Piktogramm einfügen:</span>
+    </div>
+    <table class="mp-table">
+      <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
+      <thead><tr id="mpHeadRow"><th class="corner">Mahlzeit</th></tr></thead>
+      <tbody id="mpTableBody"></tbody>
+    </table>
+  </div>
+</dialog>
 
 <script src="icons.js"></script>
 <script src="app.js"></script>

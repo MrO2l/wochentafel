@@ -421,20 +421,39 @@ td.weekcell .listlink .badge{position:static; margin-left:auto}
    Klassennamen (lbl, corner, today, badge, dw, dt) sind bewusst dieselben wie im Hauptraster
    fuer dieselbe optische Sprache; ihre Groessen werden hier gezielt auf Bildschirm-Masse
    ueberschrieben (siehe .mp-table-Regeln), Farben/Struktur bleiben identisch. */
-.daylist-overlay{display:none; position:fixed; inset:0; background:rgba(20,26,32,.45); z-index:100;
-  align-items:flex-start; justify-content:center; padding:26px 14px; overflow:auto}
-body.daylist-open #daylistOverlay{display:flex}
-body.mealplan-open #mealplanOverlay{display:flex}
-.daylist,.mealplan{background:var(--surface); width:100%; max-width:640px; border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,.3); overflow:hidden}
-.mealplan{max-width:980px}
+/* AP2.1/AP2.2 (Bootstrap-Migrationsplan): natives <dialog> (index.html) statt eigenem
+   div-Overlay -- ".daylist-overlay"/"body.daylist-open"/"body.mealplan-open" entfallen damit,
+   der Browser uebernimmt Backdrop/Zentrierung/Fokus-Falle selbst. Reset der <dialog>-UA-Defaults
+   (Rahmen/Innenabstand/Positionierung) plus Uebernahme der bisherigen Optik (Flaeche/Breite/
+   Ecken/Schatten unveraendert). "top:26px" statt vertikaler Zentrierung, damit die Karte wie
+   zuvor (".daylist-overlay{align-items:flex-start;padding:26px 14px}") nahe am oberen Rand
+   erscheint statt seitenmittig -- reine Positionsuebernahme, keine optische Aenderung. */
+dialog.daylist, dialog.mealplan{
+  border:0; margin:0; padding:0; position:fixed; top:26px; left:50%; transform:translateX(-50%);
+  max-height:calc(100vh - 52px); overflow-x:hidden; overflow-y:auto;
+  background:var(--surface); width:100%; max-width:640px; border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,.3);
+}
+dialog.daylist::backdrop, dialog.mealplan::backdrop{background:rgba(20,26,32,.45)}
+/* dialog.mealplan (Tag+Klasse) statt nur .mealplan: die Basisregel oben nutzt jetzt ebenfalls
+   "dialog.daylist, dialog.mealplan" (Spezifitaet Element+Klasse) -- ohne das gleiche Praefix
+   hier wuerde diese Regel (nur Klasse, niedrigere Spezifitaet) nicht mehr gewinnen, egal an
+   welcher Stelle sie im Stylesheet steht (im Regressionstest so aufgefallen: Essensplan-Karte
+   blieb bei 640px statt 980px breit). */
+dialog.mealplan{max-width:980px}
 /* Design-Mischmasch-Fix, zweite Runde (Nutzer-Feedback 2026-08-19): der Pastell-Farbtupfer-
    Verlauf hier gehoert zur selben veralteten Design-Runde wie der frueher entfernte
    body{background}-Verlauf (siehe dortiger Kommentar) und wurde ebenso ersatzlos durch eine
    flache Flaeche ersetzt -- var(--secondary) entspricht der im Mockup fuer "funktionale
    Bloecke"/Kopfbereiche vorgesehenen hellen Greige-Flaeche (siehe :root-Kommentar in
    style-v2.css). */
+/* border-radius:0 bewusst explizit (AP2.1/AP2.2): ".daylist-head" traegt jetzt zusaetzlich
+   Bootstraps ".modal-header"-Klasse (index.html), die dafuer eigene obere Eckenradien mitbringt
+   (var(--bs-modal-inner-border-radius)). Die Rundung der Kopfzeile kam bisher ausschliesslich
+   vom "overflow:hidden" der aeusseren .daylist/.mealplan-Karte -- ohne diese Ergaenzung koennte
+   ein zweiter, leicht abweichender Radius direkt an der Kopfzeile selbst einen sichtbaren
+   Randartefakt in der Ecke erzeugen. */
 .daylist-head{display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1.6pt solid var(--accent);
-  background:var(--secondary);
+  background:var(--secondary); border-radius:0;
 }
 .daylist-head h2{margin:0; font-size:20px; font-weight:800; color:var(--accent)} /* Schrift-
   Vereinheitlichung 2026-08-19: font-weight jetzt explizit (vorher impliziter Browser-Default fuer
@@ -735,14 +754,22 @@ body:not(.section-wochenuebersicht) .cal-only{display:none !important}
    sich damit unabhaengig vom Hauptraster und unabhaengig voneinander auf ein eigenes Blatt
    drucken (siehe Dokumentation 4.9, hier um eine dritte/vierte Darstellung erweitert). */
 @media print{
-  body.printing-daylist > *:not(#daylistOverlay){display:none !important}
-  body.printing-daylist #daylistOverlay{position:static; background:none; padding:0; display:block}
+  /* AP2.1/AP2.2: Selektoren zeigen jetzt direkt auf das <dialog>-Element (#daylist/#mealplan)
+     statt auf die entfallenen Wrapper-IDs #daylistOverlay/#mealplanOverlay. "position:static"
+     entfaellt bewusst -- ein per showModal() geoeffneter <dialog> rendert beim Drucken bereits
+     korrekt innerhalb der A4-Seite, ein zusaetzlicher Positionsreset ist nicht mehr noetig
+     (im Druck-Regressionstest so verifiziert). */
+  body.printing-daylist > *:not(#daylist){display:none !important}
   body.printing-daylist .daylist{max-width:none; box-shadow:none; border-radius:0; background:#fff; page:daylist-print}
   body.printing-daylist .daylist-head{background:#f2f4f6}
   body.printing-daylist .daylist-head .legacy-btn{display:none}
+  /* Ohne diese Ergaenzung druckt der Browser den nativen ::backdrop des <dialog> (normalerweise
+     das halbtransparente Abdunkeln hinter der Karte) als deckende graue Flaeche unter die Karte
+     mit aus -- im Druck-Regressionstest so aufgefallen. Die alte div-Overlay-Loesung hatte
+     denselben Fall bereits ueber "#daylistOverlay{background:none}" abgefangen. */
+  dialog.daylist::backdrop, dialog.mealplan::backdrop{background:none}
 
-  body.printing-mealplan > *:not(#mealplanOverlay){display:none !important}
-  body.printing-mealplan #mealplanOverlay{position:static; background:none; padding:0; display:block}
+  body.printing-mealplan > *:not(#mealplan){display:none !important}
   body.printing-mealplan .mealplan{max-width:none; box-shadow:none; border-radius:0; background:#fff}
   body.printing-mealplan .daylist-head{background:#f2f4f6}
   body.printing-mealplan .daylist-head .legacy-btn{display:none}

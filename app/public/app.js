@@ -965,11 +965,13 @@ function openDayList(rowIndex, dayIndex) {
     DAYS[dayIndex] + ', ' + d.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' }) +
     (dayIndex === todayColumnIndex() ? ' · heute' : '');
   renderDayListBody();
-  document.body.classList.add('daylist-open');
+  document.getElementById('daylist').showModal();
 }
+// AP2.1: schliesst ueber die native dialog.close() -- das "close"-Ereignis (siehe boot(),
+// dort einmalig registriert) uebernimmt das Neuzeichnen fuer ALLE Schliesswege gleichermassen
+// (Schliessen-Button, ESC-Taste, Klick auf den Backdrop), nicht nur den Button-Klick.
 function closeDayList() {
-  document.body.classList.remove('daylist-open');
-  renderAll(); // Badges im Raster/in der Tagesansicht aktualisieren, falls Eintraege geaendert wurden
+  document.getElementById('daylist').close();
 }
 function renderDayListBody() {
   const wrap = $('#dlBody');
@@ -1003,12 +1005,13 @@ function openMealPlan() {
     sun.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' });
   renderMealPlanHead();
   renderMealPlanBody();
-  document.body.classList.add('mealplan-open');
+  document.getElementById('mealplan').showModal();
 }
+// AP2.2: siehe Kommentar bei closeDayList() -- syncFromDOM() (Zellen-Eintraege aus der
+// Essensplan-Tabelle uebernehmen) laeuft ueber das "close"-Ereignis, damit es fuer JEDEN
+// Schliessweg greift, nicht nur den Button-Klick (z.B. auch bei ESC, vorher gar nicht moeglich).
 function closeMealPlan() {
-  syncFromDOM();
-  document.body.classList.remove('mealplan-open');
-  renderAll();
+  document.getElementById('mealplan').close();
 }
 function renderMealPlanHead() {
   const headRow = $('#mpHeadRow');
@@ -1147,14 +1150,26 @@ async function boot() {
   });
 
   $('#dlClose').onclick = closeDayList;
-  $('#daylistOverlay').addEventListener('click', e => { if (e.target.id === 'daylistOverlay') closeDayList(); });
+  // AP2.1: Klick auf den nativen ::backdrop registriert sich als Klick auf das <dialog>-Element
+  // SELBST (e.target === dlg), da alle Nachfahren-Elemente (Kopf/Body/Buttons) das Ereignis
+  // stoppen wuerden, sofern sie getroffen sind -- ein Treffer direkt auf "daylist" bedeutet also
+  // zuverlaessig "ausserhalb der Karte geklickt", identisches Verhalten wie zuvor beim div-Overlay.
+  $('#daylist').addEventListener('click', e => { if (e.target.id === 'daylist') closeDayList(); });
+  // "close"-Ereignis (native dialog-API) greift fuer JEDEN Schliessweg (Button, ESC-Taste,
+  // Backdrop-Klick via obigem Handler) -- Badges im Raster/in der Tagesansicht aktualisieren,
+  // falls Eintraege geaendert wurden. Vorher nur beim Button-Klick moeglich (ESC schloss die
+  // fruehere reine div-Overlay-Loesung gar nicht).
+  $('#daylist').addEventListener('close', () => { renderAll(); });
   // Hochformat fuer den Ausdruck der Tagesliste kommt rein statisch aus der benannten
   // @page-Regel "daylist-print" in style.css (aktiviert ueber .daylist{page:daylist-print}
   // sobald body.printing-daylist gesetzt ist) — keine Laufzeit-Style-Injektion noetig/erlaubt.
   $('#dlPrint').onclick = () => { syncFromDOM(); document.body.classList.add('printing-daylist'); window.print(); };
 
   $('#mpClose').onclick = closeMealPlan;
-  $('#mealplanOverlay').addEventListener('click', e => { if (e.target.id === 'mealplanOverlay') closeMealPlan(); });
+  $('#mealplan').addEventListener('click', e => { if (e.target.id === 'mealplan') closeMealPlan(); });
+  // syncFromDOM() (Essensplan-Zelleneintraege uebernehmen) laeuft hier bewusst ueber das
+  // "close"-Ereignis statt nur im Button-Klick, siehe Kommentar bei closeMealPlan().
+  $('#mealplan').addEventListener('close', () => { syncFromDOM(); renderAll(); });
   $('#mpPrint').onclick = () => { syncFromDOM(); document.body.classList.add('printing-mealplan'); window.print(); };
 
   window.addEventListener('beforeprint', () => { if (state.view === 'day') { syncFromDOM(); renderSheet(); } });
