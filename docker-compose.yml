@@ -1,0 +1,138 @@
+# ============================================================================
+# Ein Stack fuer ALLE Kunden (Shared-Instance-Modell, entschieden in
+# projects/wochenplaner-mandantenfaehigkeit/plan.md, Phase 0 / AP0.2, und
+# umgesetzt in AP3.1 -- siehe projects/wochenplaner-mandantenfaehigkeit/
+# ap3.1-deployment-automatisierung.md). Kein Stack-pro-Kunde mehr: genau eine
+# App-Instanz + eine gemeinsame Postgres-Instanz bedienen alle Mandanten
+# (Mandant = households-Zeile). Ein neuer Kunde erfordert KEINE Aenderung an
+# dieser Datei -- ausschliesslich `npm run create-tenant` (App-Ebene, AP2.3),
+# siehe Runbook im o.g. Dokument.
+# Backup/Restore pro Mandant (AP3.2, siehe projects/wochenplaner-
+# mandantenfaehigkeit/ap3.2-backup-konzept.md): ops/backup-tenant-offsite.sh
+# und ops/restore-tenant-from-offsite.sh orchestrieren Export/Import ueber
+# app/scripts/{export,import}-tenant.mjs (Owner-/Migrator-Rolle, DATABASE_URL)
+# und GPG-Verschluesselung. Kein Compose-Service dafuer noetig -- die Skripte
+# nutzen den bereits laufenden app/db-Service per `docker compose exec`.
+# ============================================================================
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # pg_stat_statements (AP3.3, Monitoring-Grundlage fuer auffaellige
+    # household_id-Zugriffsmuster, siehe projects/wochenplaner-
+    # mandantenfaehigkeit/ap3.3-ressourcen-grundschutz.md Abschnitt 3):
+    # shared_preload_libraries ist ein Postmaster-Parameter, laesst sich nicht
+    # per ALTER SYSTEM nachtraeglich ohne Neustart aktivieren -- daher hier
+    # als Start-Flag statt in einer Migration. Die eigentliche
+    # `CREATE EXTENSION pg_stat_statements` steht in
+    # app/migrations/004_tenant_context_audit.sql (laeuft ueber die Owner-
+    # Rolle). pg_stat_statements.max=5000 (Default 5000, hier explizit
+    # dokumentiert) begrenzt den Shared-Memory-Verbrauch der Abfrage-Statistik
+    # -- unkritisch fuer den mem_limit-Rahmen unten (Statistikspeicher ist
+    # Teil von shared_buffers, nicht des Container-mem_limit direkt, aber
+    # gering: einige hundert KB je 5000 verschiedene Abfrage-Formen).
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.max=5000"
+      - "-c"
+      - "pg_stat_statements.track=all"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wochenplan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD fehlt in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-wochenplan}
+      # sorgt fuer deutsche Sortierung und UTF-8 beim ersten Start
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wochenplan} -d ${POSTGRES_DB:-wochenplan}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+    # Kein cap_drop hier: das offizielle Postgres-Image wechselt beim Start
+    # per gosu intern vom root- zum postgres-Benutzer und braucht dafuer
+    # CAP_SETUID/CAP_SETGID. cap_drop:[ALL] wuerde den Start verhindern.
+    mem_limit: 512m
+
+  app:
+    build: ./app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Owner-/Migrator-Rolle: fuehrt ausschliesslich migrate() aus (Schema-
+      # Migrationen, inkl. Anlegen der eingeschraenkten Rolle wochenplan_app
+      # und der RLS-Policies). Von Row-Level-Security grundsaetzlich
+      # ausgenommen (Postgres-Owner-Bypass) -- bewusst NICHT fuer Laufzeit-
+      # Anfragen verwendet (AP2.2, ap1.2-rls-konzept.md Abschnitt 1).
+      DATABASE_URL: postgres://${POSTGRES_USER:-wochenplan}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-wochenplan}
+      # Laufzeit-Rolle: aller Anwendungsverkehr (inkl. Session-Store) laeuft
+      # hierueber. Nicht Tabelleneigentuemerin, daher greifen die RLS-Policies
+      # aus 003_rls_policies.sql fuer diese Verbindung tatsaechlich.
+      DATABASE_URL_APP: postgres://wochenplan_app:${WOCHENPLAN_APP_PASSWORD}@db:5432/${POSTGRES_DB:-wochenplan}
+      # Passwort der Laufzeit-Rolle wochenplan_app. Wird beim App-Start per
+      # ALTER ROLE (server.js, ensureAppRolePassword) idempotent gesetzt --
+      # die Rolle selbst legt Migration 002_multi_tenant_foundation.sql an,
+      # bewusst ohne Passwort (Secret gehoert nicht in eine versionierte
+      # SQL-Datei, siehe ap1.1-datenmodell-migration.md).
+      # Secret-Verwaltung fuer den produktiven Mehrkundenbetrieb bewusst
+      # geprueft und BEIBEHALTEN (AP3.1, ART3MIS) -- Begruendung, Alternativen-
+      # abwaegung (Docker/Swarm-Secrets) und getestetes Rotationsverfahren
+      # (ein `docker compose up -d --no-deps app`, kein Rebuild, keine
+      # Downtime der db) siehe ap3.1-deployment-automatisierung.md.
+      WOCHENPLAN_APP_PASSWORD: ${WOCHENPLAN_APP_PASSWORD:?WOCHENPLAN_APP_PASSWORD fehlt in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET fehlt in .env}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      PORT: 3000
+    ports:
+      # Sicherer Default: nur vom Server selbst erreichbar (fuer den Proxy dahinter).
+      # Im Heimnetz ohne Proxy in der .env ausdruecklich APP_BIND=0.0.0.0 setzen.
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+
+  # Optional: HTTPS und Erreichbarkeit von unterwegs.
+  # Start mit:  docker compose --profile proxy up -d
+  #
+  # TLS-/Domainmodell B1 (Mehrkundenbetrieb, siehe infrastrukturkosten-
+  # schaetzung.md Abschnitt 10 und ap3.1-deployment-automatisierung.md):
+  # GENAU EINE gemeinsame Domain/Subdomain fuer ALLE Kunden, ein einziger
+  # Caddy-Site-Block (siehe deploy/Caddyfile) -- keine Domain-/Subdomain-pro-
+  # Kunde, kein Wildcard-Zertifikat, kein DNS-API-Zugriff noetig. Die
+  # Kundentrennung erfolgt ausschliesslich ueber Login/Session (RLS +
+  # household_id), niemals ueber Host-Header/Domain. Ein neuer Kunde
+  # erfordert daher KEINE Aenderung an DOMAIN/Caddyfile/Zertifikat.
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles: ["proxy"]
+    depends_on: [app]
+    environment:
+      DOMAIN: ${DOMAIN:-wochenplan.example.org}
+      LETSENCRYPT_MAIL: ${LETSENCRYPT_MAIL:-admin@example.org}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    mem_limit: 128m
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

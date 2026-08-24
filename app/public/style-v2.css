@@ -1,0 +1,335 @@
+/*
+ * Design v2 (Taupe/Greige, Bootstrap 5, Open Sans, Linksmenue) -- Bildschirm-CSS.
+ *
+ * Herkunft: 1:1 aus dem inline <style>-Block des freigegebenen Klick-Mockups
+ * (projects/wochenplaner/mockups/wochenplaner-mockup-v2-linksmenue.html) uebernommen und
+ * unter 'self' als externe Datei bereitgestellt (AP3.1 -- kein Inline-<style> mehr,
+ * CSP-konform ohne 'unsafe-inline'). Das reine Testhinweis-Banner des Mockups
+ * (.mockup-hint, nur fuer das Klick-Mockup selbst gedacht) wurde bewusst nicht mit
+ * uebernommen, da es kein Teil des eigentlichen Entwurfs ist.
+ *
+ * Status: Diese Datei liegt bereit, ist aber noch NICHT in index.html eingebunden --
+ * das Verdrahten (inkl. Linksmenue-Markup und Umbau der bestehenden Seitenstruktur)
+ * ist Aufgabe von AP3.2, nicht dieses Arbeitspakets (AP3.1 betrifft ausschliesslich
+ * Assets/CSS/CSP). Setzt die vendorten Bootstrap-/Bootstrap-Icons-/Open-Sans-Dateien
+ * unter vendor/ voraus (siehe Asset-Vendoring-Konzept-v2.md).
+ */
+
+/* =========================================================================================
+   Design-Vorgabe v2, Abschnitt 1: Farbpalette (Taupe/Greige).
+   Als CSS-Variablen uebernommen, Namen bewusst 1:1 an die SCSS-Variablennamen der Vorgabe
+   angelehnt (ohne fuehrendes $), damit der Bezug zur Design-Vorgabe-Datei nachvollziehbar bleibt.
+   ========================================================================================= */
+:root{
+  --primary:      #8D7C75; /* Dunkles Taupe/Greige -- Ueberschriften, Primaer-Aktionen, Akzente */
+  --secondary:    #E2DCD5; /* Helles Greige -- Spalten-Hintergruende, funktionale Bloecke */
+  --background:   #FCFAF8; /* Gebrochenes Warmweiss -- App-Gesamthintergrund & Karten */
+  --border-color: #D1C7BD; /* Softes Sand-Grau -- Trennlinien & Rahmen */
+  --text-body:    #564D47; /* Warmes Dunkelbraun/Grau -- Fliesstext */
+  --primary-dark: #6f605a; /* Abgeleitet aus --primary, nur fuer Hover/aktive Zustaende (Kontrast) */
+  --radius:       0.5rem;  /* Abschnitt 4.4: globaler Soft-Edge-Radius */
+}
+
+html,body{margin:0; padding:0}
+body{
+  font-family:"Open Sans","Inter","Lato",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-size:16px; /* Abschnitt 2: Basisschriftgroesse */
+  background:var(--background);
+  color:var(--text-body);
+}
+a{color:var(--primary)}
+.tracking-wide{letter-spacing:.04em}
+
+/* ---------------- Bootstrap-Klassen mit den Vorgabe-Farben "nachkompiliert" (kein SCSS-Build
+   im Projekt vorhanden, siehe Kopfkommentar des Mockups) -- deckt die in der Vorgabe explizit
+   genannten Komponenten ab. ---------------- */
+.text-primary{color:var(--primary) !important}
+.bg-primary{background-color:var(--primary) !important}
+.bg-secondary-subtle{background-color:var(--secondary) !important}
+.border-primary{border-color:var(--primary) !important}
+.link-primary{color:var(--primary) !important}
+
+.btn-primary{
+  background-color:var(--primary); border-color:var(--primary); color:#fff;
+}
+.btn-primary:hover, .btn-primary:focus{
+  background-color:var(--primary-dark); border-color:var(--primary-dark); color:#fff;
+}
+.btn-outline-primary{
+  color:var(--primary); border-color:var(--primary);
+}
+.btn-outline-primary:hover{
+  background-color:var(--primary); border-color:var(--primary); color:#fff;
+}
+.btn{ border-radius:var(--radius) } /* Abschnitt 4.3: .rounded-3-artige Buttons durchgaengig */
+
+.card{
+  background-color:var(--background);
+  border-color:var(--border-color);
+  border-radius:var(--radius);
+}
+
+/* Abschnitt 4.1: Formularfelder im "Lines-Look" -- nur untere Borduere statt Vollrahmen. */
+.form-control{
+  border:0; border-bottom:1px solid var(--border-color);
+  border-radius:0; background:transparent; color:var(--text-body); padding-left:.25rem;
+}
+.form-control::placeholder{ color:#a89a8c }
+.form-control:focus{
+  border-bottom-color:var(--primary); box-shadow:none;
+  background:transparent; color:var(--text-body);
+  /* Milder Glow-Effekt in $primary statt Standard-Bootstrap-Blau (Abschnitt 4.1). */
+  outline:2px solid rgba(141,124,117,.25); outline-offset:2px;
+}
+
+/* Abschnitt 4.2: Checkboxen -- leicht vergroessert, quadratisch, abgerundet, $primary im aktiven
+   Zustand, plus deutlich vergroesserte Klickflaeche (Abschnitt 5: grosszuegige Touch-Ziele). */
+.form-check-input{
+  width:1.25em; height:1.25em; border-radius:4px; border-color:var(--border-color);
+  margin-top:.2em;
+}
+.form-check-input:checked{
+  background-color:var(--primary); border-color:var(--primary);
+}
+.form-check-input:focus{
+  border-color:var(--primary); box-shadow:0 0 0 .2rem rgba(141,124,117,.25);
+}
+.form-check-label{ padding:.35rem 0; cursor:pointer } /* groessere Touch-Flaeche um die Checkbox */
+.form-check.touch-row{ padding:.15rem 0 }
+
+hr, .border, .border-top, .border-bottom, .border-start, .border-end{
+  border-color:var(--border-color) !important;
+}
+.shadow-sm{ box-shadow:0 .125rem .5rem rgba(86,77,71,.08) !important } /* dezenter als Bootstrap-Default */
+
+/* =========================================================================================
+   App-Geruest: linksseitiges Icon-Menue (muendliche Ergaenzung des Nutzers, nicht Teil der
+   schriftlichen Design-Vorgabe v2, aber farblich/stilistisch daran ausgerichtet).
+   ========================================================================================= */
+.app-shell{ min-height:100vh; align-items:stretch }
+
+.app-sidebar{
+  width:104px; flex:none;
+  background:var(--background);
+  border-right:1px solid var(--border-color);
+  box-shadow:2px 0 10px rgba(86,77,71,.06); /* dezenter Schatten statt harter Trennlinie */
+  display:flex; flex-direction:column; align-items:center;
+  padding:1rem .5rem; position:sticky; top:0; height:100vh; z-index:20;
+}
+.app-sidebar .brand{
+  width:56px; height:56px; border-radius:var(--radius);
+  background:var(--primary); color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.4rem; margin-bottom:1.25rem; box-shadow:0 .125rem .5rem rgba(86,77,71,.15);
+}
+.app-nav{ display:flex; flex-direction:column; gap:.5rem; width:100%; }
+/* Grosszuegige Touch-Ziele (Abschnitt 5): min. 64px Hoehe, volle Sidebar-Breite als Klickflaeche. */
+.app-nav .nav-btn{
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.3rem;
+  width:100%; min-height:64px; padding:.5rem .25rem;
+  border:0; border-radius:var(--radius); background:transparent; color:var(--text-body);
+  font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.03em;
+  cursor:pointer; text-align:center; line-height:1.15;
+}
+.app-nav .nav-btn i{ font-size:1.55rem; line-height:1 }
+.app-nav .nav-btn:hover:not(.active){ background:var(--secondary) }
+.app-nav .nav-btn.active{
+  background:var(--primary); color:#fff;
+  box-shadow:0 .2rem .6rem rgba(86,77,71,.22);
+}
+.app-nav .nav-btn:focus-visible{
+  outline:2px solid var(--primary); outline-offset:2px;
+}
+
+.app-main{ flex:1 1 auto; min-width:0; padding:1.5rem clamp(1rem,3vw,2.25rem) 3rem; }
+.app-view{ display:none }
+.app-view.active{ display:block }
+
+/* Kleine Bildschirme: Linksmenue wird zu einer unteren Tab-Leiste (gleiche Icons/Beschriftung,
+   gleiche Touch-Ziel-Groesse) -- reine responsive Anpassung des gleichen Linksmenue-Konzepts,
+   keine inhaltliche Aenderung der Navigation. */
+@media (max-width:767.98px){
+  .app-shell{ flex-direction:column }
+  .app-sidebar{
+    position:fixed; top:auto; bottom:0; left:0; right:0; height:auto; width:auto;
+    flex-direction:row; justify-content:space-around; padding:.4rem .5rem;
+    border-right:0; border-top:1px solid var(--border-color);
+    box-shadow:0 -2px 10px rgba(86,77,71,.08);
+  }
+  .app-sidebar .brand{ display:none }
+  .app-nav{ flex-direction:row; justify-content:space-around }
+  .app-nav .nav-btn{ min-height:56px }
+  .app-main{ padding-bottom:5.5rem } /* Platz fuer die fixierte untere Leiste */
+}
+
+/* ---------------- Wochenuebersicht (Design-Vorgabe v2, Abschnitt 3) ---------------- */
+.week-header-bar{
+  display:flex; flex-wrap:wrap; align-items:flex-end; gap:1rem;
+  border-bottom:1.5pt solid var(--primary); padding-bottom:.75rem; margin-bottom:1rem;
+}
+.week-header-bar h1{ color:var(--primary); font-weight:800; margin:0; font-size:1.75rem }
+.week-header-bar .sub{ color:var(--text-body); opacity:.75; font-size:.85rem }
+.week-header-bar .kw-badge{
+  margin-left:auto; text-align:right; font-size:.85rem; color:var(--text-body);
+}
+.week-header-bar .kw-badge .kw{ font-size:1.15rem; font-weight:700; color:var(--primary) }
+
+/* 3.1: 7-Spalten-Raster, dezente vertikale Trennlinien, alternierende Spaltenhintergruende. */
+.week-grid{ border:1px solid var(--border-color); border-radius:var(--radius); overflow:hidden; }
+.day-col{
+  padding:0; background:var(--background);
+  border-bottom:1px solid var(--border-color); /* mobile Stapelung: Trennung nach unten */
+}
+@media (min-width:768px){
+  .day-col{ border-bottom:0 }
+  .day-col:not(:last-child){ border-right:1px solid var(--border-color) } /* .border-end */
+  .day-col.alt{ background-color:color-mix(in srgb, var(--secondary) 35%, var(--background)); }
+}
+.day-header{
+  padding:.6rem .5rem .5rem; text-align:center;
+  border-bottom:1px solid var(--border-color);
+}
+.day-header .dw{
+  display:block; color:var(--primary); font-weight:700; font-size:.82rem;
+  text-transform:uppercase; letter-spacing:.05em; /* .text-uppercase .fw-bold .tracking-wide */
+}
+.day-header .dt{ display:block; font-size:.72rem; color:var(--text-body); opacity:.7; margin-top:.1rem }
+.day-header.today{ background:var(--secondary) }
+.day-header.today .dw::after{
+  content:"Heute"; display:inline-block; margin-left:.35rem; font-size:.6rem; font-weight:700;
+  background:var(--primary); color:#fff; padding:.05rem .4rem; border-radius:1rem; letter-spacing:.02em;
+  text-transform:uppercase; vertical-align:middle;
+}
+.day-lines{ padding:.35rem .5rem .6rem; min-height:9.5rem }
+/* 3.1: dezente horizontale Hilfslinien, an linierte Papierfelder erinnernd. */
+.day-line{
+  border-bottom:1px dashed var(--border-color); padding:.4rem .1rem; font-size:.82rem;
+  min-height:2rem; display:flex; align-items:flex-start; gap:.35rem; line-height:1.3;
+}
+.day-line:last-child{ border-bottom:0 }
+.day-line i{ color:var(--primary); font-size:.9rem; margin-top:.15rem; flex:none }
+.day-line.empty{ color:#b9ab9c }
+
+/* 3.2: unterer Fokus-/Aufgabenbereich, dreigeteilt. */
+.focus-goals{
+  background:var(--primary); color:#fff; border-radius:var(--radius);
+  padding:1rem 1.1rem; height:100%;
+}
+/* AP3.4-Kontrastfix (siehe plan.md/Wissenseintrag): weisser Text direkt auf --primary
+   (#8D7C75) misst rechnerisch nur ca. 4,0:1 -- unter der AA-Schwelle (4,5:1) fuer normal
+   grossen Fliesstext. Statt die globale --primary-Variable zu aendern (die auch fuer Buttons/
+   Akzente andernorts gilt), bekommen NUR die tatsaechlichen Textflaechen (Listenzeilen,
+   "Neuer Eintrag"-Leiste, Leerzustand) einen gezielt abgedunkelten Hintergrund -- ueber die
+   bereits vorhandene Variable --primary-dark (siehe :root oben, urspruenglich nur fuer
+   Hover-/Aktiv-Zustaende gedacht, keine neue Farbe eingefuehrt). Rechnerisch (WCAG-Formel):
+   weiss (#fff) auf --primary-dark (#6f605a) ergibt ca. 6,0:1 -- klar ueber AA. Der
+   Karten-Gesamthintergrund bleibt unveraendert --primary (rein dekorative Flaeche zwischen den
+   Textzeilen). Die Ueberschrift bleibt auf --primary, wird aber von 1rem auf 1.2rem (=19.2px,
+   fett) vergroessert, um WCAGs Grossschrift-Schwelle (>=14pt/18.66px fett) zu erreichen -- fuer
+   Grossschrift genuegt die AA-Schwelle von 3:1, die der unveraenderte Kontrast (~4,0:1) bereits
+   erfuellt (siehe Rueckmeldung A3CH AP3.3/AP3.4 fuer die vollstaendige Rechnung). */
+.focus-goals h2{ font-size:1.2rem; font-weight:700; margin:0 0 .75rem; color:#fff }
+.focus-goals .form-check-input{ border-color:rgba(255,255,255,.6); background:rgba(255,255,255,.1) }
+.focus-goals .form-check-input:checked{ background-color:#fff; border-color:#fff }
+.focus-goals .form-check-input:checked + label::after{ color:var(--primary) }
+.focus-goals .form-check-label{ color:#fff }
+.focus-goals ol{ list-style:none; margin:0; padding:0; counter-reset:goal }
+.focus-goals li{
+  display:flex; align-items:center; gap:.5rem; margin-bottom:.4rem;
+  background:var(--primary-dark); border-radius:calc(var(--radius) - 2px); padding:.4rem .55rem;
+}
+.focus-goals .goal-num{
+  flex:none; width:1.4rem; height:1.4rem; border-radius:50%; background:rgba(0,0,0,.28);
+  color:#fff; display:flex; align-items:center; justify-content:center; font-size:.72rem; font-weight:700;
+}
+
+/* AP3.5-Kontrastnachbesserung: --primary (#8D7C75) auf dem hellen Karten-/App-Hintergrund
+   (var(--background), #FCFAF8) misst nur ca. 3,8:1 -- unter der AA-Schwelle (4,5:1) fuer diesen
+   normal grossen (1rem), nicht ausreichend vergroesserten Fliesstext. Gleiches Muster wie der
+   bereits geloeste Wochenziele-Kontrast (siehe .focus-goals oben): statt der globalen
+   --primary-Variable (die auch fuer Buttons/Icons/Akzente andernorts gilt) wird gezielt hier auf
+   die bereits vorhandene --primary-dark (#6f605a) gewechselt. Rechnerisch: #6f605a auf #FCFAF8
+   ergibt ca. 5,8:1 -- klar ueber AA. */
+.focus-notes h2, .focus-calls h2{ font-size:1rem; font-weight:700; color:var(--primary-dark); margin-bottom:.75rem }
+.focus-notes .form-control{ margin-bottom:.5rem }
+.focus-calls .focus-call-row{
+  display:flex; align-items:center; gap:.5rem; padding:.4rem 0;
+  border-bottom:1px dashed var(--border-color);
+}
+.focus-calls .focus-call-row:last-child{ border-bottom:0 }
+.focus-calls .form-check{
+  display:flex; flex-direction:row-reverse; justify-content:space-between; align-items:center;
+  gap:.6rem; flex:1 1 auto; min-width:0;
+}
+.focus-calls .form-check-label{ padding:0 }
+
+/* ---------------- AP3.3: gemeinsame Bausteine aller drei Fokusbloecke -- Leerzustand,
+   Entfernen-Schaltflaeche, "Neuer Eintrag"-Leiste. Eintraege bei "Wochenziele"/"Anrufen" werden
+   wie in der Tagesliste (siehe app.js, renderItemsList()/buildComposer()) nur beim Hinzufuegen
+   als Text erfasst und danach nur noch abgehakt oder entfernt, nicht nachtraeglich
+   umgeschrieben -- gleiches Interaktionsmuster, konsistent mit dem Rest der App. */
+.focus-list{ margin:0; padding:0; list-style:none }
+.focus-empty{ font-size:.82rem; color:var(--text-body); font-style:italic; margin:.15rem 0 .6rem }
+/* Auf dunklem Wochenziele-Hintergrund gilt derselbe Kontrast-Fix wie oben: keine transparente
+   Abblendung von Weiss (das rutscht rechnerisch schnell wieder unter 4,5:1), sondern voll
+   deckendes Weiss auf der abgedunkelten Flaeche. */
+.focus-goals .focus-empty{
+  color:#fff; background:var(--primary-dark); border-radius:calc(var(--radius) - 2px);
+  padding:.45rem .55rem; font-style:normal;
+}
+.focus-remove{
+  flex:none; border:0; background:transparent; color:var(--primary); cursor:pointer;
+  font-size:1.1rem; line-height:1; padding:.1rem .35rem; border-radius:4px;
+}
+.focus-remove:hover{ color:#a12b2b; background:rgba(161,43,43,.08) }
+.focus-goals .focus-remove{ color:#fff }
+.focus-goals .focus-remove:hover{ color:#fff; background:rgba(0,0,0,.2) }
+
+.focus-add{ display:flex; gap:.4rem; margin-top:.5rem }
+.focus-add .form-control{ flex:1 1 auto; min-width:0 }
+.focus-add-btn{
+  flex:none; border:1px solid var(--border-color); background:var(--background);
+  color:var(--text-body); border-radius:var(--radius); padding:.35rem .7rem;
+  font-size:.8rem; font-weight:600; cursor:pointer; white-space:nowrap;
+}
+.focus-add-btn:hover{ background:var(--secondary) }
+.focus-goals .focus-add{
+  background:var(--primary-dark); border-radius:calc(var(--radius) - 2px); padding:.35rem .4rem;
+}
+.focus-goals .focus-add .form-control{ color:#fff; border-bottom-color:rgba(255,255,255,.5) }
+.focus-goals .focus-add .form-control::placeholder{ color:rgba(255,255,255,.85) }
+.focus-goals .focus-add .form-control:focus{ border-bottom-color:#fff; color:#fff; outline-color:rgba(255,255,255,.4) }
+.focus-goals .focus-add-btn{ background:#fff; color:var(--primary-dark); border-color:transparent }
+.focus-goals .focus-add-btn:hover{ background:var(--secondary) }
+
+/* "Besonders diese Woche": linierte, direkt editierbare Eingabezeilen ohne Checkbox (Mockup
+   zeigt hier reine <input>-Felder, keine Haken) -- jede Zeile bekommt zusaetzlich eine
+   Entfernen-Schaltflaeche daneben; die stets vorhandene leere "neue Zeile" am Ende (siehe
+   renderHighlights() in app.js) sieht identisch aus wie eine bestehende Zeile, nur ohne
+   Entfernen-Schaltflaeche. */
+.focus-notes .highlight-row{ display:flex; align-items:center; gap:.4rem }
+.focus-notes .highlight-row .form-control{ flex:1 1 auto; min-width:0; margin-bottom:0 }
+
+.week-footer{ text-align:end; font-size:.8rem; color:var(--text-body); opacity:.7; margin-top:.75rem }
+
+/* ---------------- Platzhalter-Ansichten (Einkaufen & Besorgungen / Essen & Kochen) ---------------- */
+.placeholder-card{ max-width:760px }
+.placeholder-icon{
+  width:64px; height:64px; border-radius:var(--radius); background:var(--secondary);
+  color:var(--primary); display:flex; align-items:center; justify-content:center; font-size:1.8rem;
+  margin-bottom:1rem;
+}
+.day-pill{
+  border:1px dashed var(--border-color); border-radius:var(--radius);
+  padding:.6rem .3rem; text-align:center; font-size:.72rem; color:var(--text-body);
+  background:var(--background);
+}
+.day-pill .dp-count{
+  display:inline-block; margin-top:.25rem; font-size:.65rem; font-weight:700; color:#fff;
+  background:var(--primary); border-radius:1rem; padding:.05rem .4rem;
+}
+.mealplan-skeleton th, .mealplan-skeleton td{
+  border:1px solid var(--border-color); text-align:center; font-size:.72rem; padding:.5rem .3rem;
+}
+.mealplan-skeleton thead th{ background:var(--secondary); color:var(--primary); font-weight:700 }
+.mealplan-skeleton td.lbl{ background:var(--secondary); font-weight:600; color:var(--primary); text-align:left; padding-left:.6rem }

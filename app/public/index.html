@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#8D7C75">
+<title>Familien-Wochenplan</title>
+<!-- AP3.1 (siehe Asset-Vendoring-Konzept-v2.md): Bootstrap/Bootstrap Icons/Open Sans lokal
+     vendored, kein CDN-Zugriff mehr zur Laufzeit (siehe angepasste CSP in server.js, ohne
+     fonts.googleapis.com/fonts.gstatic.com-Ausnahme).
+     AP3.2 (Linksmenue + Ansichtstrennung): style-v2.css (das neue Taupe/Open-Sans-Design aus
+     dem freigegebenen Mockup) kommt hinzu, ERSETZT style.css aber nicht.
+     Design-Mischmasch-Fix (Nutzer-Feedback 2026-08-19): urspruenglich blieben Hauptraster
+     (A4-Blatt), Tagesansicht sowie Tagesliste-/Essensplan-Overlays inkl. Druck-CSS bewusst
+     vollstaendig in der bisherigen Design-Linie (AP3.2-Entscheidung, siehe plan.md). Auf
+     ausdruecklichen Wunsch des Nutzers wurden davon inzwischen gezielt einzelne, durchgaengig
+     sichtbare Bereiche auf die Design-v2-Palette (--primary/--secondary/--background/
+     --border-color/--text-body aus style-v2.css) umgestellt: Werkzeugleiste (".toolbar .btn"
+     gezielt vor der app-weit geteilten ".btn"-Basisregel, die selbst unveraendert bleibt, siehe
+     Kommentar dort), Piktogramm-Palette (.palette/.pgroup/.pbtn) und der Tabellenkopf (thead) des
+     Hauptrasters (gezielt per "#grid"-Praefix, siehe dortiger Kommentar), dazu die vier
+     Personenzeilen-Akzentfarben (--fam-a..--fam-d) und die Liste-Link-Buttons (.listlink, siehe
+     eigener Kommentar dort). Der restliche Blattkoerper (.head, Zellrahmen/-toenungen im
+     Zellinhalt, Piktogramme), die Tagesliste-/Essensplan-Overlays, die Essensplan-Tabelle
+     (.mp-table) und die Login-/Kontoseite bleiben weiterhin bewusst in der alten Design-Linie
+     (--accent, Kobaltblau) -- deren Umgestaltung ist weiterhin nicht beauftragt.
+     Nur das neue Linksmenue/die Ansichts-Container (.app-shell/.app-view) sowie die beiden
+     neuen Ansichten "Einkaufen"/"Essen" nutzen style-v2.css/Bootstrap vollstaendig.
+     Ladereihenfolge bewusst so gewaehlt, dass style.css ZULETZT geladen wird: bei gleicher
+     Selektor-Spezifitaet gewinnt dadurch immer die bestehende Regel (z. B. ".btn", ".badge")
+     gegenueber Bootstraps gleichnamigen Basis-Klassen -- die bestehende Oberflaeche bleibt so
+     optisch/funktional unangetastet, ohne dass im bestehenden Markup Klassen umbenannt werden
+     mussten. -->
+<link rel="stylesheet" href="vendor/bootstrap/css/bootstrap.min.css">
+<link rel="stylesheet" href="vendor/bootstrap-icons/bootstrap-icons.css">
+<link rel="stylesheet" href="vendor/fonts/open-sans/open-sans.css">
+<link rel="stylesheet" href="style-v2.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="section-wochenuebersicht">
+
+<!-- ================= AP3.2: linksseitiges Piktogramm-Menue + drei getrennte Ansichten
+     (Wochenuebersicht / Einkaufen & Besorgungen / Essen & Kochen), uebernommen aus
+     mockups/wochenplaner-mockup-v2-linksmenue-vendored.html. Klappt auf schmalen Bildschirmen
+     per style-v2.css-Medienabfrage zu einer unteren Tab-Leiste um (siehe dort). Die
+     Werkzeugleiste (Wochenwahl, Drucken, Vorlage, Konto ...) und die Fehler-/Hinweis-Leiste
+     gelten weiterhin uebergreifend fuer alle drei Ansichten und wandern daher mit in
+     .app-main, statt pro Ansicht dupliziert zu werden. ================= -->
+<div class="app-shell d-flex">
+
+  <aside class="app-sidebar">
+    <div class="brand" aria-hidden="true"><i class="bi bi-house-heart-fill"></i></div>
+    <nav class="app-nav" aria-label="Hauptnavigation">
+      <button type="button" class="nav-btn active" data-view="wochenuebersicht" aria-current="page">
+        <i class="bi bi-calendar-week"></i>
+        <span>Wochen&shy;übersicht</span>
+      </button>
+      <button type="button" class="nav-btn" data-view="einkaufen">
+        <i class="bi bi-cart3"></i>
+        <span>Einkaufen</span>
+      </button>
+      <button type="button" class="nav-btn" data-view="essen">
+        <i class="bi bi-egg-fried"></i>
+        <span>Essen &amp; Kochen</span>
+      </button>
+    </nav>
+  </aside>
+
+  <main class="app-main">
+
+<div class="toolbar">
+  <div class="tb-row">
+    <button class="btn primary" id="btnPrint">Drucken</button>
+    <div class="sep hide-sm"></div>
+    <button class="btn" id="btnPrev" title="Woche zurück">&#9664;</button>
+    <input type="date" id="monday">
+    <button class="btn" id="btnNext" title="Woche vor">&#9654;</button>
+    <button class="btn hide-sm" id="btnToday">Diese Woche</button>
+    <select id="archive" class="hide-sm" title="Gespeicherte Wochen"><option value="">Archiv …</option></select>
+    <div class="sep hide-sm cal-only"></div>
+    <button class="btn hide-sm cal-only" id="btnTemplateApply">Vorlage einfügen</button>
+    <button class="btn hide-sm cal-only" id="btnTemplateSave">Als Vorlage sichern</button>
+    <div class="sep hide-sm cal-only"></div>
+    <button class="btn hide-sm cal-only" id="btnAddPerson">+ Person</button>
+    <button class="btn hide-sm cal-only" id="btnAddShared">+ Zeile</button>
+    <div class="sep hide-sm cal-only"></div>
+    <button class="btn cal-only" id="btnView">Tagesansicht</button>
+    <button class="btn only-day" id="btnIcons">Symbole</button>
+    <div class="grow"></div>
+    <span class="status" id="status">…</span>
+    <button class="btn small" id="btnMenu">Konto</button>
+  </div>
+  <div class="tb-row palette-wrap">
+    <div class="palette" id="palette"></div>
+  </div>
+</div>
+
+<div class="banner" id="banner"></div>
+
+<section id="view-wochenuebersicht" class="app-view active" aria-labelledby="wu-h1">
+
+<!-- ================= A4-Ansicht ================= -->
+<div class="stage">
+  <div class="sheet" id="sheet">
+    <div class="head">
+      <div>
+        <h1 class="font-heading" id="wu-h1">Unsere Woche</h1>
+        <div class="sub" id="householdName">Familien-Wochenplan</div>
+      </div>
+      <div class="motto cell" contenteditable="true" data-ph="Motto / Schwerpunkt dieser Woche …" data-bind="motto"></div>
+      <div class="meta">
+        <div class="kw" id="kwLabel">KW –</div>
+        <div id="rangeLabel">– bis –</div>
+      </div>
+    </div>
+
+    <!-- AP3.1 (plan-hauptraster-vereinheitlichung.md): Rahmenkarte um die Matrix-Tabelle (Option
+         B, freigegebenes Mockup mockups/hauptraster-option-b-rahmenkarte-matrix.html) -- bewusst
+         NUR um <table id="grid">, nicht um das ganze .sheet (Kopf .head/Fuss .foot bleiben ohne
+         eigene Kartenkontur, siehe Konzept-Hauptraster-Option-B.md Abschnitt 1). Kartenrahmen/
+         -radius/-schatten werden im Ausdruck gezielt zurueckgesetzt, siehe @media print in
+         style.css (.grid-card-Reset). -->
+    <div class="grid-card">
+      <table id="grid">
+        <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
+        <thead><tr id="headRow"><th class="corner">Wer / Was</th></tr></thead>
+        <tbody id="gridBody"></tbody>
+      </table>
+    </div>
+
+    <div class="foot">
+      <div class="legend">
+        <h2>Piktogramme</h2>
+        <div class="items" id="legend"></div>
+      </div>
+      <div class="notes">
+        <h2>Notizen &amp; Merkzettel</h2>
+        <div class="cell" contenteditable="true" data-ph="Was diese Woche sonst noch wichtig ist …" data-bind="notes"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= Tagesansicht ================= -->
+<div class="dayview" id="dayview">
+  <div class="daynav" id="daynav"></div>
+  <div id="dayCards"></div>
+</div>
+
+<!-- ================= AP3.3: Fokusbloecke "Wochenziele" / "Besonders diese Woche" /
+     "Anrufen/Kontaktieren" (Datenmodell-Fokusbloecke-v2.md), an die bereits fertige
+     Backend-Persistenz aus AP2.1 angebunden (data.goals/.highlights/.calls, siehe server.js).
+     Bewusst NUR EINMAL im DOM -- anders als .stage/#dayview nicht dupliziert pro Wochen-/
+     Tagesansicht-Umschalter, da es sich um reinen Wocheninhalt ohne Tagesbezug handelt (bleibt
+     in beiden Modi sichtbar, siehe style.css: nur .stage/#dayview werden per body.view-day
+     umgeschaltet). Markup/Klassen (.focus-goals/.focus-notes/.focus-calls/.form-check ...)
+     kommen 1:1 aus dem freigegebenen Mockup samt style-v2.css; befuellt wird ueber
+     renderFocusBlocks() (app.js), das bei jeder Datenaenderung wie renderSheet()/renderDay()
+     ueber renderAll() neu zeichnet. ================= -->
+<div class="row g-3 mt-1 focus-row">
+  <div class="col-12 col-md-3">
+    <div class="focus-goals">
+      <h2><i class="bi bi-flag-fill me-1" aria-hidden="true"></i>Wochenziele</h2>
+      <ol class="focus-list" id="goalsList"></ol>
+      <div class="focus-add">
+        <input type="text" class="form-control" id="goalsInput" maxlength="100" placeholder="Neues Ziel …" aria-label="Neues Wochenziel">
+        <button type="button" class="focus-add-btn" id="goalsAdd">+ Hinzufügen</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6">
+    <div class="card shadow-sm h-100 p-3 focus-notes">
+      <h2><i class="bi bi-star-fill me-1" aria-hidden="true"></i>Besonders diese Woche</h2>
+      <div class="focus-list" id="highlightsList"></div>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-3">
+    <div class="card shadow-sm h-100 p-3 focus-calls">
+      <h2><i class="bi bi-telephone-fill me-1" aria-hidden="true"></i>Anrufen</h2>
+      <div class="focus-list" id="callsList"></div>
+      <div class="focus-add">
+        <input type="text" class="form-control" id="callsInput" maxlength="100" placeholder="Neuer Kontakt …" aria-label="Neuer Eintrag für Anrufen/Kontaktieren">
+        <button type="button" class="focus-add-btn" id="callsAdd">+ Hinzufügen</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</section>
+
+<!-- ================= AP3.2: Einkaufen & Besorgungen als eigene Ansicht. Zeigt fuer jede Zeile
+     mit listMode:true (aktuell "Einkauf & Besorgungen") sieben Tages-Kacheln; jede oeffnet
+     dieselbe Tagesliste -- renderListLink()/openDayList() in app.js sind unveraendert.
+     Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19): urspruenglich ein zweiter,
+     zusaetzlicher Zugang NEBEN einem gleichwertigen Link im Hauptraster -- die Zeile wird dort
+     inzwischen nicht mehr angezeigt (siehe renderSheet() in app.js), diese Ansicht ist jetzt der
+     EINZIGE Einstiegspunkt fuer Einkaufslisten. Inhalt wird von renderShoppingView() (app.js)
+     befuellt. ================= -->
+<section id="view-einkaufen" class="app-view" aria-labelledby="ek-h1">
+  <div class="view-header">
+    <h1 id="ek-h1"><i class="bi bi-cart3" aria-hidden="true"></i> Einkaufen &amp; Besorgungen</h1>
+    <p class="view-lead">Einkaufs- und Besorgungslisten der aktuellen Woche, ein Tag pro Kachel. Antippen öffnet die jeweilige Liste zum Abhaken, Ergänzen und Drucken.</p>
+  </div>
+  <div id="shoppingLists"></div>
+</section>
+
+<!-- ================= AP3.2: Essen & Kochen als eigene Ansicht. Oeffnet denselben Essensplan --
+     renderWeekLink()/openMealPlan() in app.js sind unveraendert.
+     Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19): siehe Kommentar bei "Einkaufen" oben --
+     diese Ansicht ist jetzt der EINZIGE Einstiegspunkt fuer den Essensplan, der gleichwertige
+     Link im Hauptraster wird dort nicht mehr angezeigt. Inhalt wird von renderMealPlanEntry()
+     (app.js) befuellt. ================= -->
+<section id="view-essen" class="app-view" aria-labelledby="es-h1">
+  <div class="view-header">
+    <h1 id="es-h1"><i class="bi bi-egg-fried" aria-hidden="true"></i> Essen &amp; Kochen</h1>
+    <p class="view-lead">Essensplan der aktuellen Woche: vier Mahlzeiten über sieben Tage, eigenständig druckbar.</p>
+  </div>
+  <div id="mealplanEntry"></div>
+</section>
+
+  </main>
+</div>
+
+<!-- ================= Tagesliste: eine Zeile (Kategorie), ein Tag, eigenstaendig druckbar
+     (Hochformat) — geoeffnet ueber die Liste-Links der Zeile "Einkauf & Besorgungen", seit dem
+     Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19) ausschliesslich ueber die Ansicht
+     "Einkaufen" im Linksmenue (nicht mehr zusaetzlich aus dem Hauptraster) ================= -->
+<div class="daylist-overlay" id="daylistOverlay">
+  <div class="daylist" id="daylist">
+    <div class="daylist-head">
+      <div>
+        <h2 id="dlTitle" class="font-heading">Tagesliste</h2>
+        <div class="sub" id="dlSub"></div>
+      </div>
+      <div class="grow"></div>
+      <button class="btn" id="dlPrint" title="Nur diese Liste drucken">Drucken</button>
+      <button class="btn primary" id="dlClose" title="Schließen">Schließen</button>
+    </div>
+    <div class="daylist-body" id="dlBody"></div>
+  </div>
+</div>
+
+<!-- ================= Essensplan: Mahlzeiten × Tage, eine Tabelle fuer die ganze Woche,
+     eigenstaendig druckbar im Querformat — geoeffnet ueber den Link der Zeile "Essen & Kochen",
+     seit dem Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19) ausschliesslich ueber die
+     Ansicht "Essen & Kochen" im Linksmenue (nicht mehr zusaetzlich aus dem Hauptraster) ================= -->
+<div class="daylist-overlay" id="mealplanOverlay">
+  <div class="mealplan" id="mealplan">
+    <div class="daylist-head">
+      <div>
+        <h2 class="font-heading">Essensplan der Woche</h2>
+        <div class="sub" id="mpSub"></div>
+      </div>
+      <div class="grow"></div>
+      <button class="btn" id="mpPrint" title="Nur den Essensplan drucken (A4 quer)">Drucken</button>
+      <button class="btn primary" id="mpClose" title="Schließen">Schließen</button>
+    </div>
+    <div class="daylist-body">
+      <div class="mealplan-toolbar" id="mealplanToolbar">
+        <span class="mpt-label">Piktogramm einfügen:</span>
+      </div>
+      <table class="mp-table">
+        <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
+        <thead><tr id="mpHeadRow"><th class="corner">Mahlzeit</th></tr></thead>
+        <tbody id="mpTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="icons.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

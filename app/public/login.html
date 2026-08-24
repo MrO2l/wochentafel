@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anmelden – Familien-Wochenplan</title>
+<!-- style-v2.css muss VOR style.css geladen werden: style.css leitet seine eigenen
+     Bildschirm-Variablen (u.a. --accent, --border-color, --radius) inzwischen komplett auf die
+     Design-v2-Variablen aus style-v2.css um (siehe :root-Kommentar dort) und faellt ohne sie auf
+     ungueltige Werte zurueck (z.B. border:none) -- siehe index.html, das dieselbe Reihenfolge
+     nutzt. Bugfix 2026-08-19: fehlte hier bislang, wodurch Eingabefelder/Tab-Buttons auf dieser
+     Seite unsichtbar bzw. falsch positioniert waren. -->
+<link rel="stylesheet" href="style-v2.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>Familien-Wochenplan</h1>
+    <p class="lead">Ein Plan für die ganze Familie – am Rechner ausfüllen, auf A4 ausdrucken, vom Handy nachschauen.</p>
+
+    <div class="tabs">
+      <button id="tabLogin"    aria-selected="true">Anmelden</button>
+      <button id="tabRegister" aria-selected="false">Neu hier</button>
+    </div>
+
+    <form id="formLogin">
+      <label for="le">E-Mail</label>
+      <input id="le" type="email" autocomplete="username" required>
+      <label for="lp">Passwort</label>
+      <input id="lp" type="password" autocomplete="current-password" required>
+      <button class="btn primary" type="submit">Anmelden</button>
+    </form>
+
+    <form id="formRegister" hidden>
+      <label for="rn">Dein Name</label>
+      <input id="rn" type="text" autocomplete="name" required>
+      <label for="re">E-Mail</label>
+      <input id="re" type="email" autocomplete="username" required>
+      <label for="rp">Passwort (mindestens 10 Zeichen)</label>
+      <input id="rp" type="password" autocomplete="new-password" minlength="10" required>
+
+      <div class="tabs tabs-mode">
+        <button type="button" id="modeNew"    aria-selected="true">Neuer Haushalt</button>
+        <button type="button" id="modeInvite" aria-selected="false">Einladung</button>
+      </div>
+
+      <div id="boxNew">
+        <label for="rh">Name des Haushalts</label>
+        <input id="rh" type="text" placeholder="Familie Muster">
+      </div>
+      <div id="boxInvite" hidden>
+        <label for="ri">Einladungscode</label>
+        <input id="ri" type="text" placeholder="A1B2C3D4E5" class="upper">
+      </div>
+
+      <button class="btn primary" type="submit">Konto anlegen</button>
+    </form>
+
+    <div class="msg" id="msg"></div>
+    <p class="switch-hint" id="regHint"></p>
+  </div>
+</div>
+
+<script src="login.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+	email {$LETSENCRYPT_MAIL}
+}
+
+# Caddy holt das Let's-Encrypt-Zertifikat selbst, sobald die Domain
+# auf diesen Server zeigt und Port 80 und 443 erreichbar sind.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "same-origin"
+	}
+
+	# Anmeldeversuche zusaetzlich am Rand begrenzen (optional): das rate_limit-Modul
+	# ist NICHT im Standard-Image caddy:2-alpine enthalten, dafuer braeuchte es ein
+	# eigenes Image via xcaddy mit github.com/mholt/caddy-ratelimit. Die Anwendung
+	# selbst bremst Anmeldung/Registrierung bereits pro IP und pro E-Mail-Adresse
+	# (siehe server.js), das hier ist nur eine zusaetzliche Verteidigungslinie.
+	# rate_limit { zone login { key {remote_host} events 20 window 1m } }
+
+	reverse_proxy app:3000
+}

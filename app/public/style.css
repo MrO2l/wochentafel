@@ -1,0 +1,696 @@
+:root{
+  /* Bildschirm-Palette: freundlicher/waermer als die urspruengliche sachliche Grau-Blau-Optik
+     (Design-Feedback ueber mehrere Runden, siehe mockups/tageslisten-mockup.html fuer die
+     Entwicklung). Flaechen/Rahmen warme Creme-/Taupe-Toene, dazu eine matte Vierfarb-Palette
+     fuer die Personenzeilen und ein eigener Ton fuer die "Heute"-Hervorhebung. Fuer den Ausdruck
+     werden die Bildschirm-Toene unten in @media print gezielt zurueckgesetzt — der Ausdruck
+     bleibt bewusst nuechtern.
+     Design-Mischmasch-Fix, Fortsetzung (Nutzer-Feedback 2026-08-19, zweite Runde): --accent
+     (urspruenglich ein eigenstaendiges, helles Kobaltblau) traegt inzwischen ALLE verbliebenen
+     Bildschirm-Bereiche mit — auch .sheet .head, .daylist/.mealplan-Overlay, .dayview/.daynav
+     und Login-/Kontoseite, die in der ersten Migrationsrunde bewusst zurueckgestellt wurden. Der
+     damalige Grund fuer die Zurueckhaltung (moegliche Durchmischung mit dem Druckbild) trifft
+     nicht zu: @media print (siehe unten) setzt --accent/--accent-tint/--accent-ring ohnehin
+     bereits vollstaendig und unabhaengig auf eigene, neutrale Druckwerte zurueck. Deshalb genuegt
+     es, --accent/--accent-tint/--accent-ring hier EINMAL auf die Design-v2-Variablen
+     --primary/--secondary (Taupe/Greige, siehe :root in style-v2.css, dort zuerst geladen und
+     daher hier bereits verfuegbar) umzuleiten — alle Stellen, die weiterhin var(--accent) /
+     var(--accent-tint) / var(--accent-ring) nutzen, uebernehmen die neue Palette automatisch,
+     ohne dass jede einzelne Regel umgeschrieben werden muss, und der bestehende Druck-Reset
+     greift unveraendert weiter.
+     Design-Mischmasch-Fix, vierte Runde (ANORAK-Rueckmeldung 2026-08-19, "gruendlicher
+     Rundumschlag"): dasselbe Umleitungs-Muster jetzt auch auf --tint/--tint2/--surface
+     angewendet — auch diese drei trugen noch die urspruengliche helle Blau-Toenung und wurden an
+     zahlreichen, bislang nicht einzeln migrierten Stellen als Hintergrund verwendet (u. a.
+     Werkzeugleiste, generische .btn-Klasse, Konto-/Login-Karte, Tagesliste-/Essensplan-
+     Overlaykarte, mobile Tagesansicht). Alle drei werden bereits vollstaendig und unabhaengig im
+     @media print-:root weiter unten zurueckgesetzt (--tint/--tint2/--surface dort auf eigene,
+     neutrale Druckwerte) — die Umleitung hier ist also ebenso gefahrlos wie bei --accent. */
+  --ink:#1f2937; --muted:#6b6355;
+  --line:#a89a84; --line-soft:#ddd0b8;
+  --tint:var(--secondary); --tint2:var(--secondary); /* vormals eigene helle Blau-Toenungen,
+     jetzt die Design-v2-Spaltenhintergrundfarbe -- deckt sich mit der bereits migrierten
+     #grid thead th-Flaeche (siehe dort), fuer dieselbe Rolle "Tabellenkopf/-randspalte" */
+  --accent:var(--primary); --ok:#2f7a52; --warn:#a15c1b; --bad:#a12b2b;
+  --surface:var(--background); /* vormals #f9fcfe ("helles Blauweiss"), jetzt dieselbe Flaeche
+     wie der App-Hintergrund -- entspricht dem Karten-Muster der Design-Vorgabe v2 (.card in
+     style-v2.css nutzt ebenfalls var(--background) statt einer eigenen Oberflaechenfarbe,
+     Abgrenzung erfolgt ueber Rahmen/Schatten, siehe dortige Vorkommen) */
+  --accent-tint:var(--secondary); /* Hover-/aktiv-Toenung, jetzt einheitlich die Design-v2-
+     Palette statt der frueheren eigenstaendigen Blau-Toenung */
+  --accent-ring:var(--primary);   /* Fokus-/Hover-Rahmenton, dito */
+  --today-bg:#fbead0; --today-line:#c17a35; /* "Heute"-Hervorhebung: warmer Amber-Ton */
+  /* Matte, gedeckte Vierfarb-Palette fuer die vier Personenzeilen. Design-Mischmasch-Fix
+     (Nutzer-Feedback 2026-08-19): vormals Ziegelrot/Taubenblau/Senfgelb/Salbeigruen, jetzt auf
+     Toene umgestellt, die sich saettigungs-/hellwertmaessig eng an --primary (#8D7C75, Design-
+     Vorgabe v2) anlehnen, dabei aber je einen eigenen, klar unterscheidbaren Farbton (Terrakotta/
+     Steinblau/Ocker/Salbei) behalten — funktional weiterhin zur Unterscheidung der vier
+     Familienmitglieder gedacht, jetzt nur "leiser"/waermer statt der alten, kraeftigeren Toene.
+     Tints werden bewusst per color-mix() aus der jeweiligen Basisfarbe abgeleitet (gleiches
+     Muster wie .day-col.alt in style-v2.css) statt separat gepflegter Hex-Werte. */
+  --fam-a:#A9785F; --fam-a-tint:color-mix(in srgb, var(--fam-a) 15%, var(--background));   /* gedecktes Terrakotta */
+  --fam-b:#7D8B95; --fam-b-tint:color-mix(in srgb, var(--fam-b) 15%, var(--background));   /* gedecktes Steinblau */
+  --fam-c:#B79661; --fam-c-tint:color-mix(in srgb, var(--fam-c) 15%, var(--background));   /* gedecktes Ocker */
+  --fam-d:#7C9179; --fam-d-tint:color-mix(in srgb, var(--fam-d) 15%, var(--background));   /* gedecktes Salbeigruen */
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  color:var(--ink);
+  font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  /* Design-Mischmasch-Fix, zweite Runde (Nutzer-Feedback 2026-08-19): der frueher hier gesetzte
+     Pastell-"Farbtupfer"-Verlauf (Etsy-Wochenplan-Motiv einer vorherigen Design-Runde) hatte
+     dieselbe Spezifitaet wie die "body{background:var(--background)}"-Regel aus style-v2.css und
+     gewann als spaeter geladene Datei — dadurch wurde der eigentlich gewuenschte, flache
+     Mockup-Hintergrund vollstaendig ueberschrieben. Ersatzlos entfernt: der Seitenhintergrund
+     folgt jetzt durchgaengig var(--background) wie im freigegebenen Mockup. */
+  background:var(--background);
+}
+button,input,select{font:inherit}
+.wp-sprite-holder{display:none}
+/* Schrift-Vereinheitlichung (Nutzer-Entscheidung 2026-08-19, im Anschluss an das Design-Review
+   "drei parallele Schriftfamilien"): die vormals hier verspielt/runder gedachte Ueberschriften-
+   schrift (Baloo 2/Quicksand/Comfortaa) ist entfallen -- sie lud ohnehin schon seit der CSP-
+   Migration (AP3.1) nicht mehr (der Google-Fonts-CDN-Link wurde dort entfernt), die Klasse fiel
+   also bereits auf die System-Fallbacks zurueck. Jetzt bewusst auf dieselbe, bereits lokal
+   vendorte Open-Sans-Stack wie body{font-family} in style-v2.css umgestellt, damit die App
+   durchgaengig eine Schriftfamilie nutzt. Weiterhin nur auf grosse Ueberschriften/Titel
+   angewendet (nicht auf dichten Tabellentext), Praesenz/Hierarchie wird stattdessen ueber
+   font-weight in den jeweiligen h1/h2-Regeln (.head h1, .daylist-head h2) sichergestellt.
+   Klasse von .font-friendly auf .font-heading umbenannt, da "friendly" (verspielt/rund) auf die
+   jetzige, mit dem Fliesstext identische Schriftfamilie nicht mehr zutrifft -- die Klasse markiert
+   inhaltlich nur noch "das ist eine grosse Ueberschrift", nicht mehr "das ist eine andere Schrift". */
+.font-heading{font-family:"Open Sans","Inter","Lato",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+
+/* ---------------- Kontomenue (dialog) ---------------- */
+.acct-dialog{border:0; border-radius:12px; padding:0; max-width:420px; width:92%; box-shadow:0 10px 40px rgba(0,0,0,.25)}
+.acct-dialog .acct-body{padding:20px 22px; font-size:14px; line-height:1.6}
+.acct-dialog h2{margin:0 0 2px; font-size:17px; color:var(--accent)}
+.acct-dialog .acct-who{margin:0 0 14px; color:var(--muted); font-size:13px}
+.acct-dialog .acct-actions{display:flex; flex-direction:column; gap:8px}
+.acct-dialog .acct-out{margin-top:12px; font-size:13px; color:var(--ok)}
+.acct-dialog .acct-foot{text-align:right; margin-top:16px}
+
+/* ---------------- Anmeldeseite ---------------- */
+.auth-wrap{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px}
+.auth-card{background:var(--surface); border-radius:14px; box-shadow:0 6px 28px rgba(0,0,0,.12); padding:26px 28px; width:100%; max-width:420px}
+.auth-card h1{margin:0 0 4px; font-size:21px; color:var(--accent)}
+.auth-card p.lead{margin:0 0 18px; color:var(--muted); font-size:14px}
+.auth-card label{display:block; font-size:13px; color:var(--muted); margin:12px 0 4px}
+/* Design-Mischmasch-Fix, vierte Runde (ANORAK-Rueckmeldung 2026-08-19): #c3c9d0/#f7f8fa waren
+   eigenstaendige, nie an eine Variable gebundene Kuehlgrau-Blau-Toene der alten Design-Linie
+   (Eingabefeld-Rahmen, unausgewaehlter Tab-Button) -- auf die Design-v2-Rahmen-/Flaechenfarben
+   umgestellt, analog zu anderen bereits migrierten Formularelementen (siehe input[type=date]
+   weiter unten). */
+.auth-card input{width:100%; padding:9px 11px; border:1px solid var(--border-color); border-radius:8px}
+.auth-card .btn{width:100%; margin-top:18px; padding:10px}
+.tabs{display:flex; gap:6px; margin-bottom:6px}
+.tabs.tabs-mode{margin-top:16px}
+.upper{text-transform:uppercase}
+.tabs button{flex:1; padding:8px; border:1px solid var(--border-color); background:var(--background); border-radius:8px; cursor:pointer; font-size:13px}
+.tabs button[aria-selected=true]{background:var(--accent); border-color:var(--accent); color:#fff}
+.msg{margin-top:14px; font-size:13px; padding:9px 11px; border-radius:8px; display:none}
+.msg.err{display:block; background:#fdecec; color:var(--bad)}
+.msg.ok{display:block; background:#eaf6ef; color:var(--ok)}
+.switch-hint{margin-top:14px; font-size:12.5px; color:var(--muted); text-align:center}
+
+/* ---------------- Werkzeugleiste ----------------
+   ".btn"/".btn.primary" sind eine app-weit geteilte Klasse (auch in Tagesliste-/Essensplan-
+   Overlay, Kontomenue und Login-Seite verwendet, siehe dortige Vorkommen). Die Grundregeln hier
+   nutzen weiterhin --accent/--accent-tint (siehe :root oben) -- seit der zweiten Migrationsrunde
+   (Nutzer-Feedback 2026-08-19) zeigen diese Variablen selbst auf die Design-v2-Palette, die
+   Grundregeln muessen deshalb nicht mehr einzeln umgeschrieben werden. */
+.toolbar{position:sticky; top:0; z-index:50; background:var(--surface); border-bottom:1px solid var(--line-soft); padding:9px 14px; box-shadow:0 1px 6px rgba(0,0,0,.06)}
+.tb-row{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+.tb-row+.tb-row{margin-top:8px}
+.btn{font-size:13px; padding:6px 11px; border-radius:7px; border:1px solid var(--line-soft); background:var(--surface); color:var(--ink); cursor:pointer}
+.btn:hover{background:var(--accent-tint)}
+.btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+.btn.primary:hover{filter:brightness(1.12)}
+.btn.small{padding:4px 8px; font-size:12px}
+/* Aus der ersten Migrationsrunde (Nutzer-Feedback 2026-08-19): die Buttons/Formularelemente
+   INNERHALB der Werkzeugleiste referenzieren die Design-v2-Variablen (--primary/--secondary/
+   --border-color, siehe :root in style-v2.css) direkt statt ueber --accent, per ".toolbar"-
+   Praefix gezielt von den ".btn"-Grundregeln abgegrenzt. Seit der zweiten Migrationsrunde
+   fuehrt --accent selbst ebenfalls zur Design-v2-Palette (siehe :root oben) -- diese direkten
+   Referenzen bleiben unveraendert bestehen, sind funktional aber deckungsgleich mit den
+   .btn-Grundregeln geworden. */
+.toolbar .btn{border-radius:var(--radius); border-color:var(--border-color); background:var(--background); color:var(--text-body)}
+.toolbar .btn:hover{background:var(--secondary)}
+.toolbar .btn.primary{background:var(--primary); border-color:var(--primary)}
+.toolbar .btn.primary:hover{background:var(--primary-dark); border-color:var(--primary-dark); filter:none}
+.tb-label{font-size:12px; color:var(--muted)}
+.sep{width:1px; align-self:stretch; background:var(--border-color); margin:0 3px}
+.grow{flex:1}
+/* input[type=date]/select kommen ausschliesslich in der Werkzeugleiste vor (Datumsfeld,
+   Archiv-Auswahl) -- deshalb hier direkt (ohne Overlay-/Login-Gegenstueck) auf die
+   Design-v2-Palette umgestellt. */
+input[type=date],select{padding:5px 7px; border:1px solid var(--border-color); border-radius:var(--radius); font-size:13px; background:var(--background); color:var(--text-body)}
+.status{font-size:12.5px; color:var(--text-body); min-width:150px}
+.status.saving{color:var(--warn)} .status.saved{color:var(--ok)} .status.error{color:var(--bad)}
+.banner{display:none; margin:8px 14px 0; padding:9px 12px; border-radius:8px; font-size:13px; background:#fdf3e3; color:var(--warn); border:1px solid #f0dcbb}
+.banner.show{display:block}
+
+/* ---------------- Piktogramm-Palette ----------------
+   Design-Mischmasch-Fix (Nutzer-Feedback 2026-08-19): Typografie/Farben auf die Design-v2-
+   Palette umgestellt (Kategorie-Beschriftung in --primary statt neutralem Grau, Rahmen/Hover
+   in --border-color/--secondary statt der alten blauen Toenung), konsistent mit Werkzeugleiste/
+   Tabellenkopf. */
+.palette{display:flex; flex-wrap:wrap; gap:5px}
+.pgroup{display:flex; flex-wrap:wrap; gap:4px; align-items:center; border:1px solid var(--border-color); border-radius:9px; padding:4px 7px; background:var(--background)}
+.pgroup>b{font-size:10px; font-weight:600; color:var(--primary); text-transform:uppercase; letter-spacing:.04em; margin-right:2px}
+/* Piktogramme in der Palette deutlich vergroessert (Design-Feedback) — reiner Bildschirm-
+   Bereich (im Ausdruck ausgeblendet), daher ohne Ruecksicht auf das Druck-Platzbudget. */
+.pbtn{display:inline-flex; flex-direction:column; align-items:center; gap:3px; width:60px; padding:6px 2px 5px; border:1px solid transparent; border-radius:9px; background:transparent; cursor:pointer; color:var(--text-body)}
+.pbtn:hover{background:var(--secondary); border-color:var(--primary)}
+.pbtn svg{width:25px; height:25px}
+.pbtn span{font-size:9.5px; line-height:1.15; text-align:center; color:var(--text-body)}
+
+/* ---------------- A4-Blatt ---------------- */
+.stage{padding:16px 0 40px; display:flex; justify-content:center}
+/* Design-Mischmasch-Fix, dritte Runde (ANORAK-Rueckmeldung 2026-08-19): der Pastell-Farbtupfer-
+   Verlauf im Blattkopf gehoerte zum selben veralteten Muster wie die bereits entfernten Verlaeufe
+   bei body{background} und .daylist-head — ersatzlos entfernt. Bewusst NICHT auf var(--surface)
+   zurueckgegriffen (das ist selbst noch eine helle Blau-Weiss-Variable aus der alten Design-
+   Linie, siehe :root-Kommentar oben, und wuerde denselben Blaustich nur subtiler reproduzieren),
+   sondern auf var(--background) -- das entspricht dem Karten-Muster der Design-Vorgabe v2 (siehe
+   .card in style-v2.css: dort bekommt eine Flaeche ebenfalls KEINE eigene, hellere Oberflaechen-
+   farbe, sondern denselben Ton wie die Seite, und hebt sich stattdessen ueber Rahmen/Schatten ab).
+   Das Blatt bleibt hier ueber die bereits vorhandene box-shadow weiterhin sichtbar von der Seite
+   abgesetzt. Verschwindet ohnehin beim Drucken (siehe @media print unten: .sheet{background:#fff},
+   davon unabhaengig, da dort ein fester Wert statt einer Variable gesetzt wird). */
+.sheet{
+  width:281mm; min-height:194mm; box-shadow:0 4px 18px rgba(0,0,0,.14); transform-origin:top center;
+  display:flex; flex-direction:column;
+  background:var(--background);
+}
+.head{display:flex; align-items:flex-end; gap:10mm; padding:0 0 2.5mm; border-bottom:1.6pt solid var(--accent)}
+.head h1{font-size:23pt; margin:0; font-weight:800; color:var(--accent)} /* Schrift-Vereinheitlichung
+  2026-08-19: von 700 auf 800 angehoben (Open Sans statt Baloo 2, angelehnt an .week-header-bar h1
+  in style-v2.css), damit die Ueberschrift trotz Schriftartwechsel dieselbe optische Praesenz behaelt */
+.head .sub{font-size:8.5pt; color:var(--muted); margin-top:1mm}
+.head .meta{margin-left:auto; text-align:right; font-size:9pt; line-height:1.5}
+.head .meta .kw{font-size:13pt; font-weight:700; color:var(--accent)}
+.motto{flex:1; border-bottom:1px dotted var(--line-soft); align-self:flex-end; min-height:6mm; padding:0 2mm 1mm; font-size:9pt}
+
+/* AP3.1 (Konzept-Hauptraster-Option-B.md Abschnitt 1/2): die Matrix-Tabelle steckt jetzt in
+   einer eigenen Rahmenkarte (<div class="grid-card"> in index.html) statt direkt im Blattkoerper
+   -- Kontur/Radius/Schatten analog .matrix-b-card im freigegebenen Mockup. flex:1 wandert von
+   der Tabelle auf die Karte, damit sie weiterhin den verbleibenden Platz zwischen .head und .foot
+   fuellt; margin-top:3mm (Abstand zum Kopf) wandert ebenso. Im Ausdruck vollstaendig
+   zurueckgesetzt (border/radius/shadow/overflow), siehe @media print unten. */
+.grid-card{
+  border:1px solid var(--border-color); border-radius:var(--radius); overflow:hidden;
+  box-shadow:0 .2rem .7rem rgba(86,77,71,.12); background:var(--background);
+  margin-top:3mm; flex:1; display:flex; flex-direction:column;
+}
+table{width:100%; border-collapse:collapse; table-layout:fixed; flex:1}
+/* Nachbesserung aus dem AP3.1-Report: 26mm war fuer reinen Fliesstext bemessen; mit Avatar-Chip
+   (6mm) + Abstand (1.6mm) blieben nur noch ca. 14-15mm fuer Name/Rolle -- auf 29mm angehoben,
+   damit auch laengere Namen ("Alexander", "Charlotte") neben dem Chip lesbar Platz haben. Wirkt
+   sich NICHT auf die A4-quer-Gesamtbreite der Tabelle aus: table{width:100%} + table-layout:fixed
+   verteilt die verbleibende Breite lediglich anders auf col.lbl und die sieben unbezifferten
+   Tagesspalten (jede ca. 0.4mm schmaler) -- die Tabelle selbst bleibt exakt so breit wie ihr
+   Container (.grid-card/.sheet), keine Anpassung einer anderen Spaltenbreite noetig. */
+col.lbl{width:29mm}
+th,td{border:.6pt solid var(--line-soft); vertical-align:top; padding:0}
+/* Gestrichelte statt harte Trennlinien -- nur innerhalb der neuen Kartenkontur (#grid-Praefix),
+   damit es nicht auf andere Tabellen mit denselben generischen Selektoren (.mp-table,
+   Tagesliste) durchschlaegt (dieselbe Vorsichtsmassnahme wie beim bereits bestehenden
+   "#grid thead th"-Praefix, siehe dortiger Kommentar). Ein ID-Selektor hat eine hoehere
+   Spezifitaet als die Klassenselektoren "td.lbl"/"thead th" etc. weiter unten und ueberschreibt
+   deren border-style zuverlaessig, ohne dass diese Regeln selbst angefasst werden muessen. Im
+   Ausdruck zurueckgesetzt auf border-style:solid, siehe @media print unten. */
+#grid td, #grid th{border-style:dashed}
+thead th{border-color:var(--line); font-size:9pt; height:8mm; text-align:center; padding:1mm 0 0}
+thead th .dw{display:block; font-weight:700}
+thead th .dt{display:block; font-size:7pt; font-weight:400; color:var(--muted); margin-top:.3mm}
+thead th.corner{font-size:8pt}
+/* Design-Mischmasch-Fix, erste Runde (Nutzer-Feedback 2026-08-19): Tabellenkopf DES HAUPTRASTERS
+   (Wochentage + "Wer/Was"-Ecke) direkt auf --secondary/--primary umgestellt, statt ueber
+   --accent. Bewusst per "#grid"-Praefix NUR auf das Hauptraster begrenzt (id="grid" in
+   index.html), NICHT auf die allgemeinen "thead th"-Regeln oben angewendet -- sonst wuerde die
+   Aenderung auch in den Essensplan-Tabellenkopf (.mp-table, eigenes Overlay) durchschlagen, der
+   dieselben Klassennamen (thead, th, corner, dw, dt) wiederverwendet und ueber --accent versorgt
+   wird. Seit der zweiten Migrationsrunde zeigt --accent selbst auf dieselbe Palette (siehe :root
+   oben), .mp-table thead th.corner erreicht damit optisch dasselbe Ergebnis wie hier, ohne
+   eigene "#grid"-Regel. .head (Zeile oben) und die uebrigen, in der ersten Runde
+   zurueckgestellten Bildschirm-Bereiche folgen inzwischen ebenfalls --accent/--accent-tint/
+   --accent-ring, siehe :root-Kommentar oben. */
+#grid thead th{background:var(--secondary)}
+#grid thead th .dw{color:var(--primary); text-transform:uppercase; letter-spacing:.03em}
+#grid thead th .dt{color:var(--text-body)}
+#grid thead th.corner{background:var(--primary); color:#fff}
+#grid th.we{background:color-mix(in srgb, var(--secondary) 65%, var(--border-color))}
+td.lbl{background:var(--tint); border-right:1pt solid var(--line); font-size:10pt; font-weight:700; padding:1.5mm 2mm; position:relative; overflow:hidden}
+td.lbl .cell{height:auto; padding:0; display:block}
+td.lbl .role{font-size:7pt; font-weight:400; color:#7d715c; margin-top:.5mm}
+/* AP3.1 (Konzept-Hauptraster-Option-B.md Abschnitt 3): Avatar-Chip ERSETZT die bisherige
+   1mm-Randlinie als "wer ist das"-Erkennung (Rahmenkarten-Optik wirkt mit einer zusaetzlichen
+   Randlinie unruhig/redundant). Die Personenzeile setzt nur noch eine Custom-Property (--fam)
+   je Familienfarbe, die sowohl von der Zellentoenung als auch vom Avatar-Hintergrund
+   (.avatar{background:var(--fam, ...)} weiter unten) gelesen wird. Tint-Variablen unveraendert
+   aus :root uebernommen (siehe dortiger Kommentar). Im Ausdruck weiterhin zurueckgesetzt, siehe
+   @media print unten. */
+tr.person.fam-a{--fam:var(--fam-a); --fam-tint:var(--fam-a-tint)}
+tr.person.fam-b{--fam:var(--fam-b); --fam-tint:var(--fam-b-tint)}
+tr.person.fam-c{--fam:var(--fam-c); --fam-tint:var(--fam-c-tint)}
+tr.person.fam-d{--fam:var(--fam-d); --fam-tint:var(--fam-d-tint)}
+tr.person td.lbl{background:var(--fam-tint)}
+/* Wrapper aus renderSheet() (app.js): Avatar-Kreis links, Name/Rolle rechts daneben. Der
+   Avatar-Span ist bewusst Geschwister, nicht Kind, von .cell[data-label]/.cell[data-role] --
+   syncFromDOM() liest diese Attribute unveraendert per querySelectorAll, unabhaengig von der
+   zusaetzlichen Verschachtelung (siehe Konzept Abschnitt 6). */
+.lbl-head{display:flex; align-items:flex-start; gap:1.6mm}
+.lbl-text{flex:1; min-width:0}
+.avatar{
+  flex:none; width:6mm; height:6mm; margin-top:.2mm; border-radius:50%;
+  background:var(--fam, var(--primary)); color:#fff; font-weight:700; font-size:7.5pt;
+  display:flex; align-items:center; justify-content:center;
+}
+.avatar i{font-size:6.5pt}
+/* Gemeinsame Zeilen ("Haushalt & Sonstiges") haben keine Familienfarbe -- Avatar faellt auf
+   var(--primary) zurueck (Fallback der obigen var(--fam, ...)-Regel) und zeigt statt einer
+   Namensinitiale ein Haus-Icon (siehe renderSheet(), analog Mockup-Vorlage). */
+tr.person td{height:23mm}
+tr.shared td{height:15mm}
+tr.shared td.lbl{font-size:9pt}
+tr.first-shared td{border-top:1.4pt solid var(--line)}
+td.we{background:#fafbfc}
+/* "Heute"-Hervorhebung: reales Datum vs. angezeigte Woche, siehe renderHead() in app.js.
+   Erst NACH .we platziert, damit sie auch gewinnt, wenn "heute" ein Wochenendtag ist.
+   Bewusst nur am Bildschirm (siehe @media print unten) — ein Ausdruck haengt meist eine
+   ganze Woche und ein statischer "Heute"-Marker waere am Folgetag schon falsch. */
+thead th.today{background:var(--today-bg); box-shadow:inset 0 0 0 .5mm var(--today-line)}
+thead th.today .dt{color:#8a4d0f}
+thead th.today .badge{display:block; margin-top:.4mm; font-size:5.6pt; font-weight:700; letter-spacing:.02em;
+  background:var(--today-line); color:#fff; padding:.2mm 1mm; border-radius:2mm; text-transform:uppercase}
+td.today{background:var(--today-bg)}
+/* AP3.1 (Konzept-Hauptraster-Option-B.md Abschnitt 4, optionale Verfeinerung): statischer
+   Hex-Ton durch dieselbe color-mix()-Formel wie im freigegebenen Mockup ersetzt -- rein
+   kosmetische Nuance, keine strukturelle Aenderung. Nur am Bildschirm relevant, im Ausdruck
+   ohnehin per td.today,th.today{background:none !important} zurueckgesetzt (siehe @media print). */
+tr.shared td.today{background:color-mix(in srgb, var(--today-bg) 80%, var(--secondary))}
+.cell{height:100%; width:100%; padding:1.2mm 1.5mm; font-size:8pt; line-height:1.45; outline:none; overflow:hidden; word-break:break-word}
+.cell:focus{background:var(--accent-tint); box-shadow:inset 0 0 0 1.5pt var(--accent-ring)}
+.cell:empty::before{content:attr(data-ph); color:#cdbfa0; font-size:7.5pt}
+/* Piktogramme in Zellinhalten deutlich vergroessert (Design-Feedback, ca. 33% groesser als
+   zuvor). Bleiben Kontur-SVGs, die die Textfarbe erben (Dokumentation 4.2) — funktionieren
+   damit weiterhin in Schwarzweiss. Zeilenhoehen (23mm/15mm) bewusst unveraendert gelassen:
+   die Vergroesserung ist rechnerisch moderat genug, um im bestehenden A4-Platzbudget zu
+   bleiben (siehe Rueckmeldung); wo mehr Platz noetig war (Liste-Link-Buttons), wurde
+   stattdessen die Badge-Anzeige als kleines Eck-Abzeichen statt als eigene Zeile gestaltet. */
+.ic{display:inline-block; vertical-align:-2.6px; line-height:0; margin-right:.8mm}
+.ic svg{width:4.8mm; height:4.8mm}
+.cell .ic:hover{background:#ffe9c9; border-radius:2px}
+.rowtool{display:none; position:absolute; right:1mm; top:1mm; font-size:10px; color:var(--line); cursor:pointer; background:var(--surface); border:1px solid var(--line-soft); border-radius:4px; padding:0 4px; line-height:15px}
+td.lbl:hover .rowtool{display:block}
+
+/* Klick-Link fuer Zeilen mit eigener Liste ("Einkauf & Besorgungen"): zeigt bewusst nur
+   Zustand (leer/befuellt) und Anzahl als kleines Eck-Abzeichen — kein Vorschautext der
+   Eintraege mehr in der Zelle (das war die urspruengliche Unuebersichtlichkeit, die behoben
+   werden sollte). Icon oben, Beschriftung zentriert darunter.
+   Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19): die Zeilen "Einkauf & Besorgungen"/
+   "Essen & Kochen" wurden aus dem Hauptraster (.stage) UND der mobilen Tagesansicht (.dayview)
+   entfernt (siehe renderSheet()/renderDay() in app.js) — .listlink wird dadurch nur noch
+   innerhalb der beiden dedizierten Design-v2-Ansichten "Einkaufen"/"Essen & Kochen"
+   (.shopping-day/.mealplan-entry-card, siehe style-v2.css) gerendert, nirgends mehr im alten
+   Design-Kontext. Die Akzentfarbe (vormals --accent, Kobaltblau) ist deshalb hier ebenfalls auf
+   --primary/--secondary umgestellt, sonst waere in genau diesen beiden Ansichten ein neuer
+   Design-Mischmasch entstanden. */
+.listlink{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.5mm;
+  height:100%; width:100%; padding:1mm; position:relative;
+  border:.6pt dashed var(--border-color); background:transparent; border-radius:1.2mm; cursor:pointer;
+  font-size:6.6pt; color:var(--text-body); text-align:center; line-height:1.15}
+.listlink:hover{background:var(--secondary); border-color:var(--primary)}
+.listlink svg{width:4.8mm; height:4.8mm; flex:none; stroke:currentColor}
+.listlink .ll-label{display:block}
+.listlink.filled{border-style:solid; border-color:var(--primary); background:var(--secondary); color:var(--primary-dark); font-weight:600}
+.listlink .badge{position:absolute; top:.6mm; right:.6mm; flex:none; background:var(--primary); color:#fff;
+  font-size:5.6pt; font-weight:700; border-radius:2mm; padding:.2mm 1mm; line-height:1.3}
+/* Die Essensplan-Zeile ("Essen & Kochen") bekommt EINE ueber alle sieben Tage uebergreifende
+   Zelle statt sieben einzelner Tageslinks (siehe Umsetzungsplan). Diese Zelle ist sehr breit
+   und flach — dort bleibt der Link bewusst in einer Zeile (Icon, Text, Badge nebeneinander)
+   statt gestapelt, weil eine schmale zentrierte Spalte darin unruhig/verloren wirken wuerde. */
+td.weekcell{padding:0}
+td.weekcell .listlink{flex-direction:row; gap:2mm; font-size:8pt; padding:0 4mm}
+td.weekcell .listlink svg{width:5.5mm; height:5.5mm}
+td.weekcell .listlink .badge{position:static; margin-left:auto}
+
+.foot{display:flex; gap:4mm; margin-top:3mm; align-items:stretch}
+.legend{flex:1; border:.6pt solid var(--line-soft); border-radius:1.5mm; padding:1.5mm 2mm}
+.legend h2,.notes h2{font-size:7.5pt; margin:0 0 1mm; text-transform:uppercase; letter-spacing:.06em; color:var(--muted)}
+.legend .items{display:grid; grid-template-columns:repeat(8,1fr); gap:.6mm 2mm}
+/* #3d474f war ein eigenstaendiger Kuehlgrau-Ton, ungebunden an eine Variable -- auf --text-body
+   umgestellt. .legend ist Teil des druckbaren Hauptrasters (.sheet), bleibt aber unkritisch fuer
+   den Ausdruck: --text-body (#564D47) ist selbst ein dunkler, neutral wirkender Ton ohne
+   Farbsaettigung, druckt sich also weiterhin als schlichte dunkle Schrift wie zuvor. */
+.legend .it{display:flex; align-items:center; gap:1mm; font-size:6.6pt; color:var(--text-body)}
+.legend .it svg{width:3mm; height:3mm; flex:none}
+.notes{width:78mm; border:.6pt solid var(--line-soft); border-radius:1.5mm; padding:1.5mm 2mm; display:flex; flex-direction:column}
+.notes .cell{padding:0; font-size:8pt; flex:1}
+
+/* ---------------- Tagesliste & Essensplan (eigenstaendige, druckbare Ansichten) ----------------
+   Modal-Overlays ueber der aktuellen Ansicht, dritte/vierte Darstellung desselben Datenmodells
+   (analog zum Zwei-Ansichten-Prinzip aus Dokumentation 4.9). Bewusst px-basierte Bildschirm-
+   Groessen statt der mm-genauen Blattmasse, damit hier komfortabel mehr Platz ist — nur beim
+   Drucken greifen eigene, mm-genaue Regeln (siehe @media print unten). Wiederverwendete
+   Klassennamen (lbl, corner, today, badge, dw, dt) sind bewusst dieselben wie im Hauptraster
+   fuer dieselbe optische Sprache; ihre Groessen werden hier gezielt auf Bildschirm-Masse
+   ueberschrieben (siehe .mp-table-Regeln), Farben/Struktur bleiben identisch. */
+.daylist-overlay{display:none; position:fixed; inset:0; background:rgba(20,26,32,.45); z-index:100;
+  align-items:flex-start; justify-content:center; padding:26px 14px; overflow:auto}
+body.daylist-open #daylistOverlay{display:flex}
+body.mealplan-open #mealplanOverlay{display:flex}
+.daylist,.mealplan{background:var(--surface); width:100%; max-width:640px; border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,.3); overflow:hidden}
+.mealplan{max-width:980px}
+/* Design-Mischmasch-Fix, zweite Runde (Nutzer-Feedback 2026-08-19): der Pastell-Farbtupfer-
+   Verlauf hier gehoert zur selben veralteten Design-Runde wie der frueher entfernte
+   body{background}-Verlauf (siehe dortiger Kommentar) und wurde ebenso ersatzlos durch eine
+   flache Flaeche ersetzt -- var(--secondary) entspricht der im Mockup fuer "funktionale
+   Bloecke"/Kopfbereiche vorgesehenen hellen Greige-Flaeche (siehe :root-Kommentar in
+   style-v2.css). */
+.daylist-head{display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1.6pt solid var(--accent);
+  background:var(--secondary);
+}
+.daylist-head h2{margin:0; font-size:20px; font-weight:800; color:var(--accent)} /* Schrift-
+  Vereinheitlichung 2026-08-19: font-weight jetzt explizit (vorher impliziter Browser-Default fuer
+  h2), analog .head h1 und .week-header-bar h1 in style-v2.css, gleicher Grund (Open Sans statt
+  Baloo 2, Praesenz erhalten) */
+.daylist-head .sub{font-size:12px; color:var(--muted); margin-top:1px}
+.daylist-head .grow{flex:1}
+.daylist-body{padding:14px 18px 20px}
+.mealplan .daylist-body{padding-top:12px}
+
+.dl-section{margin-bottom:16px}
+.dl-items{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px}
+.dl-item{display:flex; align-items:center; gap:8px; padding:6px 7px; border:1px solid #e8dcc4; border-radius:7px; background:#fdf8f0}
+.dl-item input[type=checkbox]{width:16px; height:16px; flex:none; accent-color:var(--accent)}
+.dl-item .txt{flex:1; font-size:13.5px; line-height:1.5}
+.dl-item.done .txt{color:var(--line); text-decoration:line-through}
+.dl-item .rm{flex:none; border:0; background:transparent; color:#b3a68d; cursor:pointer; font-size:15px; line-height:1; padding:2px 4px}
+.dl-item .rm:hover{color:var(--bad)}
+.dl-empty{font-size:12.5px; color:var(--line); padding:6px 2px}
+
+/* Editierfeld zum Hinzufuegen neuer Eintraege — nutzt dieselbe .cell-Logik/-Klasse wie das
+   Hauptraster (contentEditable, Tokens, insertIcon()), nur mit groesseren Bildschirm-Massen
+   statt der mm-genauen Blattgroesse. Klasse "autobreak" markiert Felder, in denen ein
+   eingefuegtes Piktogramm automatisch einen Zeilenumbruch danach ausloest (siehe app.js). */
+.composer{margin-top:8px; border:1px dashed var(--line-soft); border-radius:8px; padding:8px}
+.composer .mini-pal{margin-bottom:6px}
+.composer .cell{min-height:36px; height:auto; border:1px solid var(--line-soft); border-radius:7px; padding:7px 9px; font-size:13.5px; line-height:1.5; background:var(--surface)}
+.composer .cell:empty::before{font-size:13px}
+.composer-actions{margin-top:6px; text-align:right}
+.composer-actions .add-btn{border:1px solid var(--accent); background:var(--surface); color:var(--accent); border-radius:7px; padding:5px 12px; font-size:12.5px; cursor:pointer}
+.composer-actions .add-btn:hover{background:var(--accent-tint)}
+
+/* Mini-Piktogramm-Palette: dieselbe Einfuegefunktion wie die grosse Palette im Werkzeugkasten
+   (insertIcon(), ueber lastCell/lastRange), nur mit einer auf den Kontext begrenzten Auswahl. */
+.mini-pal{display:flex; gap:5px}
+.mini-pal-btn{border:1px solid #e4d7ba; background:var(--surface); border-radius:8px; width:40px; height:40px;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--ink)}
+.mini-pal-btn:hover{background:var(--accent-tint); border-color:var(--accent-ring)}
+.mini-pal-btn svg{width:20px; height:20px}
+
+/* Essensplan: Tabelle Mahlzeiten x Tage (Wochenplan fuer "Essen & Kochen"), strukturell wie
+   eine Mini-Ausgabe des Hauptrasters — dieselben Klassennamen (lbl/corner/today/badge/dw/dt),
+   hier auf Bildschirm-Groesse statt mm-Blattmass gebracht. */
+.mealplan-toolbar{display:flex; align-items:center; gap:8px; margin:0 18px 10px; padding:8px 10px;
+  border:1px dashed var(--line-soft); border-radius:8px; background:#fdf8f0}
+.mealplan-toolbar .mpt-label{font-size:12px; color:var(--muted); margin-right:2px}
+.mp-table{margin:0 18px 18px; width:calc(100% - 36px); border-collapse:collapse; table-layout:fixed}
+.mp-table col.lbl{width:130px}
+.mp-table th,.mp-table td{border:1px solid var(--line-soft); vertical-align:top; padding:0}
+.mp-table thead th{border-color:var(--line); background:var(--tint2); font-size:12px; height:36px; text-align:center; padding:4px 0 0}
+.mp-table thead th .dt{font-size:10.5px; margin-top:1px}
+.mp-table thead th.corner{background:var(--accent); color:#fff; font-size:11px}
+.mp-table thead th.today .badge{font-size:9px; padding:1px 6px; margin-top:2px}
+.mp-table td.lbl{background:var(--tint); border-right:1.4px solid var(--line); font-size:13px; font-weight:700; padding:8px 10px}
+tr.mealrow td{height:78px}
+.mp-table .mp-cell{padding:6px 8px; font-size:12.5px; line-height:1.5}
+.mp-table .mp-cell:empty::before{font-size:11.5px}
+
+/* ---------------- Tagesansicht (Handy) ---------------- */
+.dayview{display:none; padding:10px 10px 60px; max-width:760px; margin:0 auto}
+.daynav{display:flex; gap:6px; overflow-x:auto; padding:4px 0 10px; position:sticky; top:0; background:var(--surface); z-index:10}
+.daynav button{flex:0 0 auto; min-width:60px; padding:7px 10px; border:1px solid var(--line-soft); background:var(--surface); border-radius:9px; cursor:pointer; font-size:13px; text-align:center; line-height:1.25}
+.daynav button small{display:block; font-size:10.5px; color:var(--muted)}
+.daynav button[aria-current=true]{background:var(--accent); border-color:var(--accent); color:#fff}
+/* Design-Mischmasch-Fix, vierte Runde (ANORAK-Rueckmeldung 2026-08-19): #dbe6ee war ein auf das
+   fruehere Kobaltblau abgestimmter, abgedunkelter Subtext-Ton -- passt nicht mehr zum jetzt ueber
+   --accent gefuehrten Taupe-Hintergrund. Auf ein neutrales, halbtransparentes Weiss umgestellt
+   (funktioniert unabhaengig vom konkreten Hintergrundton als abgesetzter Subtext, gleiches Prinzip
+   wie z. B. .focus-goals in style-v2.css, die ebenfalls durchgehend Weiss auf --primary setzt). */
+.daynav button[aria-current=true] small{color:rgba(255,255,255,.75)}
+/* "Heute" im mobilen Tageswechsler — unabhaengig davon, welcher Tag gerade angezeigt wird
+   (aria-current), damit auch beim Blaettern erkennbar bleibt, welcher Tag real "heute" ist. */
+.daynav button.today{box-shadow:inset 0 -3px 0 var(--today-line)}
+/* AP3.3 (Konzept-Hauptraster-Option-B.md Abschnitt 5): dieselbe Kartenkontur wie .grid-card
+   (AP3.1) -- Rahmen, --radius-Eckenrundung und derselbe dezente Schatten -- statt der bisherigen,
+   staerkeren eigenen Radius-/Schattenwerte, damit Hauptraster und Tagesansicht sichtbar derselben
+   Design-Sprache folgen. */
+.daycard{background:var(--surface); border:1px solid var(--border-color); border-radius:var(--radius); box-shadow:0 .2rem .7rem rgba(86,77,71,.12); margin-bottom:10px; overflow:hidden}
+.daycard h3{margin:0; padding:9px 12px; font-size:14px; background:var(--tint); border-bottom:1px solid var(--line-soft)}
+.daycard h3 span{font-weight:400; color:var(--muted); font-size:12px; display:block}
+/* Design-Mischmasch-Fix, vierte Runde (ANORAK-Rueckmeldung 2026-08-19): #eef1f4 (Trennlinie) und
+   #3d474f (Namenstext) waren eigenstaendige Kuehlgrau-/Blaugrau-Toene, ungebunden an eine
+   Variable -- auf die bereits im Abschnitt verwendete --line-soft (Trennlinien, siehe
+   .daynav/.dayrow .cell) bzw. --text-body (Fliesstext-Farbe der Design-Vorgabe v2) umgestellt. */
+.dayrow{display:flex; gap:10px; padding:9px 12px; border-bottom:1px solid var(--line-soft)}
+.dayrow:last-child{border-bottom:0}
+/* AP3.3 (Konzept-Hauptraster-Option-B.md Abschnitt 5): derselbe Avatar-Chip (.avatar, siehe
+   AP3.1-Regel weiter oben) statt der bisherigen farbigen Randlinie -- Chip und Textwrapper
+   (.who-text, aus app.js renderDay) stehen als Flex-Geschwister nebeneinander. Die Personenfarbe
+   kommt weiterhin ueber die tr.person.fam-*-Custom-Property (hier: .dayrow.fam-*), die vom
+   .avatar{background:var(--fam, ...)}-Fallback aus der Hauptraster-Regel automatisch mitgenutzt
+   wird -- keine eigene Farbregel mehr noetig. */
+.dayrow .who{flex:0 0 92px; display:flex; align-items:flex-start; gap:1.6mm; padding-top:2px}
+.dayrow .who-text{min-width:0; font-size:13px; font-weight:600; color:var(--text-body)}
+.dayrow .who small{display:block; font-weight:400; color:var(--muted); font-size:11px}
+/* --fam auf dem .dayrow-Container selbst setzen (Gegenstueck zu tr.person.fam-* im Hauptraster,
+   siehe dortiger Kommentar) -- .avatar liest var(--fam, var(--primary)) unveraendert per
+   Vererbung, unabhaengig davon, ob es in einem <tr> oder wie hier in einem <div> steckt. */
+.dayrow.fam-a{--fam:var(--fam-a)}
+.dayrow.fam-b{--fam:var(--fam-b)}
+.dayrow.fam-c{--fam:var(--fam-c)}
+.dayrow.fam-d{--fam:var(--fam-d)}
+.dayrow .cell{flex:1; min-height:34px; font-size:14px; line-height:1.5; padding:4px 6px; border:1px dashed var(--line-soft); border-radius:7px; height:auto}
+.dayrow .cell:empty::before{font-size:13px; content:"–"; color:#cdbfa0}
+/* Liste-Link-Buttons ("Einkauf & Besorgungen" je Tag, "Essen & Kochen" fuer die ganze Woche)
+   auch in der Tagesansicht — dieselbe .listlink-Klasse wie im Hauptraster, hier auf die
+   Bildschirm-Massgroessen der Tageskarte statt der mm-genauen Blattzelle gebracht. */
+.dayrow .listlink{flex:1; height:auto; min-height:44px; padding:8px; font-size:12px; gap:4px}
+.dayrow .listlink svg{width:22px; height:22px}
+.dayview .ic svg{width:20px; height:20px}
+.dayview .ic{vertical-align:-4px; margin-right:4px}
+.dayview .notes-card .cell{min-height:60px}
+
+body.view-day .stage{display:none}
+body.view-day .dayview{display:block}
+/* In der Tagesansicht liegt die Palette unten und ist eingeklappt,
+   damit der Tag selbst den Bildschirm bekommt. */
+body.view-day .palette-wrap{
+  position:fixed; bottom:0; left:0; right:0; background:var(--surface); border-top:1px solid var(--line-soft);
+  z-index:60; box-shadow:0 -2px 10px rgba(0,0,0,.08);
+  max-height:0; padding:0; overflow:hidden; margin:0;
+}
+body.view-day.palette-open .palette-wrap{max-height:46vh; padding:6px; overflow:auto}
+body.view-day.palette-open .dayview{padding-bottom:48vh}
+.only-day{display:none}
+body.view-day .only-day{display:inline-block}
+
+/* Nutzer-Feedback 2026-08-19: Piktogramm-Palette (Desktop-Leiste .palette-wrap + mobiler
+   "Symbole"-Button #btnIcons) bezieht sich ausschliesslich auf den Hauptraster/die
+   Wochenuebersicht und hat in "Einkaufen & Besorgungen"/"Essen & Kochen" keine Funktion --
+   daher dort ausgeblendet. Gesteuert ueber body.section-wochenuebersicht (gesetzt in
+   index.html als Startzustand sowie in app.js setSection() bei jedem Ansichtswechsel).
+   !important wie bei den uebrigen harten Sichtbarkeits-Overrides in dieser Datei (siehe
+   .hide-sm/@media print), damit die Regel unabhaengig vom Tagesansicht-/Palette-open-Status
+   (body.view-day/.palette-open, siehe Regeln oben) zuverlaessig gewinnt. Die uebrige
+   Werkzeugleiste (Drucken/Datum/Archiv/Vorlage/...) bleibt bewusst unangetastet. */
+body:not(.section-wochenuebersicht) .palette-wrap{display:none !important}
+body:not(.section-wochenuebersicht) #btnIcons{display:none !important}
+
+/* Nutzer-Feedback 2026-08-19 (Folgeauftrag): Die restliche Vorlage-/Personen-/Zeilen-/
+   Tagesansicht-Gruppe der obersten Werkzeugleisten-Zeile (inkl. der drei sie umschliessenden
+   Trenner) bezieht sich ebenfalls ausschliesslich auf die Wochenuebersicht und wird analog
+   zur Piktogramm-Palette oben ausgeblendet. Statt jede ID einzeln aufzufuehren, tragen die
+   betroffenen Elemente in index.html zusaetzlich die Klasse .cal-only -- Markup-Struktur/
+   Flex-Layout von .tb-row bleibt dabei unveraendert. Drucken/Datumsnavigation/Archiv/Status/
+   Konto sind NICHT Teil von .cal-only und bleiben in allen drei Ansichten sichtbar. */
+body:not(.section-wochenuebersicht) .cal-only{display:none !important}
+
+@media (max-width:900px){
+  .toolbar{padding:8px}
+  .hide-sm{display:none !important}
+}
+
+/* ---------------- AP3.2: neue Ansichten "Einkaufen & Besorgungen" / "Essen & Kochen" ----------------
+   Wiederverwenden von renderListLink()/renderWeekLink() (app.js) — dieselbe .listlink-
+   Schaltflaeche wie im Hauptraster, hier nur in einem eigenen Kartenraster statt einer
+   Tabellenzelle platziert (Groessen/Layout unten entsprechend von mm- auf px-Masse gebracht,
+   Farbe/Verhalten der Schaltflaeche selbst bleibt unveraendert). Kopfzeile/Einleitungstext der
+   beiden Ansichten sind bewusst an der neuen Taupe-Palette (style-v2.css) ausgerichtet, da
+   dies neue, im Rahmen von AP3.2 entstandene Oberflaeche ist — Hauptraster/Tagesansicht/
+   Overlays bleiben davon unberuehrt (siehe Kopfkommentar index.html). */
+.view-header{margin-bottom:1.25rem}
+.view-header h1{display:flex; align-items:center; gap:.5rem; color:var(--primary); font-weight:800; font-size:1.6rem; margin:0 0 .4rem}
+.view-lead{color:var(--text-body); opacity:.8; margin:0; max-width:640px}
+/* AP3.5-Kontrastnachbesserung: --text-body bei 75% Deckkraft auf --background ergibt rechnerisch
+   nur ca. 4,16:1 -- unter der AA-Schwelle (4,5:1) fuer normal grossen Fliesstext. Gezielt nur hier
+   (nicht an der globalen --text-body-Variable, die auch opak an vielen anderen Stellen verwendet
+   wird) die Deckkraft angehoben, bis wieder klar ueber AA gemessen wird: 85% ergibt ca. 5,3:1. */
+.view-empty{color:var(--text-body); opacity:.85}
+
+.shopping-row{margin-bottom:1.75rem}
+.shopping-row h2{font-size:1rem; font-weight:700; color:var(--primary); margin:0 0 .6rem}
+.shopping-days{display:grid; grid-template-columns:repeat(7,1fr); gap:.6rem}
+.shopping-day{background:var(--background); border:1px solid var(--border-color); border-radius:var(--radius); padding:.5rem}
+.shopping-day.today{background:var(--secondary); border-color:var(--primary)}
+.shopping-day-label{font-size:.7rem; color:var(--text-body); text-align:center; margin-bottom:.4rem}
+.shopping-day-label .dw{display:block; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--primary)}
+.shopping-day-label .dt{display:block; opacity:.7; margin-top:.1rem}
+.shopping-day .listlink{height:auto; min-height:64px; padding:.55rem; font-size:.72rem; gap:.3rem; border-radius:var(--radius)}
+.shopping-day .listlink svg{width:20px; height:20px}
+@media (max-width:575.98px){ .shopping-days{grid-template-columns:repeat(4,1fr)} }
+
+.mealplan-entry-card{max-width:420px}
+.mealplan-entry-card .listlink{flex-direction:row; justify-content:flex-start; gap:.75rem; height:auto; min-height:64px; padding:.75rem 1rem; font-size:.95rem; border-radius:var(--radius)}
+.mealplan-entry-card .listlink svg{width:26px; height:26px}
+.mealplan-entry-card .listlink .badge{position:static; margin-left:auto}
+
+@media (max-width:767.98px){
+  /* Sicherstellen, dass die neue untere Tab-Leiste (.app-sidebar auf schmalen Bildschirmen,
+     siehe style-v2.css) bedienbar bleibt, wenn in der Tagesansicht zugleich die Piktogramm-
+     Palette von unten hochklappt (.palette-wrap, z-index 60, siehe oben) — die Tab-Leiste
+     bekommt hier einen hoeheren z-index, statt von der Palette verdeckt zu werden. */
+  .app-sidebar{z-index:65}
+}
+
+/* ---------------- Druck ---------------- */
+/* Drei Druckszenarien: (1) Hauptraster, weiterhin A4 quer wie bisher — Standardfall, das
+   @page hier bleibt unveraendert. (2) Tagesliste, eigenstaendig A4 hochkant. (3) Essensplan,
+   eigenstaendig A4 quer (nutzt bereits das Standard-@page, keine eigene Regel noetig).
+   Fuer die Tagesliste braucht es ein abweichendes Hochformat-@page. Eine Laufzeit-Injektion
+   von <style> per JS scheidet aus: die CSP der Anwendung erlaubt bewusst kein unsafe-inline
+   fuer style-src (siehe server.js), ein per JS eingefuegtes <style> wuerde also stillschweigend
+   ignoriert. Stattdessen eine benannte Seite (CSS Paged Media): die Tagesliste bekommt ueber
+   die "page"-Eigenschaft eine eigene @page-Regel zugewiesen, rein statisch im Stylesheet,
+   umgeschaltet ueber dieselbe body-Klasse wie die uebrige Druck-Sichtbarkeit (siehe
+   body.printing-daylist unten) — kein Nachladen zur Laufzeit noetig. Am besten unterstuetzt in
+   Chromium-basierten Browsern; das war ohnehin schon der Bezugsrahmen fuer die Druckvorschau
+   in dieser Anwendung. */
+@page{ size:A4 landscape; margin:8mm; }
+@page daylist-print{ size:A4 portrait; margin:14mm; }
+@media print{
+  /* Die warme Bildschirm-Palette (siehe :root oben) ist ausdruecklich ein Screen-Feature —
+     der Ausdruck bleibt wie zuvor nuechtern/zweckmaessig. Da Tagesliste und Essensplan
+     dieselben CSS-Variablen fuer Rahmen/Flaechen/Akzent verwenden wie der Bildschirm, werden
+     diese hier gezielt auf ihre urspruenglichen, neutralen Werte zurueckgesetzt statt jede
+     Druckregel einzeln umzuschreiben. */
+  :root{
+    --muted:#5b6670; --line:#9aa3ad; --line-soft:#c9cfd6;
+    --tint:#f2f4f6; --tint2:#e8ebef; --accent:#2b4a63;
+    --surface:#fff; --accent-tint:#eef3f7; --accent-ring:#7ea8c9;
+  }
+  body{background:#fff}
+  /* Design-Mischmasch-Fix (Nutzer-Feedback 2026-08-19): der Tabellenkopf DES HAUPTRASTERS nutzt
+     am Bildschirm jetzt --primary/--secondary (Design-v2-Taupe, siehe "#grid thead th"-Regeln
+     weiter oben) statt der bisherigen --accent/--tint2-Werte. Diese Design-v2-Variablen kommen
+     aus style-v2.css und werden vom obigen :root-Reset nicht erfasst (der setzt nur die eigenen
+     style.css-Variablen zurueck) -- ohne diese gezielte Rueckstellung wuerde die warme
+     Taupe-Farbe in den bislang bewusst nuechtern gehaltenen Ausdruck des Hauptrasters
+     durchschlagen. Deshalb hier explizit auf dieselben neutralen Werte zurueckgesetzt, auf die
+     auch --accent/--tint2 oben zurueckfallen -- mit demselben "#grid"-Praefix wie die
+     Bildschirm-Regel, da ein ID-Selektor eine hoehere Spezifitaet hat als ein einfacher
+     "thead th"-Selektor und diesen sonst auch im Ausdruck nicht ueberschreiben wuerde. */
+  #grid thead th{background:var(--tint2)}
+  #grid thead th .dw{color:var(--ink); letter-spacing:normal}
+  #grid thead th.corner{background:var(--accent)}
+  #grid th.we{background:#dde2e7}
+  /* AP3.3: die drei Fokusbloecke ("Wochenziele"/"Besonders diese Woche"/"Anrufen/Kontaktieren")
+     sind reiner Bildschirminhalt, kein Teil des mm-genauen A4-Blattlayouts (.sheet) -- analog zu
+     .dayview hier ausgeblendet, statt den Blattdruck um einen nicht dafuer vorgesehenen Bereich
+     zu erweitern. */
+  .toolbar,.banner,.dayview,.palette-wrap,.focus-row{display:none !important}
+  /* AP3.2: das Hauptraster steckt jetzt in der Ansicht "#view-wochenuebersicht", die per
+     .app-view{display:none} (style-v2.css) ausgeblendet ist, sobald der Nutzer gerade
+     "Einkaufen" oder "Essen" im neuen Linksmenue aktiv hat. Der Blattdruck (Knopf "Drucken" in
+     der Werkzeugleiste, druckt immer das Hauptraster) darf davon nicht abhaengen — sonst waere
+     der Ausdruck leer, wenn nicht zufaellig die Wochenuebersicht gerade sichtbar ist. Die
+     beiden anderen Ansichten haben kein eigenes Druck-Layout und werden deshalb ausgeblendet;
+     ebenso das neue Linksmenue selbst und das Padding von .app-main, das sonst den Blattdruck
+     verschieben wuerde (siehe .sheet/@page weiter unten, exakt aufs Druckformat ausgelegt). */
+  .app-sidebar{display:none !important}
+  .app-main{padding:0 !important}
+  #view-wochenuebersicht{display:block !important}
+  #view-einkaufen,#view-essen{display:none !important}
+  .stage{display:block !important; padding:0}
+  .sheet{width:auto; min-height:0; box-shadow:none; transform:none !important; height:194mm; background:#fff}
+  /* AP3.2 (Konzept-Hauptraster-Option-B.md Abschnitt 2, Punkt 1/2): die neue Rahmenkarte (AP3.1)
+     um #grid ist ein reines Bildschirm-Feature -- Kontur/Radius/Schatten zurueckgesetzt, analog
+     zum .sheet-Reset direkt darueber. overflow:visible statt hidden, damit ein evtl. minimal
+     ueberstehender Zellinhalt nicht abgeschnitten wird (auf dem Ausdruck ohne abgerundete
+     Kartenkontur ohnehin nicht mehr relevant). Die gestrichelten Trennlinien (Bildschirm-Regel
+     "#grid td, #grid th{border-style:dashed}", siehe dort) werden auf durchgezogene Linien
+     zurueckgesetzt -- die bisherige, nuechterne A4-Optik bleibt damit unveraendert erhalten. */
+  .grid-card{border:none; border-radius:0; box-shadow:none; overflow:visible}
+  #grid td, #grid th{border-style:solid}
+  .cell:focus{background:transparent; box-shadow:none}
+  .cell:empty::before{content:""}
+  .rowtool{display:none !important}
+  /* "Heute" nur am Bildschirm: ein Ausdruck haengt meist eine ganze Woche, ein statischer
+     "Heute"-Marker waere am Folgetag schon falsch (siehe :root-Kommentar oben). */
+  td.today,th.today{background:none !important; box-shadow:none !important}
+  th.today .badge{display:none !important}
+  /* Familienfarben ebenfalls nur am Bildschirm. AP3.1 (Konzept-Hauptraster-Option-B.md
+     Abschnitt 3): kein border-left mehr zu entfernen -- die frueher hier zurueckgesetzte
+     1mm-Randlinie ist durch den Avatar-Chip ersetzt worden. Stattdessen wird hier passend zum
+     neuen Avatar-Chip .avatar{display:none !important} ergaenzt (Konzept Abschnitt 2, Punkt 3):
+     die farbige Kreis-Initiale liefert im Ausdruck keine zusaetzliche Information (der Name
+     steht ohnehin daneben) und widerspricht dem bewusst nuechternen Druckbild. */
+  tr.person.fam-a td.lbl, tr.person.fam-b td.lbl, tr.person.fam-c td.lbl, tr.person.fam-d td.lbl{
+    background:var(--tint);
+  }
+  .avatar{display:none !important}
+  /* Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19): "Essen & Kochen"/"Einkauf &
+     Besorgungen" werden von renderSheet() (app.js) gar nicht mehr als <tr> ins Hauptraster
+     gerendert -- die vormals hier noetige Sonderbehandlung "tr.link-row{display:none}" plus
+     Grenzlinie-Umzug auf die naechste sichtbare gemeinsame Zeile ist damit entfallen: die
+     erste tatsaechlich gerenderte gemeinsame Zeile ("Haushalt & Sonstiges") bekommt ihre
+     .first-shared-Klasse (und damit die Trennlinie) bereits beim normalen Rendern zugewiesen,
+     gleich fuer Bildschirm und Ausdruck. Ihre Inhalte bleiben ueber die eigenen Ansichten
+     (Einkaufen/Essen & Kochen im Linksmenue, sowie Tagesliste-/Essensplan-Overlay beim
+     Drucken, siehe die beiden Druckszenarien weiter unten) weiterhin voll erreichbar. */
+  /* Piktogramm-Paletten (grosse Werkzeugkasten-Palette, Mini-Paletten, Composer-Eingabe)
+     haben im Ausdruck keine Funktion. */
+  .composer,.mini-pal,.mealplan-toolbar{display:none !important}
+  .dl-item .rm{display:none !important}
+}
+
+/* Beim Drucken einer Liste wird alles andere ausgeblendet — Tagesliste und Essensplan lassen
+   sich damit unabhaengig vom Hauptraster und unabhaengig voneinander auf ein eigenes Blatt
+   drucken (siehe Dokumentation 4.9, hier um eine dritte/vierte Darstellung erweitert). */
+@media print{
+  body.printing-daylist > *:not(#daylistOverlay){display:none !important}
+  body.printing-daylist #daylistOverlay{position:static; background:none; padding:0; display:block}
+  body.printing-daylist .daylist{max-width:none; box-shadow:none; border-radius:0; background:#fff; page:daylist-print}
+  body.printing-daylist .daylist-head{background:#f2f4f6}
+  body.printing-daylist .daylist-head .btn{display:none}
+
+  body.printing-mealplan > *:not(#mealplanOverlay){display:none !important}
+  body.printing-mealplan #mealplanOverlay{position:static; background:none; padding:0; display:block}
+  body.printing-mealplan .mealplan{max-width:none; box-shadow:none; border-radius:0; background:#fff}
+  body.printing-mealplan .daylist-head{background:#f2f4f6}
+  body.printing-mealplan .daylist-head .btn{display:none}
+  /* A4 quer auf einer Seite: 277×190mm nutzbare Flaeche bei 10mm Rand (Standard-@page ist
+     bereits Querformat, siehe oben — hier nur die Tabellenmasse ans Papier angepasst).
+     4 Mahlzeiten-Zeilen a 30mm + 12mm Kopfzeile = 132mm, bleibt darunter — bewusst grosszuegig,
+     das war ja der Sinn der Umstellung weg von der engen Tagesspalte. */
+  body.printing-mealplan .mp-table{margin:0; width:277mm; table-layout:fixed}
+  body.printing-mealplan .mp-table col.lbl{width:30mm}
+  body.printing-mealplan .mp-table thead th{height:12mm; font-size:9pt}
+  body.printing-mealplan tr.mealrow td{height:30mm}
+  body.printing-mealplan .mp-table .mp-cell{font-size:9pt; padding:2mm}
+}

@@ -1,0 +1,16 @@
+# Secrets und lokale .env-Sicherungen -- nie tracken
+secrets/
+.env
+.env-backups/
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# OS/Editor
+.DS_Store
+Thumbs.db
+
+# Generierte Backup-Testartefakte (GPG-verschluesselt, aber wiederholt neu
+# generierte Binaerdaten -- gehoeren nicht ins Repo, blaehen die Historie auf)
+ops/offsite-backup-simulation/
