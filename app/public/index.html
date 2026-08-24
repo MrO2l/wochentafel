@@ -72,32 +72,43 @@
 
   <main class="app-main">
 
-<div class="toolbar">
+<!-- AP1.1 (Bootstrap-Migrationsplan): ".toolbar" ist jetzt ein echtes <nav class="navbar">
+     (Semantik + Bootstrap-Basisklasse), die Buttons darin echte Bootstrap ".btn"-Varianten statt
+     der eigenstaendigen ".legacy-btn" (die fuer Overlays/Kontomenue/Login unveraendert bestehen
+     bleibt, siehe dortige Vorkommen und AP0.1). Farben/Masse bleiben unveraendert -- siehe
+     ".toolbar .btn"-Regeln in style.css fuer die Begruendung. Bewusst KEIN ".navbar-nav"/".nav-
+     link": das sind Navigations-Links zu Seiten/Ansichten, hier stehen aber Aktions-Buttons
+     (Drucken, Wochenwahl, Vorlage, Zeilen hinzufuegen ...) -- ".navbar-nav" waere semantisch
+     falsch. Bootstrap erlaubt Navbars ausdruecklich auch mit Buttons/Formularen/Text statt
+     ausschliesslich Nav-Links. -->
+<nav class="navbar toolbar" aria-label="Werkzeugleiste">
+<div class="container-fluid">
   <div class="tb-row">
-    <button class="legacy-btn primary" id="btnPrint">Drucken</button>
+    <button class="btn btn-primary btn-sm" id="btnPrint">Drucken</button>
     <div class="sep hide-sm"></div>
-    <button class="legacy-btn" id="btnPrev" title="Woche zurück">&#9664;</button>
+    <button class="btn btn-outline-secondary btn-sm" id="btnPrev" title="Woche zurück">&#9664;</button>
     <input type="date" id="monday">
-    <button class="legacy-btn" id="btnNext" title="Woche vor">&#9654;</button>
-    <button class="legacy-btn hide-sm" id="btnToday">Diese Woche</button>
+    <button class="btn btn-outline-secondary btn-sm" id="btnNext" title="Woche vor">&#9654;</button>
+    <button class="btn btn-outline-secondary btn-sm hide-sm" id="btnToday">Diese Woche</button>
     <select id="archive" class="hide-sm" title="Gespeicherte Wochen"><option value="">Archiv …</option></select>
     <div class="sep hide-sm cal-only"></div>
-    <button class="legacy-btn hide-sm cal-only" id="btnTemplateApply">Vorlage einfügen</button>
-    <button class="legacy-btn hide-sm cal-only" id="btnTemplateSave">Als Vorlage sichern</button>
+    <button class="btn btn-outline-secondary btn-sm hide-sm cal-only" id="btnTemplateApply">Vorlage einfügen</button>
+    <button class="btn btn-outline-secondary btn-sm hide-sm cal-only" id="btnTemplateSave">Als Vorlage sichern</button>
     <div class="sep hide-sm cal-only"></div>
-    <button class="legacy-btn hide-sm cal-only" id="btnAddPerson">+ Person</button>
-    <button class="legacy-btn hide-sm cal-only" id="btnAddShared">+ Zeile</button>
+    <button class="btn btn-outline-secondary btn-sm hide-sm cal-only" id="btnAddPerson">+ Person</button>
+    <button class="btn btn-outline-secondary btn-sm hide-sm cal-only" id="btnAddShared">+ Zeile</button>
     <div class="sep hide-sm cal-only"></div>
-    <button class="legacy-btn cal-only" id="btnView">Tagesansicht</button>
-    <button class="legacy-btn only-day" id="btnIcons">Symbole</button>
+    <button class="btn btn-outline-secondary btn-sm cal-only" id="btnView">Tagesansicht</button>
+    <button class="btn btn-outline-secondary btn-sm only-day" id="btnIcons">Symbole</button>
     <div class="grow"></div>
     <span class="status" id="status">…</span>
-    <button class="legacy-btn small" id="btnMenu">Konto</button>
+    <button class="btn btn-outline-secondary btn-sm small" id="btnMenu">Konto</button>
   </div>
   <div class="tb-row palette-wrap">
     <div class="palette" id="palette"></div>
   </div>
 </div>
+</nav>
 
 <div class="banner" id="banner"></div>
 

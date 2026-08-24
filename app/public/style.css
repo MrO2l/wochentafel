@@ -163,7 +163,17 @@ button,input,select{font:inherit}
    (siehe :root oben) -- seit der zweiten Migrationsrunde (Nutzer-Feedback 2026-08-19) zeigen diese
    Variablen selbst auf die Design-v2-Palette, die Grundregeln muessen deshalb nicht mehr einzeln
    umgeschrieben werden. */
-.toolbar{position:sticky; top:0; z-index:50; background:var(--surface); border-bottom:1px solid var(--line-soft); padding:9px 14px; box-shadow:0 1px 6px rgba(0,0,0,.06)}
+/* AP1.1 (Bootstrap-Migrationsplan): ".toolbar" ist jetzt zusaetzlich ein echtes Bootstrap
+   ".navbar" (siehe index.html, <nav class="navbar toolbar">). Bootstraps eigene ".navbar"-Regel
+   setzt display:flex (fuer eine einzeilige Navbar gedacht) -- hier bewusst auf display:block
+   zurueckgesetzt, weil die Werkzeugleiste aus ZWEI untereinander gestapelten ".tb-row"-Zeilen
+   besteht (Aktionen, dann Piktogramm-Palette), keiner einzelnen Flex-Reihe. Ohne diesen Reset
+   wuerden beide Zeilen faelschlich nebeneinander statt untereinander erscheinen. */
+.toolbar{display:block; position:sticky; top:0; z-index:50; background:var(--surface); border-bottom:1px solid var(--line-soft); padding:9px 14px; box-shadow:0 1px 6px rgba(0,0,0,.06)}
+/* Bootstraps ".container-fluid" (direktes Kind von ".navbar", siehe index.html) bringt eigenes
+   Gutter-Padding (0.75rem links/rechts) mit, das zusaetzlich zum ".toolbar"-Padding oben wirken
+   wuerde -- hier neutralisiert, damit die Werkzeugleiste optisch unveraendert bleibt. */
+.toolbar .container-fluid{padding:0; margin:0; width:auto}
 .tb-row{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
 .tb-row+.tb-row{margin-top:8px}
 .legacy-btn{font-size:13px; padding:6px 11px; border-radius:7px; border:1px solid var(--line-soft); background:var(--surface); color:var(--ink); cursor:pointer}
@@ -174,14 +184,24 @@ button,input,select{font:inherit}
 /* Aus der ersten Migrationsrunde (Nutzer-Feedback 2026-08-19): die Buttons/Formularelemente
    INNERHALB der Werkzeugleiste referenzieren die Design-v2-Variablen (--primary/--secondary/
    --border-color, siehe :root in style-v2.css) direkt statt ueber --accent, per ".toolbar"-
-   Praefix gezielt von den ".legacy-btn"-Grundregeln abgegrenzt. Seit der zweiten Migrationsrunde
-   fuehrt --accent selbst ebenfalls zur Design-v2-Palette (siehe :root oben) -- diese direkten
-   Referenzen bleiben unveraendert bestehen, sind funktional aber deckungsgleich mit den
-   .legacy-btn-Grundregeln geworden. */
-.toolbar .legacy-btn{border-radius:var(--radius); border-color:var(--border-color); background:var(--background); color:var(--text-body)}
-.toolbar .legacy-btn:hover{background:var(--secondary)}
-.toolbar .legacy-btn.primary{background:var(--primary); border-color:var(--primary)}
-.toolbar .legacy-btn.primary:hover{background:var(--primary-dark); border-color:var(--primary-dark); filter:none}
+   Praefix gezielt abgegrenzt.
+   AP1.1 (Bootstrap-Migrationsplan): Werkzeugleisten-Buttons nutzen jetzt Bootstraps echte
+   ".btn"/".btn-primary"/".btn-outline-secondary"/".btn-sm"-Klassen (index.html) statt der
+   eigenstaendigen ".legacy-btn" (die fuer Overlays/Kontomenue/Login unveraendert weiterbesteht,
+   siehe dortige Vorkommen). ".btn-outline-secondary" dient hier nur als ehrliches, erkennbares
+   Bootstrap-Modifier-Label ("neutraler Aktions-Button") -- Farben/Masse werden bewusst NICHT von
+   Bootstraps generischem Grauton uebernommen, sondern unten weiterhin gezielt auf die
+   Design-v2-Palette gesetzt (identisches Muster wie zuvor bei ".legacy-btn"), fuer optische
+   Gleichheit mit dem bisherigen Zustand. ".btn-sm" (index.html) liefert die Bootstrap-eigene
+   Kompaktgroesse als Ausgangsbasis, hier zusaetzlich auf die bisherigen exakten Masse (13px/
+   6px 11px) gesetzt. */
+.toolbar .btn{border-radius:var(--radius); border-color:var(--border-color); background:var(--background); color:var(--text-body); font-size:13px; padding:6px 11px; line-height:1.5}
+.toolbar .btn:hover{background:var(--secondary); color:var(--text-body)}
+.toolbar .btn-primary{background:var(--primary); border-color:var(--primary); color:#fff}
+.toolbar .btn-primary:hover{background:var(--primary-dark); border-color:var(--primary-dark); color:#fff}
+/* "Konto"-Button war schon vor der Migration kleiner als die uebrigen Werkzeugleisten-Buttons
+   (".legacy-btn.small") -- hier per zusaetzlicher, weiterhin so benannter Klasse beibehalten. */
+.toolbar .btn.small{padding:4px 8px; font-size:12px}
 .tb-label{font-size:12px; color:var(--muted)}
 .sep{width:1px; align-self:stretch; background:var(--border-color); margin:0 3px}
 .grow{flex:1}
