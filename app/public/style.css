@@ -401,6 +401,18 @@ td.weekcell .listlink svg{width:5.5mm; height:5.5mm}
 td.weekcell .listlink .badge{position:static; margin-left:auto}
 
 .foot{display:flex; gap:4mm; margin-top:3mm; align-items:stretch}
+/* AP3.1 (Bootstrap-Migrationsplan): .legend/.notes tragen jetzt zusaetzlich Bootstraps echte
+   ".card"-Basisklasse (index.html). Zwei von Bootstraps ".card"-Voreinstellungen (vendor/bootstrap/
+   css/bootstrap.min.css) werden von keiner bereits bestehenden Regel abgedeckt und daher hier
+   gezielt zurueckgesetzt: (1) "background-color:var(--bs-card-bg)" (Bootstrap-Default: Weiss)
+   haette die bislang transparente Flaeche (durchscheinendes .sheet-Warmweiss, var(--background))
+   durch echtes Weiss ersetzt; (2) "color:var(--bs-body-color)" haette den von body geerbten
+   Textton (var(--ink)) fuer unbeschriftete Kindelemente (z. B. ".notes .cell", das selbst keine
+   eigene Farbe setzt) durch Bootstraps eigenen, geringfuegig abweichenden Grauton ersetzt. Alle
+   uebrigen Bootstrap-Card-Defaults (Rahmen/Radius/Innenabstand/Flex-Layout) werden bereits durch
+   die folgenden, unveraenderten Regeln bei gleicher Selektor-Spezifitaet + spaeterer Ladereihenfolge
+   zuverlaessig ueberschrieben, brauchen also keine gesonderte Ergaenzung. */
+.legend.card, .notes.card{ background:var(--background); color:var(--ink) }
 .legend{flex:1; border:.6pt solid var(--line-soft); border-radius:1.5mm; padding:1.5mm 2mm}
 .legend h2,.notes h2{font-size:7.5pt; margin:0 0 1mm; text-transform:uppercase; letter-spacing:.06em; color:var(--muted)}
 .legend .items{display:grid; grid-template-columns:repeat(8,1fr); gap:.6mm 2mm}

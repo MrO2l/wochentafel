@@ -154,8 +154,14 @@
          NUR um <table id="grid">, nicht um das ganze .sheet (Kopf .head/Fuss .foot bleiben ohne
          eigene Kartenkontur, siehe Konzept-Hauptraster-Option-B.md Abschnitt 1). Kartenrahmen/
          -radius/-schatten werden im Ausdruck gezielt zurueckgesetzt, siehe @media print in
-         style.css (.grid-card-Reset). -->
-    <div class="grid-card">
+         style.css (.grid-card-Reset).
+         AP3.1 (Bootstrap-Migrationsplan, siehe dortiger plan.md): zusaetzlich Bootstraps echte
+         ".card"-Basisklasse (analog ".toolbar navbar" aus AP1.1 bzw. ".daylist-head modal-header"
+         aus AP2.1/2.2 -- bestehende eigene Klasse bleibt fuehrend, Bootstrap-Klasse nur ergaenzt).
+         Die eigenen Rahmen-/Radius-/Schatten-/Hintergrund-Regeln (siehe style.css) bleiben
+         unveraendert bestehen und ueberschreiben Bootstraps "--bs-card-*"-Defaultwerte weiterhin
+         zuverlaessig -- Details/gezielt zurueckgesetzte Ausnahmen siehe Kommentar in style.css. -->
+    <div class="grid-card card">
       <table id="grid">
         <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
         <thead><tr id="headRow"><th class="corner">Wer / Was</th></tr></thead>
@@ -163,12 +169,26 @@
       </table>
     </div>
 
-    <div class="foot">
-      <div class="legend">
+    <!-- AP3.1 (Bootstrap-Migrationsplan): .foot nutzt jetzt zusaetzlich Bootstraps echtes Grid
+         ("row g-0" statt reinem Eigen-Flexbox-Layout, "col"/"col-auto" fuer legend/notes), analog
+         zum bereits bestehenden "row g-3"-Muster der Fokusbloecke weiter unten. "g-0" neutralisiert
+         Bootstraps Standard-Gutter (Aussenraender/Zellinnenabstand); "gap:4mm" (eigene .foot-Regel,
+         unveraendert) bleibt die einzige tatsaechliche Abstandsquelle -- siehe style.css-Kommentar
+         fuer die zwei zusaetzlich gezielt zurueckgesetzten Bootstrap-Card-Defaults (Hintergrund/
+         Textfarbe). Die eigentliche Matrix-Tabelle (#grid) bleibt bewusst ein einfaches, semantisch
+         korrektes HTML-<table> -- Bootstraps ".table"-Komponente wuerde ueber ihre klassenbasierten
+         Zellen-/Randregeln (hoehere Spezifitaet als die bisherigen Element-Selektoren "th,td{...}")
+         mehrere zusaetzliche, nicht trivial ueberschreibbare Nebenwirkungen ins mm-genaue Druck-
+         layout einbringen (u. a. Zellpolsterung, Tabellen-Aussenabstand, Textfarbe) -- ohne
+         funktionalen Nutzen fuer eine ohnehin bereits vollstaendig eigenstaendig gestaltete Tabelle.
+         Analog zur bereits im Plan dokumentierten AP1.2-Entscheidung daher bewusst NICHT umgestellt,
+         an ANORAK zurueckgemeldet. -->
+    <div class="foot row g-0">
+      <div class="legend card col">
         <h2>Piktogramme</h2>
         <div class="items" id="legend"></div>
       </div>
-      <div class="notes">
+      <div class="notes card col-auto">
         <h2>Notizen &amp; Merkzettel</h2>
         <div class="cell" contenteditable="true" data-ph="Was diese Woche sonst noch wichtig ist …" data-bind="notes"></div>
       </div>
