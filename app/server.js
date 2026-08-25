@@ -721,12 +721,33 @@ function issueAdminCsrfToken(req, res) {
 // funktionieren (dort gibt es nichts zu faelschen). Muss NACH
 // requireAdminAuth eingehaengt werden (braucht eine bereits gueltige
 // req.session.adminId/req.session.csrfToken).
+// Zeitkonstanter String-Vergleich fuer Secret-Werte (ZANDORs Nachbesserung zum
+// CSRF-Review, CWE-208): ein einfaches "==="/"!==" auf Strings vergleicht
+// intern zeichenweise und bricht beim ersten Unterschied ab -- die
+// Vergleichsdauer haengt dadurch minimal von der Anzahl uebereinstimmender
+// Anfangszeichen ab, was einem Angreifer mit sehr genauer Zeitmessung
+// theoretisch erlauben koennte, ein gueltiges Token Zeichen fuer Zeichen zu
+// erraten. crypto.timingSafeEqual() vergleicht stattdessen immer alle Bytes,
+// unabhaengig vom Ergebnis. Erfordert gleich lange Buffer (wirft sonst) --
+// die Laengenpruefung davor ist daher kein zusaetzliches Informationsleck
+// (Cookie-/Header-/Session-Tokens haben ohnehin alle dieselbe feste Laenge
+// von issueAdminCsrfToken(), ein Laengenunterschied bedeutet immer schon
+// "kein gueltiges Token"), sondern verhindert nur den Wurf.
+function timingSafeTokenEquals(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 function requireAdminCsrf(req, res, next) {
   const headerToken = req.get('X-CSRF-Token');
   const cookieToken = readCookie(req, ADMIN_CSRF_COOKIE);
   const sessionToken = req.session.csrfToken;
   if (!sessionToken || !headerToken || !cookieToken ||
-      headerToken !== cookieToken || headerToken !== sessionToken) {
+      !timingSafeTokenEquals(headerToken, cookieToken) ||
+      !timingSafeTokenEquals(headerToken, sessionToken)) {
     return res.status(403).json({ error: 'CSRF-Token fehlt oder ist ungueltig. Bitte Seite neu laden und erneut versuchen.' });
   }
   next();
