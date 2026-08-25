@@ -1,0 +1,71 @@
+/* admin.css — Wochenplaner-Admin-Frontend (Arbeitspaket "Admin-Frontend",
+ * projects/wochenplaner-admin/plan.md)
+ *
+ * Ergaenzt style-v2.css NUR um das Minimum, das fuer die beiden neuen Admin-Seiten
+ * (admin-login.html/admin.html) noetig ist, um bei der etablierten Taupe-Palette zu bleiben --
+ * OHNE die bestehenden Dateien fuer den restlichen Haushalts-Bereich anzufassen (kein
+ * Regressionsrisiko fuer die bereits abgeschlossene Bootstrap-Migration, siehe
+ * projects/wochenplaner-bootstrap-migration/plan.md).
+ *
+ * Anders als der uebrige App-Bestand (eigene ".legacy-btn"-Klasse, historisch bedingt durch die
+ * Namenskollision mit Bootstraps ".btn", siehe dortiger Migrationsplan AP0.1) nutzen die neuen
+ * Admin-Seiten echte Bootstrap-".btn"/".navbar"/".table"/".badge"-Klassen direkt, da sie
+ * komplett neu entstehen und keine Altlast mitschleppen -- nur die Akzentfarbe wird hier gezielt
+ * auf die Taupe-Palette umgelenkt (identisches Muster wie ".toolbar .btn-primary" in style.css).
+ *
+ * admin.html bindet BEWUSST NICHT style.css ein (anders als admin-login.html/login.html/
+ * index.html): style.css enthaelt mehrere UNGESCOPTE Element-Selektoren fuer <table>/th/td
+ * (dort Zeile ~270/279, fuers A4-Hauptraster-Blatt gedacht: table-layout:fixed, th/td{padding:0}
+ * ohne umschliessende Klasse/ID), die zusammen mit der hier verwendeten echten Bootstrap-".table"
+ * (admin.html, Haushaltsuebersicht) zu unvorhersehbaren Layoutkonflikten fuehren wuerden. Diese
+ * Datei reproduziert daher die paar fuer die Admin-Seiten benoetigten, bereits etablierten
+ * visuellen Bausteine (Hinweis-/Fehlerbox, Dialog-Chrome) selbststaendig unter eigenen
+ * Klassennamen, auf Basis derselben style-v2.css-Variablen (--primary/--secondary/--background/
+ * --border-color/--text-body/--radius) -- optisch/farblich konsistent, ohne das riskante
+ * Element-Selektor-CSS des A4-Blatts zu uebernehmen. admin-login.html hat keine Tabelle und bindet
+ * deshalb weiterhin ganz normal style.css ein, um dessen etablierte .auth-wrap/.auth-card/
+ * .msg-Klassen 1:1 wie login.html zu nutzen (siehe dortiger Kopfkommentar).
+ */
+
+body.admin-page {
+  background: var(--background);
+  color: var(--text-body);
+  font-family: "Open Sans", "Inter", "Lato", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.admin-navbar {
+  background: var(--background);
+  border-bottom: 1px solid var(--border-color);
+  padding: .75rem 1rem;
+}
+.admin-navbar .navbar-brand { color: var(--primary); font-weight: 700; }
+
+/* Taupe-Einfaerbung von Bootstraps kanonischer .btn-primary -- gleiches Muster wie
+   ".toolbar .btn-primary" in style.css (Bootstrap-Migrationsplan AP1.1). Gilt fuer beide
+   Admin-Seiten (admin-login.html bindet diese Datei ebenfalls ein). */
+.btn-primary { background: var(--primary); border-color: var(--primary); }
+.btn-primary:hover, .btn-primary:focus { background: var(--primary-dark); border-color: var(--primary-dark); }
+.btn-outline-secondary { color: var(--text-body); border-color: var(--border-color); }
+.btn-outline-secondary:hover { background: var(--secondary); color: var(--text-body); border-color: var(--border-color); }
+
+.admin-page .card { background: var(--background); border-color: var(--border-color); }
+.admin-page .table thead th { border-bottom: 2px solid var(--border-color); color: var(--text-body); }
+.admin-page .table td, .admin-page .table th { border-color: var(--border-color); vertical-align: middle; }
+
+/* Hinweis-/Fehlerbox fuer admin.html -- inhaltlich identisch zu style.css ".msg" (dort nicht
+   mit-eingebunden, siehe Kopfkommentar). Wird von admin-login.html per style.css bereits
+   abgedeckt; diese Regel greift dort zusaetzlich, aber deckungsgleich (kein Widerspruch). */
+.msg { margin: 1rem 0; font-size: .9rem; padding: .6rem .75rem; border-radius: var(--radius); display: none; }
+.msg.err { display: block; background: #fdecec; color: #a12b2b; }
+.msg.ok { display: block; background: #eaf6ef; color: #2f7a52; }
+
+/* Dialog-Chrome fuer die Loesch-Bestaetigung in admin.html: natives <dialog> + showModal(),
+   etabliertes Muster aus app.js (openMenu(), Tagesliste-/Essensplan-Overlay) -- hier unter
+   eigenem Klassennamen nachgebaut, weil style.css (mit der aequivalenten ".acct-dialog"-Regel)
+   auf dieser Seite bewusst nicht eingebunden wird (siehe Kopfkommentar). */
+.admin-dialog { border: 0; border-radius: 12px; padding: 0; max-width: 440px; width: 92%;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .25); }
+.admin-dialog::backdrop { background: rgba(0, 0, 0, .35); }
+.admin-dialog .dlg-body { padding: 20px 22px; }
+.admin-dialog h2 { margin: 0 0 8px; font-size: 17px; color: var(--primary); }
+.admin-dialog .form-label { margin-top: 12px; }

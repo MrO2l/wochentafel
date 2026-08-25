@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin – Familien-Wochenplan</title>
+<!-- Admin-Uebersichtsseite (Arbeitspaket "Admin-Frontend", projects/wochenplaner-admin/plan.md).
+     Bindet Bootstrap/Bootstrap Icons lokal vendored + style-v2.css (Taupe-Palette/Variablen) +
+     admin.css ein -- BEWUSST NICHT style.css (anders als login.html/admin-login.html/index.html),
+     siehe ausfuehrliche Begruendung im Kopfkommentar von admin.css: style.css enthaelt mehrere
+     ungescopte Element-Selektoren fuer <table>/th/td (fuers A4-Hauptraster gedacht), die mit der
+     hier verwendeten echten Bootstrap-".table" kollidieren wuerden. -->
+<link rel="stylesheet" href="vendor/bootstrap/css/bootstrap.min.css">
+<link rel="stylesheet" href="vendor/bootstrap-icons/bootstrap-icons.css">
+<link rel="stylesheet" href="vendor/fonts/open-sans/open-sans.css">
+<link rel="stylesheet" href="style-v2.css">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body class="admin-page">
+
+<nav class="navbar admin-navbar" aria-label="Admin-Werkzeugleiste">
+  <div class="container-fluid">
+    <span class="navbar-brand mb-0 h1"><i class="bi bi-house-heart-fill" aria-hidden="true"></i> Wochenplaner-Admin</span>
+    <button type="button" class="btn btn-outline-secondary btn-sm" id="btnLogout">Abmelden</button>
+  </div>
+</nav>
+
+<main class="container py-4">
+  <h1 class="h5 mb-3">Haushalte</h1>
+  <p class="text-muted small">
+    Anonymisierte Übersicht: keine Klarnamen, keine E-Mail-Adressen (bewusste Datenschutz-Entscheidung,
+    siehe Plan). Status: <span class="badge bg-success">aktiv</span>
+    <span class="badge bg-warning text-dark">deaktiviert</span>
+    <span class="badge bg-danger">gelöscht</span>.
+  </p>
+
+  <div class="msg" id="msg" role="alert" aria-live="polite"></div>
+
+  <div class="card">
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table align-middle" id="householdsTable">
+          <thead>
+            <tr>
+              <th scope="col">Haushalts-ID</th>
+              <th scope="col">Erstellt am</th>
+              <th scope="col">Mitglieder</th>
+              <th scope="col">Status</th>
+              <th scope="col">Aktionen</th>
+            </tr>
+          </thead>
+          <tbody id="householdsBody">
+            <tr><td colspan="5" class="text-center text-muted py-3">Lade Haushalte …</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Loesch-Bestaetigung: natives <dialog> + showModal(), etabliertes Muster aus app.js
+     (openMenu()) bzw. der Bootstrap-Migration (Tagesliste-/Essensplan-Overlay). Fragt zur
+     Bestaetigung erneut die Haushalts-ID ab (F1-Konsistenz: kein Klarname im Admin-Bereich,
+     siehe server.js-Kommentar bei DELETE /api/admin/households/:id). -->
+<dialog id="deleteDialog" class="admin-dialog">
+  <div class="dlg-body">
+    <h2>Haushalt löschen</h2>
+    <p id="deleteDialogText"></p>
+    <label for="deleteConfirmInput" class="form-label">Haushalts-ID zur Bestätigung erneut eingeben</label>
+    <input id="deleteConfirmInput" type="text" class="form-control" inputmode="numeric" autocomplete="off">
+    <div class="msg" id="deleteDialogMsg" role="alert" aria-live="polite"></div>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+      <button type="button" class="btn btn-outline-secondary btn-sm" data-act="cancel">Abbrechen</button>
+      <button type="button" class="btn btn-danger btn-sm" data-act="confirm">Endgültig löschen</button>
+    </div>
+  </div>
+</dialog>
+
+<script src="admin.js"></script>
+</body>
+</html>

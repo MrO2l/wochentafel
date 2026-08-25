@@ -642,6 +642,96 @@ function requireAdminAuth(req, res, next) {
 // selbst einbinden, sonst bleibt sie ungeschuetzt. ZANDOR sollte das bei
 // jedem neuen Admin-Endpunkt gezielt gegenpruefen (AP5.1).
 
+/* ------------------------------------------------------------------ *
+ * CSRF-Schutz fuer den Admin-Bereich (Arbeitspaket "Admin-Frontend",
+ * ergaenzt ZANDORs AP2.2-Fund 5 "Double-Submit-Cookie-Token", der explizit
+ * zurueckgestellt wurde, SOLANGE kein browserbasiertes Admin-Frontend
+ * existiert -- mit admin.html/admin-login.html ist genau dieser Fall jetzt
+ * eingetreten, die Entscheidung wird hiermit nachgeholt.
+ *
+ * Double-Submit-Cookie, mit einer bewussten Haertung ueber das reine
+ * Grundmuster hinaus: ein zufaelliges Token wird bei Admin-Login UND bei
+ * GET /api/admin/me (Seitenaufruf von admin.html) (1) in ein eigenes,
+ * admin-scoped Cookie geschrieben UND (2) serverseitig in
+ * req.session.csrfToken abgelegt UND (3) im JSON-Antwortkoerper an den
+ * Client zurueckgegeben. Der Client speichert ausschliesslich die per JSON
+ * gelieferte Kopie (kein clientseitiges document.cookie-Parsing noetig) und
+ * schickt sie bei jedem zustandsaendernden Request im Header
+ * "X-CSRF-Token" zurueck; das Cookie selbst wird vom Browser automatisch
+ * mitgeschickt (Cookies werden unabhaengig von httpOnly immer gesendet,
+ * httpOnly verhindert nur das Auslesen per JS). requireAdminCsrf verlangt
+ * unten Uebereinstimmung ALLER DREI Werte (Header, Cookie, Session) --
+ * strenger als ein reines Double-Submit-Cookie (das nur Header gegen Cookie
+ * prueft), weil hier zusaetzlich ein serverseitig an die konkrete
+ * Admin-Session gebundener Wert verglichen wird. Das CSRF-Cookie ist daher
+ * bewusst httpOnly (anders als beim "klassischen" Double-Submit-Muster, das
+ * ein per JS lesbares Cookie braucht) -- der Client braucht es nie per JS zu
+ * lesen, da der massgebliche Wert ohnehin per JSON geliefert wird; httpOnly
+ * verkleinert die Angriffsflaeche zusaetzlich, ohne die Funktion
+ * einzuschraenken.
+ *
+ * Warum das ueberhaupt noetig ist, obwohl SameSite=Lax bereits (wie bei
+ * allen bestehenden Endpunkten dieser App) cross-origin-initiierte
+ * POST/DELETE-Anfragen blockiert: SameSite=Lax ist eine Browser-Verteidigung
+ * mit Sonderfaellen (u. a. aeltere/nicht standardkonforme Browser, sowie
+ * Top-Level-Navigationen per GET, die hier zwar nicht direkt greifen, aber
+ * das grundsaetzliche Prinzip "nicht ausschliesslich auf ein einzelnes
+ * Cookie-Attribut verlassen" gilt fuer einen Admin-Bereich mit
+ * Loesch-/Sperrrechten auf alle Kundendaten strenger als fuer die uebrigen
+ * Haushalts-Endpunkte) -- Defense-in-Depth, kein Ersatz fuer SameSite,
+ * zusaetzlich dazu.
+ * ------------------------------------------------------------------ */
+const ADMIN_CSRF_COOKIE = 'wochenplan.admin.csrf';
+
+// req.cookies existiert nicht (kein cookie-parser als Abhaengigkeit, siehe
+// package.json -- bewusst schlank gehalten, analog zum Rest dieser Datei,
+// die z. B. auch eigene Rate-Limiter statt einer Bibliothek schreibt).
+// Liest ein einzelnes Cookie direkt aus dem Request-Header.
+function readCookie(req, name) {
+  const header = req.headers.cookie;
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return null;
+}
+
+// Erzeugt (bzw. erneuert) das Admin-CSRF-Token fuer die aktuelle Admin-
+// Session: setzt das Cookie UND den Session-Wert, gibt das Token zurueck,
+// damit der Aufrufer es zusaetzlich im JSON-Antwortkoerper mitliefern kann.
+function issueAdminCsrfToken(req, res) {
+  const token = crypto.randomBytes(32).toString('hex');
+  req.session.csrfToken = token;
+  res.cookie(ADMIN_CSRF_COOKIE, token, {
+    httpOnly: true,           // siehe Begruendung oben -- Client braucht das Cookie nie per JS zu lesen
+    sameSite: 'lax',
+    secure: SECURE_COOKIES,
+    path: '/api/admin',
+    maxAge: ADMIN_SESSION_MAX_AGE_MS
+  });
+  return token;
+}
+
+// Middleware ausschliesslich fuer die drei zustandsaendernden
+// Admin-Endpunkte (deactivate/reactivate/delete) -- bewusst NICHT als Teil
+// von requireAdminAuth selbst, damit lesende Admin-Routen (GET
+// /api/admin/me, GET /api/admin/households) unveraendert ohne Token
+// funktionieren (dort gibt es nichts zu faelschen). Muss NACH
+// requireAdminAuth eingehaengt werden (braucht eine bereits gueltige
+// req.session.adminId/req.session.csrfToken).
+function requireAdminCsrf(req, res, next) {
+  const headerToken = req.get('X-CSRF-Token');
+  const cookieToken = readCookie(req, ADMIN_CSRF_COOKIE);
+  const sessionToken = req.session.csrfToken;
+  if (!sessionToken || !headerToken || !cookieToken ||
+      headerToken !== cookieToken || headerToken !== sessionToken) {
+    return res.status(403).json({ error: 'CSRF-Token fehlt oder ist ungueltig. Bitte Seite neu laden und erneut versuchen.' });
+  }
+  next();
+}
+
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 /* ------------------------------------------------------------------ *
@@ -883,6 +973,11 @@ app.post('/api/admin/auth/login', adminAuthLimiter, wrap(async (req, res) => {
   req.session.regenerate(err => {
     if (err) return res.status(500).json({ error: 'Anmeldung fehlgeschlagen' });
     req.session.adminId = row.id;
+    // CSRF-Token (Arbeitspaket "Admin-Frontend", siehe requireAdminCsrf oben):
+    // erst NACH regenerate() ausstellen, damit es an der NEUEN Session-ID
+    // haengt, nicht an der vor der Anmeldung bestehenden (Session-Fixation-
+    // Analogie zu adminId selbst).
+    const csrfToken = issueAdminCsrfToken(req, res);
     // Audit-Log-Insert liegt bewusst NACH regenerate() (neue Session-ID muss
     // stehen) und VOR der Erfolgsantwort. Schlaegt der INSERT fehl, wird die
     // gerade erst regenerierte Session wieder verworfen, statt dem Client
@@ -896,7 +991,7 @@ app.post('/api/admin/auth/login', adminAuthLimiter, wrap(async (req, res) => {
        VALUES ('admin_login_success', $1, $2)`,
       [row.id, req.ip]
     ).then(
-      () => res.json({ admin: { id: row.id, username: row.username } }),
+      () => res.json({ admin: { id: row.id, username: row.username }, csrfToken }),
       auditErr => {
         console.error('Admin-Audit-Log (Login-Erfolg) fehlgeschlagen:', auditErr);
         req.session.destroy(() => res.status(500).json({ error: 'Anmeldung fehlgeschlagen' }));
@@ -906,7 +1001,11 @@ app.post('/api/admin/auth/login', adminAuthLimiter, wrap(async (req, res) => {
 }));
 
 app.post('/api/admin/auth/logout', (req, res) => {
-  req.session.destroy(() => { res.clearCookie('wochenplan.admin.sid'); res.json({ ok: true }); });
+  req.session.destroy(() => {
+    res.clearCookie('wochenplan.admin.sid');
+    res.clearCookie(ADMIN_CSRF_COOKIE, { path: '/api/admin' });
+    res.json({ ok: true });
+  });
 });
 
 app.get('/api/admin/me', requireAdminAuth, wrap(async (req, res) => {
@@ -916,7 +1015,15 @@ app.get('/api/admin/me', requireAdminAuth, wrap(async (req, res) => {
   // vorgesehen, F2 -- aber Defense-in-Depth statt stillschweigender
   // Annahme, analog GET /api/me oben).
   if (!q.rowCount) return req.session.destroy(() => res.status(401).json({ error: 'Nicht angemeldet' }));
-  res.json({ admin: q.rows[0] });
+  // CSRF-Token (Arbeitspaket "Admin-Frontend"): admin.html ruft diese Route
+  // bei jedem Seitenaufruf als Auth-Check auf und nutzt genau diesen
+  // Zeitpunkt, um sein CSRF-Token zu (be-)ziehen -- entweder das bereits in
+  // der Session bestehende (Normalfall) oder, falls eine bereits vor
+  // Einfuehrung dieses Mechanismus bestehende Admin-Session noch keines
+  // traegt, ein frisch ausgestelltes (Selbstheilung ohne erzwungenen
+  // Re-Login).
+  const csrfToken = req.session.csrfToken || issueAdminCsrfToken(req, res);
+  res.json({ admin: q.rows[0], csrfToken });
 }));
 
 /* ------------------------------------------------------------------ *
@@ -978,22 +1085,16 @@ function parseHouseholdId(raw) {
  * die Audit-Log-Eintraege aus 006, die admin_id direkt von hier
  * uebernehmen).
  *
- * CSRF (ZANDORs Fund 5, NIEDRIG, AP2.2): fuer diese drei zustandsaendernden
- * Endpunkte bewusst KEIN zusaetzliches Double-Submit-Cookie-Token
- * eingefuehrt, gleiches Muster wie bereits bei /api/admin/auth/login (AP2.1-
- * Log) und den bestehenden Haushalts-Endpunkten (z. B. DELETE
- * /api/template) entschieden: SameSite=Lax blockiert bereits
- * cross-origin-initiierte POST/DELETE-Anfragen in allen gaengigen aktuellen
- * Browsern, und es existiert aktuell KEIN browserbasiertes Admin-Frontend
- * (AP2.1-Log: "Kein Admin-Login-UI/HTML gebaut"), das ein Token ohnehin
- * mitschicken koennte -- ein Token ohne Konsument waere reine Komplexitaet
- * ohne unmittelbaren Zusatznutzen. Sobald ein Admin-Dashboard gebaut wird
- * (noch nicht beauftragt), sollte diese Abwaegung neu getroffen werden.
- * Explizit als offener Punkt fuer ZANDORs AP5.1-Abschlussreview markiert,
- * NICHT stillschweigend weggelassen -- siehe Ruckmeldung an ANORAK.
+ * CSRF (ZANDORs Fund 5, AP2.2, damals bewusst zurueckgestellt "solange kein
+ * browserbasiertes Admin-Frontend existiert"): mit admin.html/admin-
+ * login.html (Arbeitspaket "Admin-Frontend") ist dieser Fall jetzt
+ * eingetreten -- alle drei Endpunkte pruefen daher zusaetzlich zu
+ * requireAdminAuth jetzt requireAdminCsrf (siehe dortige ausfuehrliche
+ * Begruendung: Double-Submit-Cookie + Session-Bindung). Diese Neubewertung
+ * ist ausdruecklich fuer ein erneutes ZANDOR-Review vorgemerkt.
  * ------------------------------------------------------------------ */
 
-app.post('/api/admin/households/:id/deactivate', requireAdminAuth, wrap(async (req, res) => {
+app.post('/api/admin/households/:id/deactivate', requireAdminAuth, requireAdminCsrf, wrap(async (req, res) => {
   const householdId = parseHouseholdId(req.params.id);
   if (householdId == null) return res.status(400).json({ error: 'Ungueltige Haushalts-ID' });
 
@@ -1055,7 +1156,7 @@ app.post('/api/admin/households/:id/deactivate', requireAdminAuth, wrap(async (r
   res.json({ ok: true, householdId, status: 'deactivated', statusReason: 'admin_manual' });
 }));
 
-app.post('/api/admin/households/:id/reactivate', requireAdminAuth, wrap(async (req, res) => {
+app.post('/api/admin/households/:id/reactivate', requireAdminAuth, requireAdminCsrf, wrap(async (req, res) => {
   const householdId = parseHouseholdId(req.params.id);
   if (householdId == null) return res.status(400).json({ error: 'Ungueltige Haushalts-ID' });
 
@@ -1083,7 +1184,7 @@ app.post('/api/admin/households/:id/reactivate', requireAdminAuth, wrap(async (r
   res.json({ ok: true, householdId, status: 'active' });
 }));
 
-app.delete('/api/admin/households/:id', requireAdminAuth, wrap(async (req, res) => {
+app.delete('/api/admin/households/:id', requireAdminAuth, requireAdminCsrf, wrap(async (req, res) => {
   const householdId = parseHouseholdId(req.params.id);
   if (householdId == null) return res.status(400).json({ error: 'Ungueltige Haushalts-ID' });
 

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin-Anmeldung – Familien-Wochenplan</title>
+<!-- Eigenstaendige Admin-Login-Seite (Arbeitspaket "Admin-Frontend", projects/wochenplaner-admin/
+     plan.md): nutzt bewusst NICHT das Haushalts-Login-Formular/-Cookie (login.html/login.js) --
+     eigene Route (/api/admin/auth/login), eigenes, komplett getrenntes Session-Cookie
+     (wochenplan.admin.sid statt wochenplan.sid, siehe server.js). Bindet dieselben lokal
+     vendorten Bootstrap-/Bootstrap-Icons-/Open-Sans-Assets wie login.html sowie style-v2.css/
+     style.css fuer die etablierte Taupe-Palette (.auth-wrap/.auth-card/.msg-Klassen, siehe dort)
+     ein -- Konsistenz mit dem uebrigen App-Design, keine neue Design-Sprache. Anders als
+     admin.html enthaelt diese Seite keine Tabelle, daher unproblematisch mit style.css
+     kombinierbar (siehe Kopfkommentar in admin.css fuer die Begruendung, warum admin.html
+     style.css NICHT einbindet). -->
+<link rel="stylesheet" href="vendor/bootstrap/css/bootstrap.min.css">
+<link rel="stylesheet" href="vendor/bootstrap-icons/bootstrap-icons.css">
+<link rel="stylesheet" href="vendor/fonts/open-sans/open-sans.css">
+<link rel="stylesheet" href="style-v2.css">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<div class="auth-wrap admin-auth">
+  <div class="auth-card">
+    <h1>Admin-Bereich</h1>
+    <p class="lead">Zugang ausschließlich für den Betreiber-Admin des Wochenplaners.</p>
+
+    <form id="formAdminLogin" novalidate>
+      <label for="au" class="form-label">Benutzername</label>
+      <input id="au" name="username" type="text" class="form-control" autocomplete="username" required>
+      <label for="ap" class="form-label">Passwort</label>
+      <input id="ap" name="password" type="password" class="form-control" autocomplete="current-password" required>
+      <button type="submit" class="btn btn-primary w-100 mt-3">Anmelden</button>
+    </form>
+
+    <div class="msg" id="msg" role="alert" aria-live="polite"></div>
+  </div>
+</div>
+
+<script src="admin-login.js"></script>
+</body>
+</html>
