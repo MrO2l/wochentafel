@@ -2001,6 +2001,137 @@ app.post('/api/weeks/:monday/assign-recipe', requireAuth, rejectForeignHousehold
   });
 }));
 
+// AP4.1: baut aus einer Zutat {amount, unit, name} einen einzelnen Anzeigetext fuer einen
+// Tagesliste-Eintrag, passend zum Format, das der bestehende Composer im Frontend fuer manuell
+// erfasste Eintraege erzeugt (ein einzelner text-Token, siehe buildComposer()/openDayList() in
+// app.js). amount:null (z.B. wenn der Name bereits "Salz, nach Geschmack" lautet) liefert nur
+// den Namen; amount+unit werden sonst mit einem Leerzeichen davor ergaenzt (z.B. "500 g Mehl").
+// String(amount) statt toFixed(): liefert Zahlen ohne unnoetige Nachkommastellen (500 statt
+// 500.00), waehrend von scaleIngredients() gerundete Werte wie 0.25 unveraendert bleiben.
+function formatIngredientText(ingredient) {
+  const amountUnit = [
+    typeof ingredient.amount === 'number' && Number.isFinite(ingredient.amount) ? String(ingredient.amount) : null,
+    ingredient.unit || null
+  ].filter(Boolean).join(' ');
+  return amountUnit ? `${amountUnit} ${ingredient.name}` : ingredient.name;
+}
+
+/* ------------------------------------------------------------------ *
+ * AP4.1 (F2-Entscheidung des Nutzers, plan.md "Designentscheidungen"):
+ * eine einzelne Zutat aus einer bestehenden Rezept-Zuweisung ("Essen &
+ * Kochen", 't':'recipe'-Token, siehe assign-recipe oben) in die Tagesliste
+ * der "Einkauf & Besorgungen"-Zeile (listMode:true) uebernehmen.
+ *
+ * Eingabeformat -- Referenz statt vollstaendigem {amount,unit,name}-Objekt
+ * vom Client (dayIndex/slotIndex der Zuweisung + ingredientIndex innerhalb
+ * ingredients[]), bewusst die robustere der beiden im Auftrag genannten
+ * Varianten:
+ *  (1) Der Snapshot im recipe-Token IST bereits die Wahrheit fuer eine
+ *      zugewiesene Mahlzeit (F6, inkl. evtl. bereits manueller Korrektur
+ *      ueber PUT /api/weeks/:monday) -- ein zusaetzlich vom Client
+ *      mitgeschicktes {amount,unit,name} koennte veraltet sein (Client hat
+ *      eine inzwischen ueberholte Kopie im Speicher) oder frei erfunden;
+ *      die Referenz-Variante schliesst diese Diskrepanz strukturell aus.
+ *  (2) Kein zweiter Validierungspfad fuer {amount,unit,name} noetig -- die
+ *      referenzierte Zutat hat cleanIngredients()/cleanRecipeToken() bereits
+ *      beim Zuweisen bzw. letzten Speichern durchlaufen.
+ *  (3) Gleiches "innerhalb derselben Transaktion lesen und schreiben"-Muster
+ *      wie assign-recipe (FOR UPDATE) -- kein zusaetzlicher Abgleich noetig,
+ *      ob eine vom Client mitgeschickte Zutat noch zur aktuellen Zelle passt.
+ * targetDayIndex ist ein eigener Pflicht-Parameter (F2): das Frontend
+ * (AP4.2) befuellt ihn standardmaessig mit demselben Wert wie dayIndex, der
+ * Nutzer kann ihn im Tag-Auswahl-Dialog aber auf einen beliebigen Wochentag
+ * aendern -- der Server kennt/erzwingt keinen Default, er nimmt den vom
+ * Client gesendeten Wert entgegen.
+ *
+ * Existiert fuer targetDayIndex noch keine Tagesliste (leeres Array), wird
+ * sie durch das Hinzufuegen des ersten Eintrags faktisch neu angelegt --
+ * identisches Verhalten zum bestehenden manuellen Composer-Pfad
+ * (openDayList()/buildComposer() in app.js: `items.push(...); row.cells[d]
+ * = items;`), keine gesonderte "Liste anlegen"-Logik noetig.
+ *
+ * Kein Dedublizieren (Auftrag Punkt 6): dieselbe Zutat mehrfach hinzuzufuegen
+ * (z.B. aus zwei verschiedenen Rezepten) ist kein Fehler, jeder Aufruf haengt
+ * einen weiteren eigenstaendigen Eintrag an.
+ * ------------------------------------------------------------------ */
+app.post('/api/weeks/:monday/add-ingredient-to-list', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const monday = req.params.monday;
+  if (!isMonday(monday)) return res.status(400).json({ error: 'Datum muss ein Montag im Format JJJJ-MM-TT sein' });
+
+  const dayIndex = Number(req.body?.dayIndex);
+  const slotIndex = Number(req.body?.slotIndex);
+  const ingredientIndex = Number(req.body?.ingredientIndex);
+  const targetDayIndex = Number(req.body?.targetDayIndex);
+
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 6) {
+    return res.status(400).json({ error: 'dayIndex muss eine Ganzzahl zwischen 0 und 6 sein (0=Montag ... 6=Sonntag)' });
+  }
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= MEAL_LABELS.length) {
+    return res.status(400).json({ error: `slotIndex muss eine Ganzzahl zwischen 0 und ${MEAL_LABELS.length - 1} sein (Reihenfolge: ${MEAL_LABELS.join(', ')})` });
+  }
+  if (!Number.isInteger(ingredientIndex) || ingredientIndex < 0) {
+    return res.status(400).json({ error: 'ingredientIndex muss eine nicht-negative Ganzzahl sein' });
+  }
+  if (!Number.isInteger(targetDayIndex) || targetDayIndex < 0 || targetDayIndex > 6) {
+    return res.status(400).json({ error: 'targetDayIndex muss eine Ganzzahl zwischen 0 und 6 sein (0=Montag ... 6=Sonntag)' });
+  }
+
+  const result = await withTenantClient(req.session.householdId, async client => {
+    // Anders als assign-recipe kein Vorlagen-Fallback fuer eine noch nicht angelegte Woche:
+    // die hier referenzierte Zutat kann nur existieren, wenn zuvor bereits eine Rezept-
+    // Zuweisung stattgefunden hat -- und assign-recipe legt die weeks-Zeile dabei immer
+    // per UPSERT an. Existiert die Woche nicht, kann dayIndex/slotIndex keine gueltige
+    // Zuweisung referenzieren; 404 statt eines irrefuehrenden Vorlagen-Zugriffs.
+    const weekQ = await client.query(
+      `SELECT data FROM weeks WHERE household_id=$1 AND week_start=$2 FOR UPDATE`,
+      [req.session.householdId, monday]);
+    if (!weekQ.rowCount) return { error: 'week_not_found' };
+    const data = cleanWeek(migrateLegacyWeek(weekQ.rows[0].data));
+
+    const mealRow = data.rows.find(r => r && r.kind === 'shared' && r.mode === 'week');
+    if (!mealRow) return { error: 'meal_row_missing' };
+    const listRow = data.rows.find(r => r && r.kind === 'shared' && r.listMode === true);
+    if (!listRow) return { error: 'list_row_missing' };
+
+    const recipeToken = mealRow.meals[slotIndex].cells[dayIndex].find(t => t.t === 'recipe');
+    if (!recipeToken) return { error: 'no_recipe_assigned' };
+    const ingredient = recipeToken.ingredients[ingredientIndex];
+    if (!ingredient) return { error: 'ingredient_not_found' };
+
+    const targetList = listRow.cells[targetDayIndex];
+    // LIMITS.listItems (40) wird von cleanListItems() beim naechsten Normalisieren ohnehin
+    // durchgesetzt (slice(0, LIMITS.listItems)) -- der explizite Check hier verhindert, dass
+    // ein frisch hinzugefuegter Eintrag beim naechsten Laden kommentarlos abgeschnitten wird,
+    // statt den Fehler erst spaeter unbemerkt auftreten zu lassen.
+    if (targetList.length >= LIMITS.listItems) return { error: 'list_full' };
+
+    const item = { done: false, tokens: cleanTokens([{ t: 'text', v: formatIngredientText(ingredient) }]) };
+    targetList.push(item);
+
+    const saved = await client.query(
+      `INSERT INTO weeks(household_id, week_start, data, updated_by)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (household_id, week_start)
+       DO UPDATE SET data=EXCLUDED.data, updated_by=EXCLUDED.updated_by, updated_at=now()
+       RETURNING updated_at AS "updatedAt"`,
+      [req.session.householdId, monday, data, req.session.userId]);
+
+    return { ok: true, item, data, updatedAt: saved.rows[0].updatedAt };
+  });
+
+  if (result.error === 'week_not_found') return res.status(404).json({ error: 'Woche nicht gefunden -- eine Zutat kann nur aus einer bereits bestehenden Rezept-Zuweisung uebernommen werden' });
+  if (result.error === 'meal_row_missing') return res.status(409).json({ error: '"Essen & Kochen"-Zeile in dieser Woche nicht gefunden' });
+  if (result.error === 'list_row_missing') return res.status(409).json({ error: '"Einkauf & Besorgungen"-Zeile in dieser Woche nicht gefunden' });
+  if (result.error === 'no_recipe_assigned') return res.status(404).json({ error: 'In dieser Zelle ist aktuell kein Rezept zugewiesen' });
+  if (result.error === 'ingredient_not_found') return res.status(404).json({ error: 'Zutat mit diesem Index nicht gefunden' });
+  if (result.error === 'list_full') return res.status(400).json({ error: `Tagesliste ist bereits voll (max. ${LIMITS.listItems} Eintraege)` });
+
+  res.json({
+    ok: true, weekStart: monday, targetDayIndex,
+    item: result.item, data: result.data, updatedAt: result.updatedAt
+  });
+}));
+
 /* ------------------------------------------------------------------ *
  * Betrieb
  * ------------------------------------------------------------------ */
