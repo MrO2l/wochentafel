@@ -299,6 +299,32 @@
     <button type="button" class="btn btn-primary" id="btnRecipeNew"><i class="bi bi-plus-lg" aria-hidden="true"></i> Neues Rezept</button>
   </div>
   <div id="recipeCards" class="row row-cols-2 row-cols-sm-3 row-cols-lg-4 g-3"></div>
+
+  <!-- ================= AP3.2 (projects/wochenplaner-rezeptkarten/plan.md): kompakte
+       Wochenzuweisungs-Tabelle fuer die aktuell in der Werkzeugleiste geladene Woche
+       (state.weekStart). Architektur-Begruendung (siehe Rueckmeldung an ANORAK): natives HTML5
+       Drag&Drop verlangt, dass Drag-Quelle (Rezeptkarte, oben, data-recipe-id aus AP2.2) und
+       Drop-Ziel GLEICHZEITIG sichtbar und interaktiv sind. Die bestehende Essensplan-Tabelle
+       liegt entweder in einem modalen <dialog> (#mealplan, macht per Spezifikation den Rest der
+       Seite inert -- ein dragstart ausserhalb waere dort gar nicht moeglich) oder in einer per
+       .app-view/display:none umgeschalteten eigenen Ansicht (#view-essen) -- in beiden Faellen
+       sind Rezeptkarte und Zielzelle nie gleichzeitig erreichbar. Deshalb bekommt die
+       Rezeptkarten-Ansicht selbst diese zusaetzliche, kompakte Tabelle; #mealplan bleibt
+       unveraendert als druckbare Gesamtansicht bestehen und zeigt bereits zugewiesene Rezepte
+       ueber denselben buildRecipeAssignToken()-Baustein (app.js) strukturiert an.
+       .mealplan-skeleton (style-v2.css) war bereits als bislang ungenutzte Kopf-/Label-Optik im
+       neuen Taupe-Design vorbereitet -- hier erstmals mit echtem Inhalt befuellt. ================= -->
+  <div class="recipe-assign-wrap mt-4" id="recipeAssignWrap">
+    <h2 class="recipe-assign-title"><i class="bi bi-calendar2-week" aria-hidden="true"></i> Auf die geöffnete Woche ziehen</h2>
+    <p class="view-lead" id="recipeAssignSub">Rezeptkarte oben auf eine Mahlzeit/einen Tag unten ziehen, um sie zuzuweisen.</p>
+    <div class="table-responsive">
+      <table class="mealplan-skeleton recipe-assign-table" id="recipeAssignTable">
+        <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
+        <thead><tr id="recipeAssignHead"><th class="lbl">Mahlzeit</th></tr></thead>
+        <tbody id="recipeAssignBody"></tbody>
+      </table>
+    </div>
+  </div>
 </section>
 
   </main>
@@ -404,6 +430,63 @@
       <div class="recipe-form-error" id="rfError" role="alert" hidden></div>
       <div class="recipe-form-actions">
         <button type="submit" class="btn btn-primary" id="rfSubmit">Speichern</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<!-- ================= AP3.2 (projects/wochenplaner-rezeptkarten/plan.md): Personenzahl-Abfrage
+     nach einem Drag&Drop einer Rezeptkarte auf eine Tag/Slot-Zelle (#recipeAssignTable/#mealplan,
+     app.js). Gleiches natives <dialog>-Muster wie #recipeForm (F3-Wertebereich 1-20, siehe dort)
+     -- bewusst ein eigenes, schlankes Formular statt Wiederverwendung von #recipeForm, da hier
+     nur EIN Feld noetig ist und der Bezug (Rezept -> Zieltag/-slot) sich aus dem vorangegangenen
+     Drop ergibt (siehe pendingAssignment in app.js), nicht aus einem eigenen Rezept-Datensatz. ================= -->
+<dialog class="recipe-form" id="recipeServingsDialog" aria-labelledby="rsdTitle">
+  <div class="recipe-form-head modal-header">
+    <h2 id="rsdTitle" class="font-heading">Personenzahl</h2>
+    <div class="grow"></div>
+    <button type="button" class="btn btn-outline-secondary btn-sm" id="rsdClose" title="Schließen">Schließen</button>
+  </div>
+  <div class="recipe-form-body modal-body">
+    <form id="rsdForm" novalidate>
+      <p class="recipe-servings-summary" id="rsdSummary"></p>
+      <div class="mb-3">
+        <label class="form-label" for="rsdServings">Für wie viele Personen?</label>
+        <input type="number" class="form-control" id="rsdServings" min="1" max="20" step="1" required style="max-width:8rem">
+        <div class="form-text">Ganze Zahl zwischen 1 und 20 — die Zutatenmengen werden automatisch umgerechnet und lassen sich danach weiterhin manuell anpassen.</div>
+      </div>
+      <div class="recipe-form-error" id="rsdError" role="alert" hidden></div>
+      <div class="recipe-form-actions">
+        <button type="submit" class="btn btn-primary" id="rsdSubmit">Zuweisen</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<!-- ================= AP4.2 (projects/wochenplaner-rezeptkarten/plan.md): Tag-Auswahl beim
+     Uebernehmen einer einzelnen Zutat auf die Einkaufsliste (Checkbox je Zutatenzeile in
+     buildRecipeAssignToken(), app.js). Gleiches natives <dialog>-Muster wie #recipeServingsDialog
+     (F2-Entscheidung: Ziel-Wochentag vorbelegt mit dem Zuweisungstag, aber aenderbar) -- eigenes
+     schlankes Formular, da hier nur EIN Feld (Ziel-Wochentag) noetig ist und der Bezug (welche
+     Zutat aus welcher Zuweisung) sich aus dem vorangegangenen Checkbox-Klick ergibt (siehe
+     pendingIngredientToList in app.js), nicht aus einem eigenen Formularfeld. ================= -->
+<dialog class="recipe-form" id="ingredientToListDialog" aria-labelledby="itlTitle">
+  <div class="recipe-form-head modal-header">
+    <h2 id="itlTitle" class="font-heading">Auf Einkaufsliste setzen</h2>
+    <div class="grow"></div>
+    <button type="button" class="btn btn-outline-secondary btn-sm" id="itlClose" title="Schließen">Schließen</button>
+  </div>
+  <div class="recipe-form-body modal-body">
+    <form id="itlForm" novalidate>
+      <p class="recipe-servings-summary" id="itlSummary"></p>
+      <div class="mb-3">
+        <label class="form-label" for="itlDay">Für welchen Tag der Einkaufsliste?</label>
+        <select class="form-select" id="itlDay"></select>
+        <div class="form-text">Vorbelegt mit dem Tag der Rezept-Zuweisung — bei Bedarf einen anderen Wochentag wählen.</div>
+      </div>
+      <div class="recipe-form-error" id="itlError" role="alert" hidden></div>
+      <div class="recipe-form-actions">
+        <button type="submit" class="btn btn-primary" id="itlSubmit">Übernehmen</button>
       </div>
     </form>
   </div>

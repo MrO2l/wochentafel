@@ -671,6 +671,51 @@ body:not(.section-wochenuebersicht) .cal-only{display:none !important}
 .recipe-card-servings{font-size:.8rem; color:var(--text-body); opacity:.8; margin:0 0 .6rem}
 .recipe-card-actions{display:flex; gap:.4rem; flex-wrap:wrap}
 
+/* AP3.2 (Drag&Drop-Zuweisung, app.js): Rezeptkarten sind die Drag-Quelle (natives HTML5
+   Drag&Drop, kein CDN/keine neue Abhaengigkeit, siehe plan.md Risiko "CSP-Inkompatibilitaet").
+   Rein optisches Feedback waehrend des Ziehens -- Validierung/Zuweisung laufen ausschliesslich
+   ueber den Server (POST .../assign-recipe). */
+.recipe-card[draggable="true"]{cursor:grab}
+.recipe-card.dragging{opacity:.45}
+
+/* Kompakte Wochenzuweisungs-Tabelle unterhalb der Rezeptkarten (#recipeAssignTable, index.html)
+   -- Drop-Ziel fuer alle 7x4 Tag/Mahlzeit-Zellen der aktuell geladenen Woche. Nutzt die bereits
+   vorbereitete, bislang ungenutzte .mealplan-skeleton-Kopf-/Label-Optik (style-v2.css) fuer den
+   Rahmen, ergaenzt hier um die tatsaechlichen Zellinhalte und den Drop-Hervorhebungszustand. */
+.recipe-assign-title{font-size:1.1rem; font-weight:700; color:var(--primary); margin:0 0 .3rem; display:flex; align-items:center; gap:.4rem}
+.recipe-assign-table{width:100%; table-layout:fixed}
+.recipe-assign-table col.lbl{width:8rem}
+/* Spezifischer als die generische ".mealplan-skeleton td"-Grundregel (style-v2.css), damit
+   Ausrichtung/Innenabstand hier wie vorgesehen greifen statt von der Grundregel ueberschrieben
+   zu werden (Selektor-Spezifitaet ".mealplan-skeleton td" > ".recipe-assign-cell" allein). */
+.recipe-assign-table td.recipe-assign-cell{min-height:4.5rem; padding:.4rem; vertical-align:top; text-align:left; transition:background-color .1s, outline-color .1s}
+.recipe-assign-table td.recipe-assign-cell.drag-over{background:var(--secondary); outline:2px dashed var(--primary); outline-offset:-2px}
+.recipe-assign-empty{color:#a89a8c; font-size:.75rem; font-style:italic}
+.recipe-assign-freetext{color:var(--text-body); opacity:.8; font-size:.75rem; white-space:pre-line}
+
+/* Strukturierte Anzeige/Bearbeitung eines zugewiesenen Rezepts (Snapshot-Token {t:'recipe',...},
+   server.js) -- verwendet SOWOHL in der kompakten Tabelle oben ALS AUCH im vollstaendigen
+   Essensplan-Overlay (#mealplan), siehe buildRecipeAssignToken() in app.js. Ersetzt dort die
+   sonst freie contentEditable-Zelle, da der Inhalt strukturiert (Objekt-Referenzen, keine reinen
+   Tokens) statt per DOM-Scraping (cellToTokens()) ausgelesen wird. */
+.recipe-assign-token{background:var(--secondary); border-radius:calc(var(--radius) - 2px); padding:.45rem .55rem; font-size:.75rem}
+.recipe-assign-token .rat-title{font-weight:700; color:var(--primary); display:block; margin-bottom:.1rem}
+.recipe-assign-token .rat-servings{opacity:.75; display:block; margin-bottom:.35rem}
+.recipe-assign-token .rat-ingredients{list-style:none; margin:0 0 .35rem; padding:0}
+.recipe-assign-token .rat-ingredient{display:flex; gap:.25rem; align-items:center; margin-bottom:.15rem}
+.recipe-assign-token .rat-ingredient .form-control{padding:.05rem .2rem; font-size:.72rem; height:auto}
+.recipe-assign-token .rat-ing-amount{width:3.2rem; flex:none}
+.recipe-assign-token .rat-ing-unit{width:3rem; flex:none}
+.recipe-assign-token .rat-ing-name{flex:1 1 auto; min-width:0; overflow-wrap:anywhere}
+/* AP4.2: Checkbox "auf Einkaufsliste setzen" je Zutatenzeile -- disabled+checked signalisiert
+   nach erfolgreicher Uebernahme (siehe addedToListMarks in app.js), dass ein erneuter Klick
+   einen weiteren, eigenstaendigen Eintrag anlegen wuerde (kein Dedup serverseitig, siehe
+   add-ingredient-to-list in server.js) und deshalb bewusst nicht mehr moeglich ist. */
+.recipe-assign-token .rat-ing-list-cb{width:15px; height:15px; flex:none; accent-color:var(--accent); cursor:pointer}
+.recipe-assign-token .rat-ing-list-cb:disabled{cursor:default; opacity:.75}
+.recipe-assign-token .rat-remove{font-size:.7rem; padding:0}
+.mp-table td.mp-cell-recipe{padding:6px 8px; vertical-align:top}
+
 /* Anlegen-/Bearbeiten-Formular (#recipeForm, index.html): natives <dialog>, gleiches
    Referenzmuster wie #daylist/#mealplan (siehe dortiger Kommentar), aber eigene
    ".recipe-form-head"/".recipe-form-body"-Klassen statt Wiederverwendung von
