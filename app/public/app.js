@@ -16,7 +16,8 @@ const state = {
   dirty: false,
   saving: false,
   view: 'sheet',
-  day: 0
+  day: 0,
+  recipes: [] // AP2.2: haushaltsweite Rezeptkarten-Uebersicht, unabhaengig von der Wochenansicht
 };
 
 /* ---------------- Hilfsfunktionen ---------------- */
@@ -47,6 +48,17 @@ async function api(method, url, body) {
     body: body ? JSON.stringify(body) : undefined,
     credentials: 'same-origin'
   });
+  if (res.status === 401) { location.href = 'login.html'; throw new Error('Nicht angemeldet'); }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(json.error || 'Fehler'); e.status = res.status; e.payload = json; throw e; }
+  return json;
+}
+// AP2.2: eigene Variante fuer multipart/form-data (Rezeptkarten-Bild-Upload) -- bewusst KEIN
+// 'Content-Type'-Header selbst gesetzt, der Browser erzeugt ihn inkl. Boundary automatisch aus
+// dem FormData-Objekt; ein manuell gesetzter Header ohne Boundary wuerde der Server (multer)
+// nicht mehr parsen koennen.
+async function apiForm(method, url, formData) {
+  const res = await fetch(url, { method, body: formData, credentials: 'same-origin' });
   if (res.status === 401) { location.href = 'login.html'; throw new Error('Nicht angemeldet'); }
   const json = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(json.error || 'Fehler'); e.status = res.status; e.payload = json; throw e; }
@@ -431,6 +443,11 @@ function renderAll() { renderSheet(); renderDay(); renderShoppingView(); renderM
    data-cell-Tracking in syncFromDOM() noetig: state.data.goals/.calls/.highlights werden direkt
    per push()/splice() bzw. Index-Zuweisung veraendert, renderFocusBlocks() zeichnet danach neu. */
 const FOCUS_LIMITS = { goals: 12, highlights: 8, calls: 20 }; // siehe LIMITS in server.js
+// AP2.2 (projects/wochenplaner-rezeptkarten/plan.md): spiegelt LIMITS.recipeIngredients bzw.
+// RECIPE_IMAGE_MAX_BYTES in server.js -- rein clientseitige Vorabpruefung, damit ein zu grosses
+// Bild/eine zu lange Zutatenliste nicht erst nach einem Roundtrip zum Server auffaellt. Die
+// eigentliche, verbindliche Pruefung bleibt serverseitig (cleanIngredients()/multer-Limit).
+const RECIPE_LIMITS = { ingredients: 60, imageMaxBytes: 5 * 1024 * 1024 };
 
 /* "Wochenziele" (nummeriert, Checkbox links) und "Anrufen/Kontaktieren" (Checkbox rechts):
    Text wird wie bei der Tagesliste (renderItemsList() oben) nur beim Hinzufuegen erfasst und
@@ -626,9 +643,220 @@ function renderMealPlanEntry() {
   wrap.appendChild(card);
 }
 
-/* ---------------- AP3.2: Umschalten zwischen den drei Ansichten im neuen Linksmenue (bzw. der
-   daraus umgeklappten unteren Tab-Leiste auf schmalen Bildschirmen). Reiner Sichtbarkeits-
-   umschalter (wie im freigegebenen Klick-Mockup) — keine eigene Datenhaltung, kein Routing;
+/* ---------------- AP2.2 (projects/wochenplaner-rezeptkarten/plan.md): Rezeptkarten-Ansicht.
+   Anders als die Wochendaten oben (state.data) sind Rezepte KEIN Bestandteil einer einzelnen
+   Woche, sondern haushaltsweite Stammdaten -- eigener Zustand (state.recipes), einmal beim Start
+   geladen (boot()) und nach jeder Aenderung (Anlegen/Bearbeiten/Loeschen) per loadRecipes() neu
+   vom Server geholt statt lokal fortgeschrieben, da der Server ohnehin die kanonische Quelle ist
+   und die Liste ueberschaubar bleibt (kein Bedarf fuer optimistisches Update). */
+async function loadRecipes() {
+  try {
+    const { recipes } = await api('GET', '/api/recipes');
+    state.recipes = recipes;
+    renderRecipesView();
+  } catch (err) { flash(err.message); }
+}
+
+function renderRecipesView() {
+  const wrap = $('#recipeCards');
+  if (!wrap) return;
+  wrap.textContent = '';
+  if (!state.recipes.length) {
+    const p = document.createElement('p');
+    p.className = 'view-empty';
+    p.textContent = 'Noch keine Rezeptkarten angelegt.';
+    wrap.appendChild(p);
+    return;
+  }
+  state.recipes.forEach(r => {
+    const col = document.createElement('div');
+    col.className = 'col';
+    const card = document.createElement('div');
+    card.className = 'card recipe-card h-100';
+    // data-recipe-id: bereits hier vorbereitet, damit ein spaeteres Drag&Drop-Arbeitspaket
+    // (Essensplaner-Zuweisung) die Karte ohne weitere DOM-Aenderung als Drag-Quelle nutzen kann.
+    card.dataset.recipeId = r.id;
+
+    if (r.imagePath) {
+      const img = document.createElement('img');
+      img.className = 'recipe-card-img';
+      img.alt = '';
+      // Cache-Buster ueber updatedAt statt Date.now(): dieselbe URL (nach Rezept-ID, nicht nach
+      // Dateiname) koennte sonst nach einem Bild-Austausch (PUT) eine veraltete, gecachte Antwort
+      // liefern, obwohl sich der zugrunde liegende image_path geaendert hat.
+      img.src = `/api/recipes/${r.id}/image?v=${encodeURIComponent(r.updatedAt)}`;
+      card.appendChild(img);
+    } else {
+      const ph = document.createElement('div');
+      ph.className = 'recipe-card-img recipe-card-img-placeholder';
+      ph.setAttribute('aria-hidden', 'true');
+      ph.innerHTML = '<i class="bi bi-journal-richtext"></i>';
+      card.appendChild(ph);
+    }
+
+    const body = document.createElement('div');
+    body.className = 'card-body';
+    const h3 = document.createElement('h3');
+    h3.className = 'recipe-card-title';
+    h3.textContent = r.title;
+    const servings = document.createElement('p');
+    servings.className = 'recipe-card-servings';
+    servings.textContent = `Für ${r.baseServings} ${r.baseServings === 1 ? 'Person' : 'Personen'}`;
+    const actions = document.createElement('div');
+    actions.className = 'recipe-card-actions';
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button'; editBtn.className = 'btn btn-outline-secondary btn-sm';
+    editBtn.textContent = 'Bearbeiten';
+    editBtn.addEventListener('click', () => openRecipeForm(r));
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button'; delBtn.className = 'btn btn-outline-secondary btn-sm text-danger';
+    delBtn.textContent = 'Löschen';
+    delBtn.addEventListener('click', () => deleteRecipe(r.id, r.title));
+    actions.append(editBtn, delBtn);
+    body.append(h3, servings, actions);
+    card.appendChild(body);
+    col.appendChild(card);
+    wrap.appendChild(col);
+  });
+}
+
+async function deleteRecipe(id, title) {
+  // window.confirm() ist das app-weite Muster fuer destruktive Bestaetigungen (siehe z. B.
+  // Zeile-entfernen im Hauptraster oben) -- kein eigenes Bestaetigungs-Dialog-Markup noetig.
+  if (!confirm(`Rezept „${title}“ wirklich löschen? Bereits im Essensplan zugewiesene Mahlzeiten behalten ihre eigene Kopie der Zutatenliste (Snapshot) und sind davon nicht betroffen.`)) return;
+  try {
+    await api('DELETE', `/api/recipes/${id}`);
+    await loadRecipes();
+  } catch (err) { flash(err.message); }
+}
+
+/* ---------------- Rezeptkarten-Formular (#recipeForm) ---------------- */
+function addIngredientRow(ingredient) {
+  const wrap = $('#rfIngredients');
+  const row = document.createElement('div');
+  row.className = 'recipe-ingredient-row';
+  row.setAttribute('data-ingredient-row', '');
+  row.innerHTML = `
+    <input type="number" class="form-control recipe-ing-amount" placeholder="Menge" step="any" aria-label="Menge">
+    <input type="text" class="form-control recipe-ing-unit" placeholder="Einheit" maxlength="20" aria-label="Einheit">
+    <input type="text" class="form-control recipe-ing-name" placeholder="Zutat" maxlength="100" aria-label="Zutat">
+    <button type="button" class="focus-remove" title="Zutat entfernen" aria-label="Zutat entfernen">×</button>`;
+  if (ingredient) {
+    row.querySelector('.recipe-ing-amount').value = ingredient.amount ?? '';
+    row.querySelector('.recipe-ing-unit').value = ingredient.unit || '';
+    row.querySelector('.recipe-ing-name').value = ingredient.name || '';
+  }
+  row.querySelector('.focus-remove').addEventListener('click', () => row.remove());
+  wrap.appendChild(row);
+}
+
+function collectIngredientsFromForm() {
+  const out = [];
+  document.querySelectorAll('#rfIngredients [data-ingredient-row]').forEach(row => {
+    const name = row.querySelector('.recipe-ing-name').value.trim();
+    if (!name) return; // Name ist die einzige Pflichtangabe, siehe cleanIngredients() in server.js
+    const amountRaw = row.querySelector('.recipe-ing-amount').value;
+    const amount = amountRaw === '' ? null : Number(amountRaw);
+    const unit = row.querySelector('.recipe-ing-unit').value.trim();
+    out.push({ amount: Number.isFinite(amount) ? amount : null, unit, name });
+  });
+  return out;
+}
+
+function showRecipeFormError(text) {
+  const el = $('#rfError');
+  el.textContent = text;
+  el.hidden = !text;
+}
+
+// recipeSummary: null fuer ein neues Rezept, sonst ein Eintrag aus state.recipes (nur die
+// Uebersichtsfelder) -- Details (instructions/ingredients) fehlen dort bewusst (GET /api/recipes
+// haelt die Antwort klein, siehe server.js-Kommentar) und werden hier bei Bedarf einzeln
+// nachgeladen.
+async function openRecipeForm(recipeSummary) {
+  showRecipeFormError('');
+  $('#rfImage').value = '';
+  $('#rfIngredients').textContent = '';
+
+  let recipe = null;
+  if (recipeSummary) {
+    try { recipe = (await api('GET', `/api/recipes/${recipeSummary.id}`)).recipe; }
+    catch (err) { flash(err.message); return; }
+  }
+
+  $('#rfId').value = recipe ? recipe.id : '';
+  $('#rfTitleInput').value = recipe ? recipe.title : '';
+  $('#rfServings').value = recipe ? recipe.baseServings : '';
+  $('#rfInstructions').value = recipe ? recipe.instructions : '';
+  $('#rfTitle').textContent = recipe ? 'Rezept bearbeiten' : 'Neues Rezept';
+
+  const ingredients = recipe ? recipe.ingredients : [];
+  if (ingredients.length) ingredients.forEach(addIngredientRow);
+  else addIngredientRow(); // eine leere Startzeile, statt einer komplett leeren Liste ohne Eingabefeld
+
+  const preview = $('#rfImagePreview');
+  preview.textContent = '';
+  const removeWrap = $('#rfRemoveImageWrap');
+  $('#rfRemoveImage').checked = false;
+  if (recipe && recipe.imagePath) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = `/api/recipes/${recipe.id}/image?v=${encodeURIComponent(recipe.updatedAt)}`;
+    preview.appendChild(img);
+    removeWrap.hidden = false;
+  } else {
+    removeWrap.hidden = true;
+  }
+
+  $('#recipeForm').showModal();
+}
+
+async function submitRecipeForm(e) {
+  e.preventDefault();
+  showRecipeFormError('');
+
+  // Clientseitige Validierung zusaetzlich zur serverseitigen (validateRecipeInput() in
+  // server.js) -- gleiche Regeln (F3: Pflichtfeld, ganzzahlig, 1-20), damit ein Tippfehler
+  // sofort auffaellt statt erst nach einem Roundtrip.
+  const title = $('#rfTitleInput').value.trim();
+  if (!title) { showRecipeFormError('Titel darf nicht leer sein.'); return; }
+  const servings = Number($('#rfServings').value);
+  if (!Number.isInteger(servings) || servings < 1 || servings > 20) {
+    showRecipeFormError('Personenzahl muss eine ganze Zahl zwischen 1 und 20 sein.');
+    return;
+  }
+  const file = $('#rfImage').files[0];
+  if (file && file.size > RECIPE_LIMITS.imageMaxBytes) {
+    showRecipeFormError(`Bild ist zu groß (maximal ${RECIPE_LIMITS.imageMaxBytes / (1024 * 1024)} MB).`);
+    return;
+  }
+
+  const id = $('#rfId').value;
+  const fd = new FormData();
+  fd.append('title', title);
+  fd.append('baseServings', String(servings));
+  fd.append('instructions', $('#rfInstructions').value);
+  fd.append('ingredients', JSON.stringify(collectIngredientsFromForm()));
+  if (file) fd.append('image', file);
+  else if (id && $('#rfRemoveImage').checked) fd.append('removeImage', 'true');
+
+  $('#rfSubmit').disabled = true;
+  try {
+    if (id) await apiForm('PUT', `/api/recipes/${id}`, fd);
+    else await apiForm('POST', '/api/recipes', fd);
+    $('#recipeForm').close();
+    await loadRecipes();
+  } catch (err) {
+    showRecipeFormError(err.message);
+  } finally {
+    $('#rfSubmit').disabled = false;
+  }
+}
+
+/* ---------------- AP3.2 (erweitert um AP2.2: vierter Menuepunkt "Rezeptkarten"): Umschalten
+   zwischen den Ansichten im neuen Linksmenue (bzw. der daraus umgeklappten unteren Tab-Leiste auf
+   schmalen Bildschirmen). Reiner Sichtbarkeits-umschalter (wie im freigegebenen Klick-Mockup) --
+   keine eigene Datenhaltung, kein Routing;
    .app-view/.nav-btn.active kommen aus style-v2.css. Bewusst getrennt von setView() (das
    schaltet innerhalb der Wochenuebersicht zwischen Wochen-/Tagesansicht um und bleibt als
    eigener Modus erhalten, siehe Datei-Kopfkommentar/Rueckmeldung). */
@@ -1124,6 +1352,7 @@ async function boot() {
 
   await loadWeek(isoOf(toMonday(new Date())));
   await refreshArchive();
+  await loadRecipes(); // AP2.2: haushaltsweit, unabhaengig von der geladenen Woche
 
   initMealPlanToolbar();
   initFocusBlocks();
@@ -1171,6 +1400,19 @@ async function boot() {
   // "close"-Ereignis statt nur im Button-Klick, siehe Kommentar bei closeMealPlan().
   $('#mealplan').addEventListener('close', () => { syncFromDOM(); renderAll(); });
   $('#mpPrint').onclick = () => { syncFromDOM(); document.body.classList.add('printing-mealplan'); window.print(); };
+
+  // AP2.2: Rezeptkarten-Ansicht + Anlegen-/Bearbeiten-Formular.
+  $('#btnRecipeNew').onclick = () => openRecipeForm(null);
+  $('#rfIngredientAdd').onclick = () => {
+    const count = document.querySelectorAll('#rfIngredients [data-ingredient-row]').length;
+    if (count >= RECIPE_LIMITS.ingredients) { flash(`Maximal ${RECIPE_LIMITS.ingredients} Zutaten möglich.`); return; }
+    addIngredientRow();
+  };
+  $('#rfForm').addEventListener('submit', submitRecipeForm);
+  $('#rfClose').onclick = () => $('#recipeForm').close();
+  // Backdrop-Klick schliesst, identisches Muster wie bei #daylist/#mealplan oben (ein Treffer
+  // direkt auf das <dialog>-Element selbst bedeutet "ausserhalb der Karte geklickt").
+  $('#recipeForm').addEventListener('click', e => { if (e.target.id === 'recipeForm') $('#recipeForm').close(); });
 
   window.addEventListener('beforeprint', () => { if (state.view === 'day') { syncFromDOM(); renderSheet(); } });
   window.addEventListener('afterprint', () => {

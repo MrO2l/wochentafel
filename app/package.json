@@ -19,6 +19,7 @@
     "connect-pg-simple": "^9.0.1",
     "express": "^4.19.2",
     "express-session": "^1.18.0",
+    "multer": "^2.0.2",
     "pg": "^8.12.0"
   }
 }

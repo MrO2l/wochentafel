@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import multer from 'multer';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,6 +22,30 @@ const SESSION_SECRET        = process.env.SESSION_SECRET;
 const TRUST_PROXY           = process.env.TRUST_PROXY === 'true';
 const ALLOW_REGISTRATION    = process.env.ALLOW_REGISTRATION !== 'false';
 const SECURE_COOKIES        = process.env.SECURE_COOKIES === 'true' || TRUST_PROXY;
+
+/* Rezeptkarten-Bildablage (AP2.1, projects/wochenplaner-rezeptkarten/plan.md).
+ * RECIPE_IMAGES_DIR ist bereits von ART3MIS in docker-compose.yml/.env.example/
+ * app/Dockerfile verdrahtet (persistentes Named Volume "recipe_images",
+ * Default-Pfad /data/recipe-images, dort mit passenden Berechtigungen fuer
+ * den Nicht-root-Prozess vorbereitet -- siehe Kommentare dort). Ohne gesetzte
+ * Umgebungsvariable (z. B. lokaler Entwicklungsbetrieb ausserhalb von
+ * Docker) faellt die App auf ein Verzeichnis unterhalb des Projektordners
+ * zurueck. path.resolve() macht den Pfad in jedem Fall absolut, da
+ * res.sendFile() (Bild-Auslieferung weiter unten) einen absoluten Pfad
+ * voraussetzt.
+ * Ablagestruktur auf der Platte: bewusst FLACH, direkt in RECIPE_IMAGES_DIR,
+ * mit household_id als Dateinamens-Praefix "<household_id>_<recipe_id>_
+ * <uuid>.<ext>" (Konvention aus docker-compose.yml/ops/backup-tenant-
+ * offsite.sh, die per Praefix-Glob genau die Bilder eines Mandanten fuer den
+ * Offsite-Backup-Export selektieren) -- KEIN Unterordner pro Haushalt, das
+ * waere mit dem flachen-Dateiname-CHECK-Constraint auf recipes.image_path
+ * (008_recipes.sql) ohnehin nicht abbildbar UND wuerde die bereits gebaute
+ * Backup-Filterung brechen. Autorisierung laeuft trotzdem ausschliesslich
+ * ueber die RLS-gestuetzte DB-Abfrage vor jedem Dateizugriff (siehe GET
+ * .../image weiter unten) -- der Dateiname-Praefix ist ein Backup-
+ * Hilfsmittel, keine Zugriffsschranke. */
+const RECIPE_IMAGES_DIR      = path.resolve(process.env.RECIPE_IMAGES_DIR || path.join(__dirname, 'data', 'recipe-images'));
+const RECIPE_IMAGE_MAX_BYTES = 5 * 1024 * 1024; // 5 MB, F4-Default (MORROW, ap1.1-datenmodell.md Abschnitt 2.5)
 
 if (!DATABASE_URL)     { console.error('DATABASE_URL fehlt.'); process.exit(1); }
 if (!DATABASE_URL_APP) { console.error('DATABASE_URL_APP fehlt.'); process.exit(1); }
@@ -130,6 +155,27 @@ async function ensureAppRolePassword() {
   await migratorPool.query(`ALTER ROLE wochenplan_app WITH PASSWORD ${pgQuoteLiteral(WOCHENPLAN_APP_PASSWORD)}`);
 }
 
+/* Rezeptkarten-Bildverzeichnis anlegen, falls es noch nicht existiert
+ * (AP2.1). Im Docker-Stack ist das dank ART3MIS bereits ein gemountetes,
+ * beschreibbares Volume (recipe_images) -- dieser Aufruf ist dort im
+ * Normalfall ein No-Op (Verzeichnis existiert schon). Schlaegt es dennoch
+ * fehl (z. B. lokaler Betrieb ohne Docker mit einem nicht beschreibbaren
+ * Pfad), soll das NICHT den gesamten Start verhindern -- alle anderen
+ * Endpunkte (inkl. der uebrigen Rezeptkarten-Routen ausser dem Bild-Upload)
+ * funktionieren unabhaengig davon weiter. Eine deutliche Warnung im Log
+ * macht das Problem trotzdem sofort sichtbar. */
+async function ensureRecipeImageDir() {
+  try {
+    await fs.mkdir(RECIPE_IMAGES_DIR, { recursive: true });
+  } catch (err) {
+    console.warn(
+      `Warnung: Bildverzeichnis fuer Rezeptkarten (${RECIPE_IMAGES_DIR}) konnte nicht angelegt werden ` +
+      `(${err.message}). Bild-Uploads fuer Rezeptkarten schlagen fehl, bis RECIPE_IMAGES_DIR auf ein ` +
+      `beschreibbares Verzeichnis zeigt.`
+    );
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Tenant-Kontext-Transaktionshelfer (AP2.2, ap1.2-rls-konzept.md
  * Abschnitt 4) -- setzt den Sitzungskontext, an dem die RLS-Policies aus
@@ -187,7 +233,10 @@ const LIMITS = {
   rows: 40, tokens: 120, text: 400, label: 80, icon: 40, listItems: 40,
   // Fokusbloecke "Wochenziele"/"Besonders diese Woche"/"Anrufen/Kontaktieren"
   // (siehe Datenmodell-Fokusbloecke-v2.md, Abschnitt 3.4).
-  goals: 12, goalText: 100, highlights: 8, highlightText: 200, calls: 20, callText: 100
+  goals: 12, goalText: 100, highlights: 8, highlightText: 200, calls: 20, callText: 100,
+  // Rezeptkarten (AP2.1, MORROWs Vorschlag aus ap1.1-datenmodell.md Abschnitt
+  // 4.3 -- spiegeln die CHECK-Constraints aus 008_recipes.sql, wo vorhanden).
+  recipeTitle: 200, recipeIngredients: 60, ingredientName: 100, ingredientUnit: 20, instructions: 20000
 };
 const ICON_RE = /^i-[a-z0-9-]{2,30}$/;
 const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
@@ -255,6 +304,28 @@ function cleanCalls(input) {
     if (!it || typeof it !== 'object') continue;
     const text = str(it.text, LIMITS.callText).trim();
     if (text) out.push({ done: it.done === true, text });
+  }
+  return out;
+}
+
+// Rezeptkarten-Zutatenliste (AP2.1): {amount, unit, name}-Eintraege, bezogen auf
+// recipes.base_servings. Dieselbe Funktion ist laut ap1.1-datenmodell.md Abschnitt
+// 4.3 auch fuer den kuenftigen Zuweisungs-Snapshot in weeks.data (AP3.1, 't':'recipe'-
+// Token) vorgesehen -- hier zunaechst nur fuer recipes.ingredients selbst verwendet,
+// da AP3.1 noch nicht Teil dieses Arbeitspakets ist. Struktur identisch zu
+// cleanListItems()/cleanCalls() oben: Array kappen, jeden Eintrag pruefen, Eintraege
+// ohne Namen verwerfen (name ist die einzige Pflichtangabe -- amount darf explizit
+// fehlen/null sein, z. B. "Salz, nach Geschmack").
+function cleanIngredients(input) {
+  if (!Array.isArray(input)) return [];
+  const out = [];
+  for (const it of input.slice(0, LIMITS.recipeIngredients)) {
+    if (!it || typeof it !== 'object') continue;
+    const name = str(it.name, LIMITS.ingredientName).trim();
+    if (!name) continue;
+    const unit = str(it.unit, LIMITS.ingredientUnit).trim();
+    const amount = (typeof it.amount === 'number' && Number.isFinite(it.amount)) ? it.amount : null;
+    out.push({ amount, unit, name });
   }
   return out;
 }
@@ -1089,6 +1160,13 @@ function parseHouseholdId(raw) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+// Identische Pruefung wie parseHouseholdId(), eigener Name fuer Rezept-IDs
+// (AP2.1) -- rein zur Lesbarkeit an den jeweiligen Aufrufstellen, keine
+// fachlich unterschiedliche Regel.
+function parseRecipeId(raw) {
+  return parseHouseholdId(raw);
+}
+
 /* ------------------------------------------------------------------ *
  * Deaktivieren/Reaktivieren/Loeschen (AP3.2/AP3.3, Wochenplaner-Admin-
  * Bereich) + Session-Invalidierung (AP4.1)
@@ -1404,6 +1482,315 @@ app.delete('/api/template', requireAuth, rejectForeignHouseholdId, wrap(async (r
 }));
 
 /* ------------------------------------------------------------------ *
+ * Rezeptkarten (AP2.1, projects/wochenplaner-rezeptkarten/plan.md)
+ *
+ * CRUD + Bild-Upload fuer die `recipes`-Tabelle (008_recipes.sql,
+ * MORROW/ap1.1-datenmodell.md). Household-Isolation laeuft -- wie bei
+ * weeks/template oben -- ausschliesslich ueber withTenantClient()/RLS, nie
+ * ueber ein client-seitig mitgeschicktes Feld (rejectForeignHouseholdId als
+ * zusaetzliche, sichtbare Absicherung, identisches Muster wie bei den
+ * bestehenden Haushalts-Routen). Kein CSRF-Token noetig (anders als der
+ * Admin-Bereich): diese Routen laufen unter der Haushalts-Session, deren
+ * bestehender Schutz (SameSite=Lax-Cookie) fuer alle zustandsaendernden
+ * Endpunkte dieser App bereits einheitlich gilt (siehe requireAdminCsrf-
+ * Kommentar oben zur Abgrenzung, warum der Admin-Bereich zusaetzlich einen
+ * Token braucht und die Haushalts-Routen bislang nicht).
+ *
+ * Bild-Upload laeuft ueber multer mit memoryStorage (kein Zwischenschreiben
+ * einer noch nicht validierten Datei auf die Platte) und einer serverseitig
+ * per Magic-Bytes geprueften Typerkennung (detectImageExtension) -- NICHT
+ * ueber den vom Client gesendeten Content-Type/die Dateiendung, wie von
+ * MORROW in ap1.1-datenmodell.md Abschnitt 2.5 explizit gefordert (Content-
+ * Type-Sniffing-Schutz). Der auf der Platte gespeicherte Dateiname wird
+ * ausschliesslich serverseitig erzeugt (generateImageFilename: household_id
+ * + Rezept-ID + zufaellige UUID + erkannte Endung, siehe RECIPE_IMAGES_DIR-
+ * Kommentar oben zur Praefix-Konvention) und nie aus dem Client-
+ * Originalnamen uebernommen -- Pfadtraversal ist dadurch bereits strukturell
+ * ausgeschlossen, zusaetzlich zum flachen-Dateiname-CHECK-Constraint in
+ * 008_recipes.sql (Defense-in-Depth, siehe dortige Begruendung).
+ * ------------------------------------------------------------------ */
+
+// multer selbst begrenzt bereits die Rohgroesse (Schutz vor Speicherverbrauch
+// durch memoryStorage), die *inhaltliche* Format-/Groessenpruefung passiert
+// zusaetzlich weiter unten anhand der tatsaechlich gelesenen Bytes.
+const recipeImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: RECIPE_IMAGE_MAX_BYTES, files: 1 }
+}).single('image');
+
+// multer liefert Fehler (u. a. Groessenueberschreitung) ueber einen eigenen
+// Callback-Kanal statt per throw/Promise-Reject -- daher hier bewusst kein
+// wrap(), sondern eine eigene, explizite Fehlerbehandlung mit sprechender
+// Meldung statt eines generischen 500ers.
+function handleRecipeImageUpload(req, res, next) {
+  recipeImageUpload(req, res, err => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: `Bild ist zu gross (maximal ${RECIPE_IMAGE_MAX_BYTES / (1024 * 1024)} MB)` });
+    }
+    return res.status(400).json({ error: 'Bild-Upload fehlgeschlagen: ' + err.message });
+  });
+}
+
+// Magic-Bytes-Erkennung statt Vertrauen in Client-Content-Type/-Dateiendung
+// (ap1.1-datenmodell.md Abschnitt 2.5, F4-Default): liefert die erkannte
+// Dateiendung, oder null, wenn keines der drei erlaubten Formate erkannt wird.
+const IMAGE_SIGNATURES = [
+  { ext: 'jpg', matches: buf => buf.length >= 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF },
+  { ext: 'png', matches: buf => buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) },
+  // WebP: RIFF-Container (Bytes 0-3) mit "WEBP"-Kennung ab Byte 8 -- Bytes 4-7
+  // sind die (hier irrelevante) RIFF-Chunk-Groesse.
+  { ext: 'webp', matches: buf => buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP' }
+];
+function detectImageExtension(buffer) {
+  const sig = IMAGE_SIGNATURES.find(s => s.matches(buffer));
+  return sig ? sig.ext : null;
+}
+
+// Serverseitig erzeugter, garantiert flacher Dateiname (erfuellt den
+// image_path-CHECK-Constraint aus 008_recipes.sql) -- Format
+// "<household_id>_<recipe_id>_<uuid>.<ext>" gemaess der mit ART3MIS
+// abgestimmten Konvention (docker-compose.yml/ops/backup-tenant-offsite.sh):
+// das household_id-Praefix erlaubt dem Offsite-Backup-Skript, per einfachem
+// Datei-Glob genau die Bilder EINES Mandanten zu selektieren, obwohl alle
+// Rezeptbilder aller Haushalte flach im selben Verzeichnis liegen (kein
+// Unterordner pro Haushalt moeglich, siehe RECIPE_IMAGES_DIR-Kommentar
+// oben). Die eigentliche Eindeutigkeit kommt von der UUID.
+function generateImageFilename(householdId, recipeId, ext) {
+  return `${householdId}_${recipeId}_${crypto.randomUUID()}.${ext}`;
+}
+// Zweite, unabhaengige Pruefung desselben Musters wie der DB-CHECK-Constraint
+// (Defense-in-Depth) -- greift beim Ausliefern eines Bildes (siehe GET
+// .../image unten), bevor ein aus der DB gelesener image_path zu einem
+// Dateisystempfad zusammengebaut wird.
+//
+// ZANDOR-Review (AP5.1, Fund 3): das vorherige Muster schloss "/" aus,
+// verbot aber nicht den Sonderfall, dass der gesamte Wert nur aus Punkten
+// besteht ("." oder ".."). Aktuell nicht erreichbar, da image_path
+// ausschliesslich serverseitig ueber generateImageFilename() (UUID-basiert)
+// gesetzt wird -- reine Defense-in-Depth-Haertung, damit path.join() auch
+// bei einem hypothetisch manipulierten DB-Wert nie auf das Elternverzeichnis
+// (image_path === "..") oder RECIPE_IMAGES_DIR selbst (image_path === ".")
+// aufloest.
+const FLAT_FILENAME_RE = /^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,255}$/;
+
+// Validiert/normalisiert die Textfelder eines Rezepts (title/baseServings/
+// instructions/ingredients) -- gemeinsam fuer POST und PUT verwendet. Wirft
+// bei ungueltiger Eingabe einen Error mit nutzerverstaendlicher Meldung, den
+// die Route in eine 400-Antwort uebersetzt. req.body stammt hier aus einem
+// multipart/form-data-Request (multer) -- alle Felder liegen daher als
+// String vor, auch baseServings und ingredients (Letzteres JSON-kodiert).
+function validateRecipeInput(body) {
+  const title = str(body?.title, LIMITS.recipeTitle).trim();
+  if (!title) throw new Error('Titel darf nicht leer sein');
+
+  const baseServings = Number(body?.baseServings);
+  if (!Number.isInteger(baseServings) || baseServings < 1 || baseServings > 20) {
+    // F3: Pflichtfeld, ganzzahlig, 1-20 -- spiegelt recipes_base_servings_range
+    // aus 008_recipes.sql.
+    throw new Error('Personenzahl (baseServings) muss eine ganze Zahl zwischen 1 und 20 sein');
+  }
+
+  const instructions = str(body?.instructions, LIMITS.instructions);
+
+  let ingredientsRaw = [];
+  if (body?.ingredients) {
+    try { ingredientsRaw = JSON.parse(body.ingredients); }
+    catch { throw new Error('Zutatenliste hat ein ungueltiges Format (kein gueltiges JSON)'); }
+  }
+
+  return { title, baseServings, instructions, ingredients: cleanIngredients(ingredientsRaw) };
+}
+
+app.get('/api/recipes', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  // Uebersichtsliste (AP2.2): bewusst ohne ingredients/instructions, um die
+  // Antwort klein zu halten -- Details holt der Client bei Bedarf ueber
+  // GET /api/recipes/:id.
+  const q = await withTenantClient(req.session.householdId, client => client.query(
+    `SELECT id, title, base_servings AS "baseServings", image_path AS "imagePath", updated_at AS "updatedAt"
+       FROM recipes WHERE household_id=$1 ORDER BY title`, [req.session.householdId]));
+  res.json({ recipes: q.rows });
+}));
+
+app.get('/api/recipes/:id', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const id = parseRecipeId(req.params.id);
+  if (id == null) return res.status(400).json({ error: 'Ungueltige Rezept-ID' });
+  const q = await withTenantClient(req.session.householdId, client => client.query(
+    `SELECT id, title, base_servings AS "baseServings", instructions, ingredients,
+            image_path AS "imagePath", updated_at AS "updatedAt"
+       FROM recipes WHERE id=$1 AND household_id=$2`, [id, req.session.householdId]));
+  if (!q.rowCount) return res.status(404).json({ error: 'Rezept nicht gefunden' });
+  res.json({ recipe: q.rows[0] });
+}));
+
+// Liefert die Bilddatei eines Rezepts aus -- eigener Endpunkt statt eines
+// direkten express.static() auf RECIPE_IMAGES_DIR, weil der Zugriff genau
+// wie jede andere Rezeptkarten-Route ueber withTenantClient/RLS auf den
+// eigenen Haushalt beschraenkt sein muss: die Bilder aller Haushalte liegen
+// flach im selben Verzeichnis (siehe RECIPE_IMAGES_DIR-Kommentar oben), ein
+// erratener/durchprobierter Dateiname darf daher niemals das Bild eines
+// fremden Haushalts liefern -- die DB-Abfrage unten ist die einzige
+// Autorisierungsschranke, das household_id-Praefix im Dateinamen selbst ist
+// nur eine Backup-Konvention, keine Zugriffskontrolle.
+app.get('/api/recipes/:id/image', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const id = parseRecipeId(req.params.id);
+  if (id == null) return res.status(400).json({ error: 'Ungueltige Rezept-ID' });
+  const q = await withTenantClient(req.session.householdId, client => client.query(
+    'SELECT image_path AS "imagePath" FROM recipes WHERE id=$1 AND household_id=$2', [id, req.session.householdId]));
+  if (!q.rowCount || !q.rows[0].imagePath) return res.status(404).json({ error: 'Kein Bild vorhanden' });
+  const imagePath = q.rows[0].imagePath;
+  // Defense-in-Depth: derselbe flache-Dateiname-Test wie der DB-CHECK-
+  // Constraint, unmittelbar bevor daraus ein Dateisystempfad entsteht.
+  if (!FLAT_FILENAME_RE.test(imagePath)) return res.status(500).json({ error: 'Ungueltiger Bildpfad' });
+  const fullPath = path.join(RECIPE_IMAGES_DIR, imagePath);
+  res.sendFile(fullPath, err => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'Bilddatei nicht gefunden' });
+  });
+}));
+
+app.post('/api/recipes', requireAuth, handleRecipeImageUpload, rejectForeignHouseholdId, wrap(async (req, res) => {
+  let clean;
+  try { clean = validateRecipeInput(req.body); }
+  catch (err) { return res.status(400).json({ error: err.message }); }
+
+  let imageExt = null;
+  if (req.file) {
+    imageExt = detectImageExtension(req.file.buffer);
+    if (!imageExt) return res.status(400).json({ error: 'Bilddatei hat ein nicht unterstuetztes Format (erlaubt: JPEG, PNG, WebP)' });
+  }
+
+  // Reihenfolge bewusst: erst die Zeile OHNE Bild anlegen (liefert die id,
+  // die generateImageFilename() fuer den Dateinamen braucht), danach -- falls
+  // ein Bild mitgeschickt wurde -- Datei schreiben und image_path in derselben
+  // Transaktion nachtragen. Schlaegt der Dateischreibvorgang fehl, wirft der
+  // withTenantClient()-Callback, die gesamte Transaktion (inkl. INSERT) wird
+  // zurueckgerollt -- kein verwaister DB-Eintrag ohne (gewuenschtes) Bild.
+  let writtenFilePath = null;
+  try {
+    const recipe = await withTenantClient(req.session.householdId, async client => {
+      const inserted = await client.query(
+        `INSERT INTO recipes(household_id, title, base_servings, instructions, ingredients, created_by, updated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$6) RETURNING id`,
+        [req.session.householdId, clean.title, clean.baseServings, clean.instructions,
+         JSON.stringify(clean.ingredients), req.session.userId]);
+      const id = inserted.rows[0].id;
+
+      if (imageExt) {
+        const filename = generateImageFilename(req.session.householdId, id, imageExt);
+        await fs.mkdir(RECIPE_IMAGES_DIR, { recursive: true });
+        const fullPath = path.join(RECIPE_IMAGES_DIR, filename);
+        await fs.writeFile(fullPath, req.file.buffer);
+        writtenFilePath = fullPath;
+        await client.query('UPDATE recipes SET image_path=$1 WHERE id=$2', [filename, id]);
+      }
+
+      const full = await client.query(
+        `SELECT id, title, base_servings AS "baseServings", instructions, ingredients,
+                image_path AS "imagePath", updated_at AS "updatedAt"
+           FROM recipes WHERE id=$1`, [id]);
+      return full.rows[0];
+    });
+    res.status(201).json({ recipe });
+  } catch (err) {
+    // Verwaiste Datei aufraeumen, falls das Schreiben zwar gelang, die
+    // Transaktion aber aus einem anderen Grund fehlschlug (siehe Kommentar
+    // oben).
+    if (writtenFilePath) await fs.unlink(writtenFilePath).catch(() => {});
+    throw err;
+  }
+}));
+
+app.put('/api/recipes/:id', requireAuth, handleRecipeImageUpload, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const id = parseRecipeId(req.params.id);
+  if (id == null) return res.status(400).json({ error: 'Ungueltige Rezept-ID' });
+
+  let clean;
+  try { clean = validateRecipeInput(req.body); }
+  catch (err) { return res.status(400).json({ error: err.message }); }
+
+  let imageExt = null;
+  if (req.file) {
+    imageExt = detectImageExtension(req.file.buffer);
+    if (!imageExt) return res.status(400).json({ error: 'Bilddatei hat ein nicht unterstuetztes Format (erlaubt: JPEG, PNG, WebP)' });
+  }
+  // Eigenes Formularfeld statt "kein neues Bild = loeschen": ohne diese
+  // explizite Unterscheidung koennte ein Bearbeiten-Formular ohne
+  // Bild-Feld (z. B. weil der Nutzer das Bild unveraendert lassen will)
+  // versehentlich ein bestehendes Bild entfernen.
+  const removeImage = req.body?.removeImage === 'true';
+
+  let oldImagePath = null;
+  let newImagePath = null;
+  let writtenFilePath = null;
+  try {
+    const result = await withTenantClient(req.session.householdId, async client => {
+      // FOR UPDATE: verhindert, dass zwei gleichzeitige Aktualisierungen
+      // desselben Rezepts (z. B. zwei Geraete) sich beim Bild-Austausch
+      // gegenseitig eine Datei unter den Fuessen wegloeschen.
+      const cur = await client.query(
+        'SELECT image_path AS "imagePath" FROM recipes WHERE id=$1 AND household_id=$2 FOR UPDATE',
+        [id, req.session.householdId]);
+      if (!cur.rowCount) return null;
+      oldImagePath = cur.rows[0].imagePath;
+
+      let imagePathValue = oldImagePath;
+      if (imageExt) {
+        const filename = generateImageFilename(req.session.householdId, id, imageExt);
+        await fs.mkdir(RECIPE_IMAGES_DIR, { recursive: true });
+        const fullPath = path.join(RECIPE_IMAGES_DIR, filename);
+        await fs.writeFile(fullPath, req.file.buffer);
+        writtenFilePath = fullPath;
+        imagePathValue = filename;
+      } else if (removeImage) {
+        imagePathValue = null;
+      }
+      newImagePath = imagePathValue;
+
+      const upd = await client.query(
+        `UPDATE recipes SET title=$1, base_servings=$2, instructions=$3, ingredients=$4,
+                image_path=$5, updated_by=$6, updated_at=now()
+          WHERE id=$7 AND household_id=$8
+          RETURNING id, title, base_servings AS "baseServings", instructions, ingredients,
+                    image_path AS "imagePath", updated_at AS "updatedAt"`,
+        [clean.title, clean.baseServings, clean.instructions, JSON.stringify(clean.ingredients),
+         imagePathValue, req.session.userId, id, req.session.householdId]);
+      return upd.rows[0];
+    });
+    if (!result) return res.status(404).json({ error: 'Rezept nicht gefunden' });
+
+    // Altes Bild erst NACH erfolgreichem Commit loeschen (best effort,
+    // Datei-Housekeeping ist nicht korrektheitsrelevant fuer die DB) -- nur
+    // wenn sich der image_path tatsaechlich geaendert hat.
+    if (oldImagePath && oldImagePath !== newImagePath) {
+      fs.unlink(path.join(RECIPE_IMAGES_DIR, oldImagePath)).catch(() => {});
+    }
+    res.json({ recipe: result });
+  } catch (err) {
+    if (writtenFilePath) await fs.unlink(writtenFilePath).catch(() => {});
+    throw err;
+  }
+}));
+
+app.delete('/api/recipes/:id', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const id = parseRecipeId(req.params.id);
+  if (id == null) return res.status(400).json({ error: 'Ungueltige Rezept-ID' });
+  const result = await withTenantClient(req.session.householdId, client => client.query(
+    'DELETE FROM recipes WHERE id=$1 AND household_id=$2 RETURNING image_path AS "imagePath"',
+    [id, req.session.householdId]));
+  if (!result.rowCount) return res.status(404).json({ error: 'Rezept nicht gefunden' });
+  // F6 (Snapshot einfrieren, siehe ap1.1-datenmodell.md Abschnitt 4.1): eine
+  // bereits per Drag&Drop zugewiesene Mahlzeit traegt ihre eigene, von
+  // recipes unabhaengige Kopie in weeks.data -- das Loeschen hier braucht
+  // daher keine Ruecksicht auf bestehende Zuweisungen zu nehmen (kein FK,
+  // kein Kaskadieren noetig, ausserhalb des Scopes von AP2.1/AP3.1).
+  const imagePath = result.rows[0].imagePath;
+  if (imagePath) {
+    fs.unlink(path.join(RECIPE_IMAGES_DIR, imagePath)).catch(() => {});
+  }
+  res.json({ ok: true });
+}));
+
+/* ------------------------------------------------------------------ *
  * Betrieb
  * ------------------------------------------------------------------ */
 app.get('/api/health', wrap(async (req, res) => {
@@ -1421,6 +1808,7 @@ app.use((err, req, res, next) => {
 
 migrate()
   .then(() => ensureAppRolePassword())
+  .then(() => ensureRecipeImageDir())
   .then(() => app.listen(PORT, () => console.log(`Wochenplaner laeuft auf Port ${PORT}`)))
   .catch(err => { console.error(err); process.exit(1); });
 

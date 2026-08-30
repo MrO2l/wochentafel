@@ -653,6 +653,50 @@ body:not(.section-wochenuebersicht) .cal-only{display:none !important}
 .mealplan-entry-card .listlink svg{width:26px; height:26px}
 .mealplan-entry-card .listlink .badge{position:static; margin-left:auto}
 
+/* ---------------- AP2.2 (projects/wochenplaner-rezeptkarten/plan.md): neue Ansicht
+   "Rezeptkarten" -- wie "Einkaufen"/"Essen & Kochen" oben neue, in diesem Arbeitspaket
+   entstandene Oberflaeche, an der Taupe-Palette (style-v2.css) ausgerichtet. Kartenraster
+   nutzt bewusst Bootstraps echtes Grid (".row.row-cols-*"/".card", index.html) statt eines
+   weiteren Custom-Grids wie ".shopping-days" -- ".card" ist bereits ueber style-v2.css auf die
+   Taupe-Farben umgestellt (background/border-color), hier nur die rezeptspezifischen Teile
+   (Bild/Titel/Aktionen) ergaenzt. */
+.recipe-card-img{
+  height:140px; width:100%; object-fit:cover; background:var(--secondary);
+  border-top-left-radius:calc(var(--radius) - 1px); border-top-right-radius:calc(var(--radius) - 1px);
+}
+.recipe-card-img-placeholder{
+  display:flex; align-items:center; justify-content:center; color:var(--primary); font-size:2.2rem;
+}
+.recipe-card-title{font-size:1rem; font-weight:700; color:var(--primary); margin:0 0 .25rem}
+.recipe-card-servings{font-size:.8rem; color:var(--text-body); opacity:.8; margin:0 0 .6rem}
+.recipe-card-actions{display:flex; gap:.4rem; flex-wrap:wrap}
+
+/* Anlegen-/Bearbeiten-Formular (#recipeForm, index.html): natives <dialog>, gleiches
+   Referenzmuster wie #daylist/#mealplan (siehe dortiger Kommentar), aber eigene
+   ".recipe-form-head"/".recipe-form-body"-Klassen statt Wiederverwendung von
+   ".daylist-head"/".daylist-body" -- letztere sind fest auf --accent/die alte Design-Linie
+   verdrahtet (siehe deren Kommentar oben), dieses Formular gehoert zur neuen Taupe-Ansicht. */
+dialog.recipe-form{
+  border:0; margin:0; padding:0; position:fixed; top:26px; left:50%; transform:translateX(-50%);
+  max-height:calc(100vh - 52px); overflow-x:hidden; overflow-y:auto;
+  background:var(--background); color:var(--text-body);
+  width:100%; max-width:640px; border-radius:var(--radius); box-shadow:0 12px 40px rgba(0,0,0,.3);
+}
+dialog.recipe-form::backdrop{background:rgba(20,26,32,.45)}
+.recipe-form-head{
+  display:flex; align-items:center; gap:.6rem; padding:.9rem 1.1rem;
+  border-bottom:1px solid var(--border-color); background:var(--secondary); border-radius:0;
+}
+.recipe-form-head h2{margin:0; font-size:1.15rem; font-weight:800; color:var(--primary)}
+.recipe-form-body{padding:1rem 1.1rem 1.25rem}
+.recipe-ingredient-row{display:flex; gap:.5rem; align-items:center; margin-bottom:.5rem}
+.recipe-ingredient-row .recipe-ing-amount{max-width:5.5rem}
+.recipe-ingredient-row .recipe-ing-unit{max-width:6rem}
+.recipe-ingredient-row .recipe-ing-name{flex:1 1 auto; min-width:0}
+.recipe-image-preview img{max-width:100%; max-height:160px; border-radius:var(--radius); display:block}
+.recipe-form-error{color:#b3261e; font-size:.85rem; margin-bottom:.75rem}
+.recipe-form-actions{display:flex; justify-content:flex-end; gap:.5rem; margin-top:.5rem}
+
 @media (max-width:767.98px){
   /* Sicherstellen, dass die neue untere Tab-Leiste (.app-sidebar auf schmalen Bildschirmen,
      siehe style-v2.css) bedienbar bleibt, wenn in der Tagesansicht zugleich die Piktogramm-

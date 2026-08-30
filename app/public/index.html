@@ -87,6 +87,13 @@
         <i class="bi bi-egg-fried"></i>
         <span>Essen &amp; Kochen</span>
       </button>
+      <!-- AP2.2 (projects/wochenplaner-rezeptkarten/plan.md): vierter Menuepunkt, gleiches
+           Muster wie "Einkaufen"/"Essen & Kochen" oben (data-view/.app-view-Umschaltung ueber
+           setSection() in app.js). -->
+      <button type="button" class="nav-btn" data-view="rezepte">
+        <i class="bi bi-journal-richtext"></i>
+        <span>Rezept&shy;karten</span>
+      </button>
     </nav>
   </aside>
 
@@ -275,6 +282,25 @@
   <div id="mealplanEntry"></div>
 </section>
 
+<!-- ================= AP2.2 (projects/wochenplaner-rezeptkarten/plan.md): Rezeptkarten als
+     eigene Ansicht, wie "Einkaufen"/"Essen & Kochen" oben vollstaendig auf der neuen Taupe-
+     Palette/Bootstrap-Grid (style-v2.css/Bootstrap-Migrationsplan). Kartenraster ueber Bootstraps
+     eigenes ".row.row-cols-*"-Grid statt eines weiteren Custom-Grids wie ".shopping-days" --
+     Backend (AP2.1, server.js "Rezeptkarten") liefert GET /api/recipes (Uebersicht) sowie
+     GET/POST/PUT/DELETE /api/recipes/:id fuer Details/Anlegen/Bearbeiten/Loeschen, Bild ueber
+     GET /api/recipes/:id/image (eigener, RLS-geprueft Endpunkt, kein express.static()). Inhalt
+     wird von loadRecipes()/renderRecipesView() (app.js) befuellt. ================= -->
+<section id="view-rezepte" class="app-view" aria-labelledby="rz-h1">
+  <div class="view-header d-flex align-items-start justify-content-between flex-wrap gap-2">
+    <div>
+      <h1 id="rz-h1"><i class="bi bi-journal-richtext" aria-hidden="true"></i> Rezeptkarten</h1>
+      <p class="view-lead">Wiederverwendbare Rezepte mit Zutatenliste (bezogen auf eine Referenz-Personenzahl) und Zubereitung — künftig per Ziehen auf einen Tag im Essensplan einsetzbar.</p>
+    </div>
+    <button type="button" class="btn btn-primary" id="btnRecipeNew"><i class="bi bi-plus-lg" aria-hidden="true"></i> Neues Rezept</button>
+  </div>
+  <div id="recipeCards" class="row row-cols-2 row-cols-sm-3 row-cols-lg-4 g-3"></div>
+</section>
+
   </main>
 </div>
 
@@ -328,6 +354,58 @@
       <thead><tr id="mpHeadRow"><th class="corner">Mahlzeit</th></tr></thead>
       <tbody id="mpTableBody"></tbody>
     </table>
+  </div>
+</dialog>
+
+<!-- ================= AP2.2: Anlegen-/Bearbeiten-Formular fuer eine Rezeptkarte. Natives
+     <dialog> als Referenzmuster (wie #daylist/#mealplan, siehe Bootstrap-Migrationsplan), aber
+     mit eigenen ".recipe-form-head"/".recipe-form-body"-Klassen statt Wiederverwendung von
+     ".daylist-head"/".daylist-body": letztere sind fest auf --accent/die alte Design-Linie
+     verdrahtet (siehe deren Kommentar in style.css), waehrend "Rezeptkarten" wie "Einkaufen"/
+     "Essen & Kochen" bewusst die neue Taupe-Palette nutzt. Buttons daher echte Bootstrap-
+     ".btn"-Varianten statt ".legacy-btn". Kein Bootstrap-JS-Modal, showModal()/close() wie bei
+     den uebrigen Overlays (app.js). ================= -->
+<dialog class="recipe-form" id="recipeForm" aria-labelledby="rfTitle">
+  <div class="recipe-form-head modal-header">
+    <h2 id="rfTitle" class="font-heading">Neues Rezept</h2>
+    <div class="grow"></div>
+    <button type="button" class="btn btn-outline-secondary btn-sm" id="rfClose" title="Schließen">Schließen</button>
+  </div>
+  <div class="recipe-form-body modal-body">
+    <form id="rfForm" novalidate>
+      <input type="hidden" id="rfId">
+      <div class="mb-3">
+        <label class="form-label" for="rfTitleInput">Titel</label>
+        <input type="text" class="form-control" id="rfTitleInput" maxlength="200" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="rfServings">Referenz-Personenzahl</label>
+        <input type="number" class="form-control" id="rfServings" min="1" max="20" step="1" required style="max-width:8rem">
+        <div class="form-text">Ganze Zahl zwischen 1 und 20 — Bezugsgröße für die Zutatenmengen unten.</div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="rfImage">Bild (JPEG, PNG oder WebP, max. 5 MB)</label>
+        <input type="file" class="form-control" id="rfImage" accept="image/jpeg,image/png,image/webp">
+        <div class="recipe-image-preview mt-2" id="rfImagePreview"></div>
+        <div class="form-check mt-1" id="rfRemoveImageWrap" hidden>
+          <input class="form-check-input" type="checkbox" id="rfRemoveImage">
+          <label class="form-check-label" for="rfRemoveImage">Vorhandenes Bild beim Speichern entfernen</label>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" id="rfIngredientsLabel">Zutaten</label>
+        <div id="rfIngredients" class="recipe-ingredient-list" aria-labelledby="rfIngredientsLabel"></div>
+        <button type="button" class="focus-add-btn" id="rfIngredientAdd">+ Zutat hinzufügen</button>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="rfInstructions">Zubereitung</label>
+        <textarea class="form-control" id="rfInstructions" rows="6" maxlength="20000"></textarea>
+      </div>
+      <div class="recipe-form-error" id="rfError" role="alert" hidden></div>
+      <div class="recipe-form-actions">
+        <button type="submit" class="btn btn-primary" id="rfSubmit">Speichern</button>
+      </div>
+    </form>
   </div>
 </dialog>
 
