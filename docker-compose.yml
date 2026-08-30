@@ -90,6 +90,34 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-false}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
       PORT: 3000
+      # AP-ART3MIS (Wochenplaner-Rezeptkarten, Bild-Storage): analog zu
+      # `pgdata` unten braucht der Bild-Upload (AP2.1, A3CH) ein persistentes
+      # Volume, sonst gehen hochgeladene Rezeptbilder bei jedem
+      # `docker compose up -d --build` verloren (Container-Dateisystem ist
+      # ausserdem read_only:true, siehe unten -- dieses Volume ist der
+      # einzige beschreibbare, persistente Pfad). A3CH liest diesen Pfad zur
+      # Laufzeit aus process.env.RECIPE_IMAGES_DIR und speichert hochgeladene
+      # Bilder dort ab; in `recipes.image_path` (MORROW-Schema) gehoert nur
+      # der Dateiname/relative Pfad, NICHT dieser absolute Container-Pfad.
+      # Konvention (abgeglichen mit app/migrations/008_recipes.sql, dort
+      # erzwingt ein CHECK bereits einen FLACHEN Dateinamen ohne "/" fuer
+      # recipes.image_path -- KEIN Unterordner pro Haushalt moeglich):
+      # Dateien direkt in diesem einen Verzeichnis ablegen, mit dem
+      # household_id als Praefix im Dateinamen, z. B.
+      # "$RECIPE_IMAGES_DIR/<household_id>_<recipe_id>_<uuid>.<ext>"
+      # (Beispiel aus dem Migrations-Kommentar). ops/backup-tenant-
+      # offsite.sh filtert Bilder eines Mandanten anhand dieses Praefixes --
+      # weicht A3CHs tatsaechliche Namensgebung davon ab, bitte mit ART3MIS/
+      # ANORAK abgleichen, sonst greift die Backup-Filterung nicht.
+      RECIPE_IMAGES_DIR: ${RECIPE_IMAGES_DIR:-/data/recipe-images}
+    volumes:
+      # Named Volume statt Bind-Mount: funktioniert identisch lokal und auf
+      # dem VPS, kein Host-Pfad-Setup noetig. Bleibt trotz `read_only: true`
+      # oben beschreibbar (wie /tmp via tmpfs) -- read_only betrifft nur das
+      # uebrige Container-Dateisystem, nicht separat gemountete Volumes.
+      # WICHTIG bei Pfadaenderung: siehe Kommentar in app/Dockerfile
+      # (Volume-Seeding/Berechtigungen fuer den Nicht-root-User "node").
+      - recipe_images:${RECIPE_IMAGES_DIR:-/data/recipe-images}
     ports:
       # Sicherer Default: nur vom Server selbst erreichbar (fuer den Proxy dahinter).
       # Im Heimnetz ohne Proxy in der .env ausdruecklich APP_BIND=0.0.0.0 setzen.
@@ -134,5 +162,12 @@ services:
 
 volumes:
   pgdata:
+  # AP-ART3MIS (Wochenplaner-Rezeptkarten): persistenter Bild-Storage fuer
+  # Rezeptkarten-Uploads, ins Backup-Verfahren eingebunden -- siehe
+  # ops/backup-tenant-offsite.sh / ops/restore-tenant-from-offsite.sh
+  # (Abschnitt "Rezeptbilder"). Uebersteht `docker compose up -d --build`
+  # (Named Volumes werden bei Redeploy NICHT neu angelegt, nur bei
+  # `docker compose down -v` oder explizitem `docker volume rm` geloescht).
+  recipe_images:
   caddy_data:
   caddy_config:

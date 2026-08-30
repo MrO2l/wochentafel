@@ -14,3 +14,9 @@ Thumbs.db
 # Generierte Backup-Testartefakte (GPG-verschluesselt, aber wiederholt neu
 # generierte Binaerdaten -- gehoeren nicht ins Repo, blaehen die Historie auf)
 ops/offsite-backup-simulation/
+
+# Lokale Rezeptbild-Ablage (AP2.1, projects/wochenplaner-rezeptkarten/plan.md):
+# Standard-Fallback von RECIPE_IMAGE_DIR ausserhalb von Docker (server.js).
+# Im Docker-Stack zeigt RECIPE_IMAGE_DIR stattdessen auf ein gemountetes
+# Volume -- hochgeladene Nutzerbilder gehoeren in keinem Fall ins Repo.
+app/data/
