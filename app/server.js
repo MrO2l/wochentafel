@@ -242,15 +242,31 @@ const ICON_RE = /^i-[a-z0-9-]{2,30}$/;
 const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
 const MEAL_LABELS = ['Frühstück', 'Mittagessen', 'Abendessen', 'Snack'];
 
-function cleanTokens(input) {
+// allowRecipe:true oeffnet einen vierten, sonst ungueltigen Token-Typ
+// ('recipe') -- ausschliesslich fuer Mahlzeiten-Zellen gedacht (cleanMeals()
+// unten ist der einzige Aufrufer, der true uebergibt), siehe AP3.1/
+// ap1.1-datenmodell.md Abschnitt 4.1/4.2: normale Personen-/Sammelzeilen
+// (cleanRow()-Zweig ohne mode:'week') sowie motto/notes (cleanWeek()) rufen
+// weiterhin ohne opts auf und verwerfen 'recipe'-Tokens damit unveraendert
+// wie jeden anderen unbekannten Token-Typ. hasRecipe erzwingt zusaetzlich
+// A3CHs Entscheidung "hoechstens ein recipe-Token pro Zelle" (siehe
+// Begleitdokument Abschnitt 4.2, dort als Empfehlung/offener Punkt markiert):
+// weitere recipe-Tokens im selben Array werden -- wie jeder ungueltige
+// Token -- stillschweigend uebersprungen, nicht als Fehler gemeldet.
+function cleanTokens(input, opts = {}) {
   if (!Array.isArray(input)) return [];
+  const allowRecipe = opts.allowRecipe === true;
   const out = [];
+  let hasRecipe = false;
   for (const tok of input.slice(0, LIMITS.tokens)) {
     if (!tok || typeof tok !== 'object') continue;
     if (tok.t === 'text') { const v = str(tok.v, LIMITS.text); if (v) out.push({ t: 'text', v }); }
     else if (tok.t === 'br') out.push({ t: 'br' });
     else if (tok.t === 'icon' && ICON_RE.test(String(tok.v || ''))) {
       out.push({ t: 'icon', v: String(tok.v), l: str(tok.l, LIMITS.icon) });
+    } else if (allowRecipe && tok.t === 'recipe' && !hasRecipe) {
+      const cleaned = cleanRecipeToken(tok);
+      if (cleaned) { out.push(cleaned); hasRecipe = true; }
     }
   }
   return out;
@@ -330,16 +346,68 @@ function cleanIngredients(input) {
   return out;
 }
 
+// Mengenumrechnung fuer die Rezept-Zuweisung (AP3.1, F5-Entscheidung des
+// Nutzers, plan.md "Designentscheidungen"): linear von base_servings auf
+// targetServings skalieren, auf zwei Nachkommastellen runden -- ein
+// praktikabler Vorschlagswert, den der Nutzer danach im Grid frei manuell
+// korrigieren kann (F5 sieht die manuelle Nachbearbeitung explizit als
+// Regelfall vor, nicht als Ausnahme, z. B. bei nicht linear skalierbaren
+// Angaben wie "2 Eier" oder "1 Prise"). amount:null (z. B. "nach Geschmack")
+// bleibt unveraendert, da es sich naturgemaess nicht skalieren laesst
+// (ap1.1-datenmodell.md Abschnitt 4.1, letzter Punkt). base_servings ist
+// durch den DB-CHECK auf recipes (1-20) garantiert > 0, keine
+// Division-durch-Null moeglich.
+function scaleIngredients(ingredients, baseServings, targetServings) {
+  const factor = targetServings / baseServings;
+  const list = Array.isArray(ingredients) ? ingredients : [];
+  return list.map(ing => {
+    if (typeof ing.amount !== 'number' || !Number.isFinite(ing.amount)) {
+      return { amount: null, unit: ing.unit, name: ing.name };
+    }
+    // Runden auf zwei Nachkommastellen passt sowohl fuer kleine Mengen
+    // (z. B. 0.25 TL) als auch fuer groessere (z. B. 500 g) und faengt
+    // nebenbei Fliesskomma-Rundungsfehler aus der reinen Multiplikation ab.
+    const rounded = Math.round(ing.amount * factor * 100) / 100;
+    return { amount: rounded, unit: ing.unit, name: ing.name };
+  });
+}
+
+// Validierung des Zuweisungs-Snapshot-Tokens {t:'recipe',...} (AP3.1,
+// ap1.1-datenmodell.md Abschnitt 4.1) -- durchlaeuft sowohl den vom
+// Zuweisungs-Endpunkt selbst frisch erzeugten Token (Defense-in-Depth, siehe
+// dort) als auch einen vom Client beim normalen PUT /api/weeks/:monday
+// zurueckgeschickten, ggf. manuell editierten Token (F6: die Zelle ist nach
+// der Zuweisung wie jede andere Zelle frei editierbar, laeuft ueber den
+// bestehenden Speicherpfad statt einen eigenen). recipeId ist bewusst NUR
+// eine informative Zahl (F6: kein DB-FK, darf nach Rezept-Loeschung ins
+// Leere zeigen) -- hier wird lediglich die FORM gepueft (positive Ganzzahl),
+// keine Existenz in der recipes-Tabelle. Gibt bei ungueltiger Form null
+// zurueck (Token wird dann wie jeder andere ungueltige Token verworfen,
+// siehe cleanTokens()).
+function cleanRecipeToken(tok) {
+  const recipeId = Number(tok.recipeId);
+  if (!Number.isInteger(recipeId) || recipeId < 1) return null;
+  const recipeTitle = str(tok.recipeTitle, LIMITS.recipeTitle).trim();
+  if (!recipeTitle) return null;
+  const servings = Number(tok.servings);
+  // F3-Wertebereich (1-20) gilt fuer die Zuweisungs-Personenzahl identisch,
+  // unabhaengig von recipes.base_servings des Original-Rezepts (Abschnitt 4.1).
+  if (!Number.isInteger(servings) || servings < 1 || servings > 20) return null;
+  return { t: 'recipe', recipeId, recipeTitle, servings, ingredients: cleanIngredients(tok.ingredients) };
+}
+
 // Fuer Zeilen mit mode:'week' (aktuell "Essen & Kochen"): keine sieben unabhaengigen
 // Tageszellen mehr, sondern vier Mahlzeiten-Unterzeilen mit je einem Token[] pro Tag —
 // strukturell wie eine Mini-Ausgabe des Hauptrasters (siehe Umsetzungsplan).
+// allowRecipe:true (siehe cleanTokens()): NUR hier ist der 'recipe'-Token-Typ
+// gueltig, gemaess ap1.1-datenmodell.md Abschnitt 4.2.
 function cleanMeals(input) {
   const arr = Array.isArray(input) ? input : [];
   return Array.from({ length: MEAL_LABELS.length }, (_, i) => {
     const m = arr[i];
     return {
       label: str(m && m.label, LIMITS.label) || MEAL_LABELS[i],
-      cells: Array.from({ length: 7 }, (_, d) => cleanTokens(m && m.cells && m.cells[d]))
+      cells: Array.from({ length: 7 }, (_, d) => cleanTokens(m && m.cells && m.cells[d], { allowRecipe: true }))
     };
   });
 }
@@ -1788,6 +1856,149 @@ app.delete('/api/recipes/:id', requireAuth, rejectForeignHouseholdId, wrap(async
     fs.unlink(path.join(RECIPE_IMAGES_DIR, imagePath)).catch(() => {});
   }
   res.json({ ok: true });
+}));
+
+/* ------------------------------------------------------------------ *
+ * Rezept-Zuweisung im Essensplaner (AP3.1, projects/wochenplaner-
+ * rezeptkarten/plan.md; Spezifikation: ap1.1-datenmodell.md Abschnitt 4)
+ *
+ * Nimmt Rezept-ID + Zieltag/-slot + gewuenschte Personenzahl entgegen,
+ * berechnet die linear auf "servings" skalierte Zutatenliste (F5) und
+ * schreibt den Snapshot-Token {t:'recipe',...} in die passende Zelle der
+ * "Essen & Kochen"-Zeile (mode:'week') von weeks.data. Kein eigenstaendiges
+ * neues Datenformat: die Schreiblogik laeuft am Ende ueber denselben
+ * cleanWeek()-Normalisierungspfad und dieselbe INSERT ... ON CONFLICT-
+ * Anweisung wie PUT /api/weeks/:monday, nur dass hier statt eines vom
+ * Client geschickten kompletten Wochendokuments EIN serverseitig berechneter
+ * Token in genau eine Zelle geschrieben wird.
+ *
+ * A3CH-Entscheidung (offener Punkt aus ap1.1-datenmodell.md Abschnitt 4.2/6,
+ * "genau ein recipe-Token pro Zelle vs. mehrere"): Eine Zuweisung ERSETZT
+ * den kompletten bisherigen Zelleninhalt (auch etwaige Freitext-/Icon-
+ * Tokens) durch genau einen neuen recipe-Token. Begruendung: (1) passt zur
+ * Ackerkarten-Metapher "eine Mahlzeit pro Slot/Tag", die AP3.2s Drag&Drop-UX
+ * laut Plan ohnehin vorsieht -- ein Nutzer, der eine neue Rezeptkarte auf
+ * eine bereits belegte Zelle zieht, erwartet intuitiv einen Ersatz, kein
+ * stilles Nebeneinander zweier Mahlzeiten im selben Slot; (2) vermeidet
+ * mehrdeutige Kombinationen aus Alt-Freitext (v. a. relevant kurz nach dem
+ * F1-Wipe in AP1.2, falls dort einzelne Zellen doch Text behalten haetten)
+ * und neuer strukturierter Zuweisung; (3) haelt die Kombination "hoechstens
+ * ein recipe-Token" aus cleanTokens()/cleanMeals() (siehe dort) und das
+ * Verhalten dieses Endpunkts konsistent -- ein zweiter recipe-Token wuerde
+ * beim naechsten Speichern ohnehin stillschweigend verworfen. Ein spaeterer
+ * manueller Zusatztext NACH der Zuweisung bleibt weiterhin moeglich: die
+ * Zelle ist danach ganz normal ueber PUT /api/weeks/:monday editierbar (F6),
+ * dort kann der Nutzer z. B. eine Notiz als zusaetzlichen text-Token neben
+ * dem bestehenden recipe-Token ergaenzen.
+ *
+ * Kein optimistisches Locking ueber baseUpdatedAt (Abwaegung, siehe
+ * Ruecklauf an ANORAK): anders als PUT /api/weeks/:monday erhaelt dieser
+ * Endpunkt kein vom Client vorgehaltenes, potenziell veraltetes
+ * Gesamtdokument -- er liest den aktuellen DB-Stand INNERHALB der eigenen
+ * Transaktion (FOR UPDATE) und aendert ausschliesslich die eine Zielzelle.
+ * Ein "Lost Update" im Sinne von PUT (Client A ueberschreibt unbemerkt
+ * Client Bs zwischenzeitliche Aenderung an einer ANDEREN Zelle) ist damit
+ * strukturell ausgeschlossen. Zwei Zuweisungen exakt derselben Zelle nahezu
+ * gleichzeitig sind das einzige denkbare Wettlauf-Szenario -- dort gewinnt
+ * die zuletzt committete (FOR UPDATE serialisiert beide Transaktionen strikt
+ * nacheinander), ein unkritisches, erwartbares "letzter Drop gewinnt".
+ * ------------------------------------------------------------------ */
+app.post('/api/weeks/:monday/assign-recipe', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const monday = req.params.monday;
+  if (!isMonday(monday)) return res.status(400).json({ error: 'Datum muss ein Montag im Format JJJJ-MM-TT sein' });
+
+  const recipeId = parseRecipeId(req.body?.recipeId);
+  const dayIndex = Number(req.body?.dayIndex);
+  const slotIndex = Number(req.body?.slotIndex);
+  const servings = Number(req.body?.servings);
+
+  if (recipeId == null) return res.status(400).json({ error: 'Ungueltige Rezept-ID' });
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 6) {
+    return res.status(400).json({ error: 'dayIndex muss eine Ganzzahl zwischen 0 und 6 sein (0=Montag ... 6=Sonntag)' });
+  }
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= MEAL_LABELS.length) {
+    return res.status(400).json({ error: `slotIndex muss eine Ganzzahl zwischen 0 und ${MEAL_LABELS.length - 1} sein (Reihenfolge: ${MEAL_LABELS.join(', ')})` });
+  }
+  if (!Number.isInteger(servings) || servings < 1 || servings > 20) {
+    // F3: identischer Wertebereich wie recipes.base_servings/das servings-Feld im Token.
+    return res.status(400).json({ error: 'servings (Personenzahl) muss eine ganze Zahl zwischen 1 und 20 sein' });
+  }
+
+  const result = await withTenantClient(req.session.householdId, async client => {
+    // RLS schraenkt ohnehin auf den eigenen Haushalt ein -- die explizite
+    // household_id-Bedingung im WHERE ist identisches Defense-in-Depth-Muster
+    // wie bei den uebrigen /api/recipes/:id-Routen oben.
+    const recipeQ = await client.query(
+      `SELECT id, title, base_servings AS "baseServings", ingredients
+         FROM recipes WHERE id=$1 AND household_id=$2`,
+      [recipeId, req.session.householdId]);
+    if (!recipeQ.rowCount) return { error: 'recipe_not_found' };
+    const recipe = recipeQ.rows[0];
+
+    // FOR UPDATE: serialisiert konkurrierende Zuweisungen/PUTs derselben
+    // Woche (siehe Begruendung oben) -- identisches Sperrmuster wie
+    // PUT /api/weeks/:monday.
+    const weekQ = await client.query(
+      `SELECT data FROM weeks WHERE household_id=$1 AND week_start=$2 FOR UPDATE`,
+      [req.session.householdId, monday]);
+
+    let data;
+    if (weekQ.rowCount) {
+      data = cleanWeek(migrateLegacyWeek(weekQ.rows[0].data));
+    } else {
+      // Noch keine Woche unter diesem Datum angelegt: identischer
+      // Vorlagen-Fallback wie GET /api/weeks/:monday, damit eine Zuweisung
+      // auch auf eine noch nicht besuchte Woche moeglich ist, ohne dass das
+      // Frontend vorher zwingend GET+PUT durchlaufen muesste.
+      const t = await client.query('SELECT template_data FROM households WHERE id=$1', [req.session.householdId]);
+      const template = t.rows[0]?.template_data ? migrateLegacyWeek(t.rows[0].template_data) : null;
+      data = cleanWeek(template ? mergeTemplate(structuredClone(template), defaultWeek()) : defaultWeek());
+    }
+
+    // Die "Essen & Kochen"-Zeile hat keine feste ID, nur ihre Zeilenform
+    // (kind:'shared', mode:'week') -- siehe migrateLegacyRow()-Kommentar
+    // weiter oben zur selben Einschraenkung. In der Praxis legt
+    // defaultWeek() genau eine solche Zeile an und die bestehende Anwendung
+    // bietet keinen Weg, mode:'week' vom Nutzer setzen/entfernen zu lassen;
+    // dieser Zweig ist trotzdem ein bewusster Schutz gegen ein
+    // unvorhergesehen abweichendes Dokument, kein erwarteter Normalfall.
+    const mealRow = data.rows.find(r => r && r.kind === 'shared' && r.mode === 'week');
+    if (!mealRow) return { error: 'meal_row_missing' };
+
+    const scaledIngredients = cleanIngredients(scaleIngredients(recipe.ingredients, recipe.baseServings, servings));
+    const recipeTitle = str(recipe.title, LIMITS.recipeTitle).trim() || recipe.title;
+    // Number(...): recipes.id ist bigint -- node-postgres liefert bigint-Spalten
+    // grundsaetzlich als String (Praezisionsschutz), hier aber bewusst als JSON-
+    // Zahl im Token abgelegt, damit die Form exakt MORROWs Spezifikation
+    // (ap1.1-datenmodell.md Abschnitt 4.1, Beispiel "recipeId": 42) entspricht
+    // und identisch zu dem ist, was cleanRecipeToken() beim erneuten
+    // Validieren eines vom Client zurueckgeschickten Tokens ohnehin erzeugt
+    // (Number(tok.recipeId)) -- ohne diese Umwandlung wuerde derselbe Token
+    // vor und nach einer manuellen Bearbeitung/erneutem Speichern
+    // unterschiedliche Typen fuer dasselbe Feld tragen.
+    const token = { t: 'recipe', recipeId: Number(recipe.id), recipeTitle, servings, ingredients: scaledIngredients };
+
+    // Ersetzt den kompletten bisherigen Zelleninhalt, siehe Entscheidung oben.
+    mealRow.meals[slotIndex].cells[dayIndex] = [token];
+
+    const saved = await client.query(
+      `INSERT INTO weeks(household_id, week_start, data, updated_by)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (household_id, week_start)
+       DO UPDATE SET data=EXCLUDED.data, updated_by=EXCLUDED.updated_by, updated_at=now()
+       RETURNING updated_at AS "updatedAt"`,
+      [req.session.householdId, monday, data, req.session.userId]);
+
+    return { ok: true, token, data, updatedAt: saved.rows[0].updatedAt };
+  });
+
+  if (result.error === 'recipe_not_found') return res.status(404).json({ error: 'Rezept nicht gefunden' });
+  if (result.error === 'meal_row_missing') return res.status(409).json({ error: '"Essen & Kochen"-Zeile in dieser Woche nicht gefunden' });
+
+  res.json({
+    ok: true, weekStart: monday, dayIndex, slotIndex,
+    token: result.token, data: result.data, updatedAt: result.updatedAt
+  });
 }));
 
 /* ------------------------------------------------------------------ *
