@@ -750,6 +750,19 @@ const apiLimiter      = rateLimiter({ windowMs: 60 * 1000,      max: 120 });  //
 const authLimiter     = rateLimiter({ windowMs: 15 * 60 * 1000, max: 30 });   // Login und Registrierung
 const inviteLimiter   = rateLimiter({ windowMs: 60 * 60 * 1000, max: 20 });   // Einladungscodes erzeugen
 const adminAuthLimiter = rateLimiter({ windowMs: 15 * 60 * 1000, max: 30 }); // Admin-Login (AP2.1, analog authLimiter)
+// AP5.2-Ergaenzung (ZANDOR-Review, Fund "Speicher-Erschoepfung durch nebenlaeufige
+// Bild-Uploads", MITTEL): multer.memoryStorage() puffert bis zu RECIPE_IMAGE_MAX_BYTES
+// (5 MB) je Upload vollstaendig im RAM, BEVOR die Route selbst laeuft. Der generelle
+// apiLimiter (120/Min) begrenzt zwar die Anfragenzahl, laesst aber genug gleichzeitige/
+// kurz aufeinanderfolgende Uploads zu, um im Shared-Instance-Modell (eine App-Instanz
+// fuer alle Mandanten, mem_limit:256m in docker-compose.yml) den Container fuer ALLE
+// Haushalte zum Absturz zu bringen -- ein einzelner authentifizierter Nutzer koennte
+// sonst genug 5-MB-Puffer parallel im RAM halten. Eigener, deutlich engerer Limiter nur
+// fuer die beiden Rezept-Schreibrouten (POST/PUT /api/recipes, beide gehen ausnahmslos
+// durch multipart/form-data und damit durch handleRecipeImageUpload -- siehe dortige
+// Route-Definitionen), VOR handleRecipeImageUpload eingehaengt, damit eine bereits
+// limitierte Anfrage gar nicht erst gepuffert wird.
+const recipeImageUploadLimiter = rateLimiter({ windowMs: 60 * 1000, max: 8 }); // max. 8 Rezept-Uploads/Min je IP
 app.use('/api', apiLimiter);
 
 function requireAuth(req, res, next) {
@@ -1716,7 +1729,7 @@ app.get('/api/recipes/:id/image', requireAuth, rejectForeignHouseholdId, wrap(as
   });
 }));
 
-app.post('/api/recipes', requireAuth, handleRecipeImageUpload, rejectForeignHouseholdId, wrap(async (req, res) => {
+app.post('/api/recipes', requireAuth, recipeImageUploadLimiter, handleRecipeImageUpload, rejectForeignHouseholdId, wrap(async (req, res) => {
   let clean;
   try { clean = validateRecipeInput(req.body); }
   catch (err) { return res.status(400).json({ error: err.message }); }
@@ -1768,7 +1781,7 @@ app.post('/api/recipes', requireAuth, handleRecipeImageUpload, rejectForeignHous
   }
 }));
 
-app.put('/api/recipes/:id', requireAuth, handleRecipeImageUpload, rejectForeignHouseholdId, wrap(async (req, res) => {
+app.put('/api/recipes/:id', requireAuth, recipeImageUploadLimiter, handleRecipeImageUpload, rejectForeignHouseholdId, wrap(async (req, res) => {
   const id = parseRecipeId(req.params.id);
   if (id == null) return res.status(400).json({ error: 'Ungueltige Rezept-ID' });
 
