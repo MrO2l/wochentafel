@@ -1695,30 +1695,47 @@ async function submitIngredientToList(e) {
     const res = await api('POST', `/api/weeks/${state.weekStart}/add-ingredient-to-list`,
       { dayIndex, slotIndex, ingredientIndex, targetDayIndex });
 
-    state.data = res.data;
-    state.data.goals = state.data.goals || [];
-    state.data.highlights = state.data.highlights || [];
-    state.data.calls = state.data.calls || [];
-    state.updatedAt = res.updatedAt;
-    state.dirty = false;
+    // AP0 (projects/wochenplaner-design-nacharbeiten/plan.md): der Server kann inzwischen auch in
+    // eine ANDERE, nicht geladene Woche schreiben (targetWeekStart im Request -- diese Aufrufstelle
+    // sendet ihn noch nicht, das kommt erst mit dem Monatspicker in AP1.2; der Server setzt ohne
+    // dieses Feld unveraendert monday=state.weekStart als Ziel). state.data/state.updatedAt duerfen
+    // trotzdem nur uebernommen werden, wenn res.targetWeekStart WIRKLICH der aktuell geladenen
+    // Woche entspricht -- sonst wuerde ein (kuenftiger) Schreibzugriff auf eine fremde Woche den
+    // lokalen Zustand der gerade offenen Woche ueberschreiben, inklusive eines darin evtl. gerade
+    // gehaltenen, noch ungespeicherten Standes einer ANDEREN Zelle. Kein Rendering-Trigger fuer
+    // eine nicht geladene Woche: renderAll()/Statuszeile laufen deshalb ebenfalls nur im
+    // Gleichlauf-Fall.
+    const isCurrentWeek = res.targetWeekStart === state.weekStart;
+    if (isCurrentWeek) {
+      state.data = res.data;
+      state.data.goals = state.data.goals || [];
+      state.data.highlights = state.data.highlights || [];
+      state.data.calls = state.data.calls || [];
+      state.updatedAt = res.updatedAt;
+      state.dirty = false;
+    }
 
+    // Betrifft immer die QUELL-Zutat (dayIndex/slotIndex/ingredientIndex), die unveraendert aus der
+    // aktuell geladenen Woche stammt -- unabhaengig davon, in welche Woche sie geschrieben wurde.
     markIngredientAddedToList(dayIndex, slotIndex, ingredientIndex);
     pendingIngredientToList = null; // vor dem close(): der generische "close"-Handler soll die Checkbox NICHT zuruecksetzen
     checkbox.checked = true;
     closeIngredientToListDialog();
 
-    renderAll();
-    // renderAll() zeichnet nur die Uebersicht (renderShoppingView(), Zaehl-Badges) neu, nicht den
-    // Body eines GERADE GEOEFFNETEN #daylist-Overlays (siehe openDayList()/renderDayListBody()
-    // oben, dessen offene Tagesliste unabhaengig von renderAll() gehalten wird). Zeigt das
-    // Overlay zufaellig genau die Zielliste dieser Uebernahme an, wird es hier zusaetzlich neu
-    // gezeichnet, damit die neue Zutat auch dort sofort sichtbar ist (Auftrag Punkt 3).
-    const daylistEl = document.getElementById('daylist');
-    if (daylistEl.open && openListRow !== null && openListDay === targetDayIndex) {
-      const listRow = state.data.rows[openListRow];
-      if (listRow && listRow.listMode === true) renderDayListBody();
+    if (isCurrentWeek) {
+      renderAll();
+      // renderAll() zeichnet nur die Uebersicht (renderShoppingView(), Zaehl-Badges) neu, nicht den
+      // Body eines GERADE GEOEFFNETEN #daylist-Overlays (siehe openDayList()/renderDayListBody()
+      // oben, dessen offene Tagesliste unabhaengig von renderAll() gehalten wird). Zeigt das
+      // Overlay zufaellig genau die Zielliste dieser Uebernahme an, wird es hier zusaetzlich neu
+      // gezeichnet, damit die neue Zutat auch dort sofort sichtbar ist (Auftrag Punkt 3).
+      const daylistEl = document.getElementById('daylist');
+      if (daylistEl.open && openListRow !== null && openListDay === targetDayIndex) {
+        const listRow = state.data.rows[openListRow];
+        if (listRow && listRow.listMode === true) renderDayListBody();
+      }
+      setStatus('Gespeichert ' + new Date(res.updatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }), 'saved');
     }
-    setStatus('Gespeichert ' + new Date(res.updatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }), 'saved');
     flash(`Zutat wurde der Einkaufsliste vom ${DAYS[targetDayIndex]} hinzugefügt.`);
   } catch (err) {
     showIngredientToListError(err.message);

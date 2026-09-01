@@ -2066,10 +2066,40 @@ function formatIngredientText(ingredient) {
  * Kein Dedublizieren (Auftrag Punkt 6): dieselbe Zutat mehrfach hinzuzufuegen
  * (z.B. aus zwei verschiedenen Rezepten) ist kein Fehler, jeder Aufruf haengt
  * einen weiteren eigenstaendigen Eintrag an.
+ *
+ * AP0 (projects/wochenplaner-design-nacharbeiten/plan.md), von MORROW geprueft:
+ * optionaler Body-Parameter targetWeekStart erweitert den Endpunkt um einen
+ * gezielten wochenuebergreifenden Schreibpfad -- Vorbereitung fuer den in
+ * AP1.2 kommenden Monatspicker beim Einkaufsdatum. Default ist "monday" aus
+ * der URL (100% abwaertskompatibel: kein bestehender Aufrufer sendet das
+ * Feld). Quelle (Rezept-Token/Zutat ueber dayIndex/slotIndex/ingredientIndex)
+ * bleibt IMMER die URL-Woche "monday" -- nur das Ziel (listRow/targetList,
+ * INSERT ... ON CONFLICT) kann davon abweichen. Fuer targetWeekStart !==
+ * monday wird dieselbe Lade-/Vorlagen-Fallback-Logik wie oben bei
+ * assign-recipe verwendet (Zielwoche existiert evtl. noch nicht) -- inklusive
+ * derselben, dort bereits akzeptierten Einschraenkung: eine noch nicht
+ * angelegte Zielwoche kann nicht per FOR UPDATE gesperrt werden (nichts zum
+ * Sperren vorhanden), das Wettlauf-Risiko zweier gleichzeitiger Ersterstellungen
+ * derselben neuen Zielwoche ist identisch zu dem bereits dort akzeptierten Fall.
+ * Bereits existierende Zielwochen werden weiterhin per FOR UPDATE serialisiert.
+ * Die Response traegt targetWeekStart, damit der Client zuverlaessig
+ * unterscheiden kann, ob data/updatedAt zur aktuell geladenen Woche gehoeren
+ * (siehe submitIngredientToList() in app.js) -- PUT /api/weeks/:monday und
+ * dessen baseUpdatedAt-Optimistic-Lock sind von alldem unberuehrt, dieser
+ * Endpunkt kennt wie bisher kein eigenes optimistisches Locking (Begruendung
+ * siehe Kommentar bei assign-recipe oben).
  * ------------------------------------------------------------------ */
 app.post('/api/weeks/:monday/add-ingredient-to-list', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
   const monday = req.params.monday;
   if (!isMonday(monday)) return res.status(400).json({ error: 'Datum muss ein Montag im Format JJJJ-MM-TT sein' });
+
+  // AP0: leer/undefined -> Default "monday" (bestehendes Verhalten unveraendert).
+  const targetWeekStart = (req.body?.targetWeekStart != null && req.body.targetWeekStart !== '')
+    ? String(req.body.targetWeekStart)
+    : monday;
+  if (!isMonday(targetWeekStart)) {
+    return res.status(400).json({ error: 'targetWeekStart muss ein Montag im Format JJJJ-MM-TT sein' });
+  }
 
   const dayIndex = Number(req.body?.dayIndex);
   const slotIndex = Number(req.body?.slotIndex);
@@ -2090,11 +2120,11 @@ app.post('/api/weeks/:monday/add-ingredient-to-list', requireAuth, rejectForeign
   }
 
   const result = await withTenantClient(req.session.householdId, async client => {
-    // Anders als assign-recipe kein Vorlagen-Fallback fuer eine noch nicht angelegte Woche:
-    // die hier referenzierte Zutat kann nur existieren, wenn zuvor bereits eine Rezept-
-    // Zuweisung stattgefunden hat -- und assign-recipe legt die weeks-Zeile dabei immer
-    // per UPSERT an. Existiert die Woche nicht, kann dayIndex/slotIndex keine gueltige
-    // Zuweisung referenzieren; 404 statt eines irrefuehrenden Vorlagen-Zugriffs.
+    // Anders als assign-recipe kein Vorlagen-Fallback fuer die QUELL-Woche (monday): die hier
+    // referenzierte Zutat kann nur existieren, wenn zuvor bereits eine Rezept-Zuweisung
+    // stattgefunden hat -- und assign-recipe legt die weeks-Zeile dabei immer per UPSERT an.
+    // Existiert die Quell-Woche nicht, kann dayIndex/slotIndex keine gueltige Zuweisung
+    // referenzieren; 404 statt eines irrefuehrenden Vorlagen-Zugriffs.
     const weekQ = await client.query(
       `SELECT data FROM weeks WHERE household_id=$1 AND week_start=$2 FOR UPDATE`,
       [req.session.householdId, monday]);
@@ -2103,13 +2133,33 @@ app.post('/api/weeks/:monday/add-ingredient-to-list', requireAuth, rejectForeign
 
     const mealRow = data.rows.find(r => r && r.kind === 'shared' && r.mode === 'week');
     if (!mealRow) return { error: 'meal_row_missing' };
-    const listRow = data.rows.find(r => r && r.kind === 'shared' && r.listMode === true);
-    if (!listRow) return { error: 'list_row_missing' };
 
     const recipeToken = mealRow.meals[slotIndex].cells[dayIndex].find(t => t.t === 'recipe');
     if (!recipeToken) return { error: 'no_recipe_assigned' };
     const ingredient = recipeToken.ingredients[ingredientIndex];
     if (!ingredient) return { error: 'ingredient_not_found' };
+
+    // AP0: Ziel-Datensatz ist entweder derselbe wie oben (targetWeekStart === monday, identisches
+    // Verhalten zu vor AP0) oder eine zweite, unabhaengige Zeile -- fuer die, analog zu
+    // assign-recipe, dieselbe Lade-/Vorlagen-Fallback-Logik greift, falls sie noch nicht existiert.
+    let targetData;
+    if (targetWeekStart === monday) {
+      targetData = data;
+    } else {
+      const targetWeekQ = await client.query(
+        `SELECT data FROM weeks WHERE household_id=$1 AND week_start=$2 FOR UPDATE`,
+        [req.session.householdId, targetWeekStart]);
+      if (targetWeekQ.rowCount) {
+        targetData = cleanWeek(migrateLegacyWeek(targetWeekQ.rows[0].data));
+      } else {
+        const t = await client.query('SELECT template_data FROM households WHERE id=$1', [req.session.householdId]);
+        const template = t.rows[0]?.template_data ? migrateLegacyWeek(t.rows[0].template_data) : null;
+        targetData = cleanWeek(template ? mergeTemplate(structuredClone(template), defaultWeek()) : defaultWeek());
+      }
+    }
+
+    const listRow = targetData.rows.find(r => r && r.kind === 'shared' && r.listMode === true);
+    if (!listRow) return { error: 'list_row_missing' };
 
     const targetList = listRow.cells[targetDayIndex];
     // LIMITS.listItems (40) wird von cleanListItems() beim naechsten Normalisieren ohnehin
@@ -2127,20 +2177,20 @@ app.post('/api/weeks/:monday/add-ingredient-to-list', requireAuth, rejectForeign
        ON CONFLICT (household_id, week_start)
        DO UPDATE SET data=EXCLUDED.data, updated_by=EXCLUDED.updated_by, updated_at=now()
        RETURNING updated_at AS "updatedAt"`,
-      [req.session.householdId, monday, data, req.session.userId]);
+      [req.session.householdId, targetWeekStart, targetData, req.session.userId]);
 
-    return { ok: true, item, data, updatedAt: saved.rows[0].updatedAt };
+    return { ok: true, item, data: targetData, updatedAt: saved.rows[0].updatedAt };
   });
 
   if (result.error === 'week_not_found') return res.status(404).json({ error: 'Woche nicht gefunden -- eine Zutat kann nur aus einer bereits bestehenden Rezept-Zuweisung uebernommen werden' });
   if (result.error === 'meal_row_missing') return res.status(409).json({ error: '"Essen & Kochen"-Zeile in dieser Woche nicht gefunden' });
-  if (result.error === 'list_row_missing') return res.status(409).json({ error: '"Einkauf & Besorgungen"-Zeile in dieser Woche nicht gefunden' });
+  if (result.error === 'list_row_missing') return res.status(409).json({ error: '"Einkauf & Besorgungen"-Zeile in der Zielwoche nicht gefunden' });
   if (result.error === 'no_recipe_assigned') return res.status(404).json({ error: 'In dieser Zelle ist aktuell kein Rezept zugewiesen' });
   if (result.error === 'ingredient_not_found') return res.status(404).json({ error: 'Zutat mit diesem Index nicht gefunden' });
   if (result.error === 'list_full') return res.status(400).json({ error: `Tagesliste ist bereits voll (max. ${LIMITS.listItems} Eintraege)` });
 
   res.json({
-    ok: true, weekStart: monday, targetDayIndex,
+    ok: true, weekStart: monday, targetWeekStart, targetDayIndex,
     item: result.item, data: result.data, updatedAt: result.updatedAt
   });
 }));
