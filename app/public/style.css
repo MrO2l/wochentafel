@@ -525,35 +525,50 @@ tr.mealrow td{height:78px}
    jetzt permanente Essensplan-Tabelle. Default versteckt (Desktop zeigt die volle Tabelle) --
    ".daynav" (Basis-Optik, siehe "Tagesansicht (Handy)" unten) ist selbst IMMER display:flex, war
    bisher aber nur ueber den versteckten Elternknoten ".dayview" unsichtbar; #mpDayNav haengt nicht
-   in ".dayview", braucht daher diese eigene Sichtbarkeitsregel. */
+   in ".dayview", braucht daher diese eigene Sichtbarkeitsregel.
+   AP2-Update: Selektoren von "#mpTable" auf die Klasse ".mobile-day-table" verallgemeinert (beide
+   tragen sie zusaetzlich zu ".mp-table"), damit dieselbe Regel jetzt AUCH fuer #nextWeekTable (die
+   neue, unabhaengige "Naechste Woche"-Vorschau, app.js renderNextWeekPanel()) gilt -- eigener,
+   von #mpDayNav/state.mealDay komplett unabhaengiger Tagesumschalter (#nextWeekDayNav), damit ein
+   Wechsel des Vorschau-Tages nicht die aktuelle Wochenansicht beeinflusst und umgekehrt. */
 .mp-daynav{display:none}
 @media screen and (max-width:767.98px){
   .mp-daynav{display:flex}
   /* Reine Spalten-Ausblendung auf DERSELBEN Tabelle (kein zweiter DOM-Baum, siehe app.js-
      Kommentar bei renderMealDayNav()) -- ".col"-Elemente muessen mit ausgeblendet werden, sonst
      reserviert das "table-layout:fixed" der Tabelle trotzdem deren Spaltenbreite. */
-  #mpTable[data-active-day] col[data-day],
-  #mpTable[data-active-day] th[data-day],
-  #mpTable[data-active-day] td[data-day]{display:none}
-  #mpTable[data-active-day="0"] col[data-day="0"]{display:table-column}
-  #mpTable[data-active-day="0"] th[data-day="0"], #mpTable[data-active-day="0"] td[data-day="0"]{display:table-cell}
-  #mpTable[data-active-day="1"] col[data-day="1"]{display:table-column}
-  #mpTable[data-active-day="1"] th[data-day="1"], #mpTable[data-active-day="1"] td[data-day="1"]{display:table-cell}
-  #mpTable[data-active-day="2"] col[data-day="2"]{display:table-column}
-  #mpTable[data-active-day="2"] th[data-day="2"], #mpTable[data-active-day="2"] td[data-day="2"]{display:table-cell}
-  #mpTable[data-active-day="3"] col[data-day="3"]{display:table-column}
-  #mpTable[data-active-day="3"] th[data-day="3"], #mpTable[data-active-day="3"] td[data-day="3"]{display:table-cell}
-  #mpTable[data-active-day="4"] col[data-day="4"]{display:table-column}
-  #mpTable[data-active-day="4"] th[data-day="4"], #mpTable[data-active-day="4"] td[data-day="4"]{display:table-cell}
-  #mpTable[data-active-day="5"] col[data-day="5"]{display:table-column}
-  #mpTable[data-active-day="5"] th[data-day="5"], #mpTable[data-active-day="5"] td[data-day="5"]{display:table-cell}
-  #mpTable[data-active-day="6"] col[data-day="6"]{display:table-column}
-  #mpTable[data-active-day="6"] th[data-day="6"], #mpTable[data-active-day="6"] td[data-day="6"]{display:table-cell}
+  .mobile-day-table[data-active-day] col[data-day],
+  .mobile-day-table[data-active-day] th[data-day],
+  .mobile-day-table[data-active-day] td[data-day]{display:none}
+  .mobile-day-table[data-active-day="0"] col[data-day="0"]{display:table-column}
+  .mobile-day-table[data-active-day="0"] th[data-day="0"], .mobile-day-table[data-active-day="0"] td[data-day="0"]{display:table-cell}
+  .mobile-day-table[data-active-day="1"] col[data-day="1"]{display:table-column}
+  .mobile-day-table[data-active-day="1"] th[data-day="1"], .mobile-day-table[data-active-day="1"] td[data-day="1"]{display:table-cell}
+  .mobile-day-table[data-active-day="2"] col[data-day="2"]{display:table-column}
+  .mobile-day-table[data-active-day="2"] th[data-day="2"], .mobile-day-table[data-active-day="2"] td[data-day="2"]{display:table-cell}
+  .mobile-day-table[data-active-day="3"] col[data-day="3"]{display:table-column}
+  .mobile-day-table[data-active-day="3"] th[data-day="3"], .mobile-day-table[data-active-day="3"] td[data-day="3"]{display:table-cell}
+  .mobile-day-table[data-active-day="4"] col[data-day="4"]{display:table-column}
+  .mobile-day-table[data-active-day="4"] th[data-day="4"], .mobile-day-table[data-active-day="4"] td[data-day="4"]{display:table-cell}
+  .mobile-day-table[data-active-day="5"] col[data-day="5"]{display:table-column}
+  .mobile-day-table[data-active-day="5"] th[data-day="5"], .mobile-day-table[data-active-day="5"] td[data-day="5"]{display:table-cell}
+  .mobile-day-table[data-active-day="6"] col[data-day="6"]{display:table-column}
+  .mobile-day-table[data-active-day="6"] th[data-day="6"], .mobile-day-table[data-active-day="6"] td[data-day="6"]{display:table-cell}
   /* Bekanntes Ueberlappungsproblem (siehe Mobile-Baseline-Screenshot, plan.md AP1.1): mit nur
      einer sichtbaren Tagesspalte braucht die Beschriftungsspalte nicht mehr 130px, mehr Platz
      fuer die einzige Tagesspalte. */
   .mp-table col.lbl{width:96px}
 }
+
+/* AP2 (projects/wochenplaner-design-nacharbeiten/plan.md): Vorschau-Panel der folgenden Woche
+   (#nextWeekPanel) -- optisch als eigener, klar abgesetzter Block unterhalb der Haupttabelle,
+   bewusst dezenter/kompakter (kleinere Ueberschrift, Abstand) als die primaere Essensplan-Tabelle,
+   um den sekundaeren/eingeschraenkten Charakter (nur "Essen & Kochen", Stufe 1+2) sichtbar zu
+   machen -- keine eigene Kartenkontur/Farbwechsel, bleibt in derselben .mp-table-Design-Linie
+   (--accent), damit es nicht wie ein voellig neuer, gleichrangiger Bereich wirkt. */
+.next-week-panel{margin-top:1.75rem; padding-top:1.1rem; border-top:1.4px dashed var(--line)}
+.next-week-title{font-size:1rem; font-weight:700; color:var(--accent); margin:0 0 .15rem; padding:0 18px}
+.next-week-panel .sub{padding:0 18px; margin-bottom:.5rem; color:var(--muted); font-size:12px}
 
 /* ---------------- Tagesansicht (Handy) ---------------- */
 .dayview{display:none; padding:10px 10px 60px; max-width:760px; margin:0 auto}
@@ -944,4 +959,8 @@ dialog.recipe-form::backdrop{background:rgba(20,26,32,.45)}
   body.printing-mealplan .mp-table thead th{height:12mm; font-size:9pt}
   body.printing-mealplan tr.mealrow td{height:30mm}
   body.printing-mealplan .mp-table .mp-cell{font-size:9pt; padding:2mm}
+  /* AP2: die neue "Naechste Woche"-Vorschau (#nextWeekPanel) bewusst NICHT Teil des Ausdrucks --
+     haelt den bereits getesteten Essensplan-Druck (AP1.1, exakt EINE Woche A4 quer) unveraendert,
+     statt ihn stillschweigend um eine zweite, kleinere Tabelle zu erweitern. */
+  body.printing-mealplan #nextWeekPanel{display:none !important}
 }

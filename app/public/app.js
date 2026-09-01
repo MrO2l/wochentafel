@@ -943,6 +943,11 @@ async function loadWeek(iso) {
     ? 'Gespeichert ' + new Date(res.updatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
     : (res.fromTemplate ? 'Neue Woche aus Vorlage' : 'Neue Woche'), res.exists ? 'saved' : '');
   $('#archive').value = '';
+  // AP2 (projects/wochenplaner-design-nacharbeiten/plan.md): Read-only-Vorschau der FOLGENDEN
+  // Woche neu laden, sobald sich die geladene Woche aendert (Navigation/Archiv/heute-Button) --
+  // bewusst NACH renderAll() oben, damit die primaere Wochenansicht nicht auf den zusaetzlichen
+  // Request wartet.
+  await loadNextWeekPreview();
 }
 
 async function refreshArchive() {
@@ -1377,6 +1382,157 @@ function initMealPlanToolbar() {
   $('#mealplanToolbar').appendChild(buildMiniPalette(['i-kochen', 'i-essen']));
 }
 
+/* ================= AP2 (projects/wochenplaner-design-nacharbeiten/plan.md, Stufe 1+2): Read-only-
+   Vorschau + gezielt editierbare "Essen & Kochen"-Zeile der auf state.weekStart FOLGENDEN Woche
+   (#nextWeekPanel). Bewusst KEIN eigener state.data/dirty/save/baseUpdatedAt-Zyklus fuer diese
+   zweite Woche (MORROWs Kernempfehlung) -- nur die "mode:'week'"-Zeile wird lokal gehalten
+   (nextWeekMeal), Schreibzugriffe laufen ausschliesslich ueber die gezielten Endpunkte assign-
+   recipe/set-meal-cell (beide mit targetWeekStart, server.js), siehe applyMealSlotTokens()/
+   submitMealSlotRecipe() weiter unten. Eigener Mobile-Tagesumschalter (nextWeekDay/#nextWeekDayNav)
+   komplett unabhaengig von state.mealDay/#mpDayNav, damit ein Wechsel des Vorschau-Tages die
+   aktuelle Wochenansicht nicht beeinflusst (und umgekehrt) -- dieselbe CSS-Spaltenausblendung wie
+   bei #mpTable, jetzt ueber die geteilte Klasse ".mobile-day-table" (siehe style.css). ================= */
+let nextWeekStart = null; // ISO-Datum (Montag) der Vorschau-Woche, == addDays(state.weekStart, 7)
+let nextWeekMeal = null; // die "mode:'week'"-Zeile der Vorschau-Woche (row.meals[...]) oder null
+let nextWeekDay = 0; // Mobile-Tagesumschalter der Vorschau, unabhaengig von state.mealDay
+
+// Laedt die Vorschau neu, sobald sich die geladene Woche aendert (siehe loadWeek()). Ein
+// Fehlschlag (z. B. Netzwerkproblem) blendet die Vorschau lediglich leer aus, statt das Laden der
+// eigentlich geladenen Woche zu gefaehrden -- die Vorschau ist bewusst ein rein ergaenzendes,
+// nicht-kritisches Feature (Stufe 1+2, kein AP0/AP1-Aequivalent an Wichtigkeit).
+async function loadNextWeekPreview() {
+  nextWeekStart = addDays(state.weekStart, 7);
+  try {
+    const res = await api('GET', `/api/weeks/${nextWeekStart}`);
+    nextWeekMeal = res.data.rows.find(r => r && r.kind === 'shared' && r.mode === 'week') || null;
+  } catch (err) {
+    nextWeekMeal = null;
+    flash('Vorschau der nächsten Woche konnte nicht geladen werden: ' + err.message);
+  }
+  renderNextWeekPanel();
+}
+
+function renderNextWeekPanel() {
+  const sub = $('#nextWeekSub');
+  if (sub) {
+    if (nextWeekStart) {
+      const mon = parseISO(nextWeekStart);
+      const sun = parseISO(nextWeekStart); sun.setDate(sun.getDate() + 6);
+      sub.textContent = 'KW ' + isoWeek(mon) + ' · ' +
+        mon.toLocaleDateString('de-DE', { day: '2-digit', month: 'long' }) + ' – ' +
+        sun.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' });
+    } else {
+      sub.textContent = '';
+    }
+  }
+  renderNextWeekHead();
+  renderNextWeekBody();
+  renderNextWeekDayNav();
+}
+function renderNextWeekHead() {
+  const headRow = $('#nextWeekHeadRow');
+  if (!headRow) return;
+  headRow.querySelectorAll('th:not(.corner)').forEach(th => th.remove());
+  if (!nextWeekStart) return;
+  DAYS.forEach((name, i) => {
+    const d = parseISO(nextWeekStart); d.setDate(d.getDate() + i);
+    const th = document.createElement('th');
+    th.dataset.day = String(i); // Mobile-Tagesumschalter, siehe renderNextWeekDayNav()
+    th.innerHTML = `<span class="dw"></span><span class="dt"></span>`;
+    th.querySelector('.dw').textContent = name;
+    th.querySelector('.dt').textContent = fmtShort(d);
+    headRow.appendChild(th);
+  });
+}
+function renderNextWeekBody() {
+  const tbody = $('#nextWeekTableBody');
+  if (!tbody) return;
+  tbody.textContent = '';
+  if (!nextWeekMeal) return;
+  nextWeekMeal.meals.forEach((meal, mi) => {
+    const tr = document.createElement('tr');
+    tr.className = 'mealrow';
+    const tdLbl = document.createElement('td');
+    tdLbl.className = 'lbl';
+    tdLbl.textContent = meal.label;
+    tr.appendChild(tdLbl);
+    for (let d = 0; d < 7; d++) {
+      const td = document.createElement('td');
+      td.dataset.day = String(d);
+      const recipeTok = (meal.cells[d] || []).find(t => t && t.t === 'recipe');
+      if (recipeTok) {
+        td.classList.add('mp-cell-recipe');
+        td.appendChild(buildNextWeekRecipeDisplay(meal, mi, d, recipeTok));
+      } else {
+        td.appendChild(buildNextWeekCellDisplay(meal, mi, d));
+      }
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  });
+}
+// Analog renderMealDayNav() (Hauptwoche), aber unabhaengiger Zustand (nextWeekDay/#nextWeekDayNav)
+// -- siehe Kommentar am Dateianfang dieses Abschnitts.
+function renderNextWeekDayNav() {
+  const nav = $('#nextWeekDayNav');
+  if (!nav) return;
+  nav.textContent = '';
+  if (!nextWeekStart) return;
+  DAYS.forEach((name, i) => {
+    const d = parseISO(nextWeekStart); d.setDate(d.getDate() + i);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('aria-current', String(i === nextWeekDay));
+    b.innerHTML = '<span></span><small></small>';
+    b.querySelector('span').textContent = DAYS_S[i];
+    b.querySelector('small').textContent = fmtShort(d);
+    b.onclick = () => { nextWeekDay = i; renderNextWeekDayNav(); };
+    nav.appendChild(b);
+  });
+  nav.children[nextWeekDay]?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  const table = $('#nextWeekTable');
+  if (table) table.dataset.activeDay = String(nextWeekDay);
+}
+// Analog buildMealCellDisplay()/buildMealSlotRecipeDisplay() (Hauptwoche) -- Klick oeffnet
+// DENSELBEN #mealSlotDialog, aber mit weekCtx {weekStart: nextWeekStart, isNextWeek: true}, siehe
+// openMealSlotDialog()/openMealSlotRecipeCell() weiter unten.
+function buildNextWeekCellDisplay(meal, mi, d) {
+  const div = document.createElement('div');
+  div.className = 'cell mp-cell mp-cell-slot';
+  div.tabIndex = 0;
+  div.setAttribute('role', 'button');
+  div.dataset.ph = '–';
+  const tokens = meal.cells[d] || [];
+  div.appendChild(tokensToFragment(tokens));
+  const summary = tokensText(tokens).trim();
+  div.setAttribute('aria-label', summary
+    ? `Nächste Woche, ${meal.label}, ${DAYS[d]}: ${summary} — antippen zum Ändern`
+    : `Nächste Woche, ${meal.label}, ${DAYS[d]}: nicht geplant — antippen zum Eintragen`);
+  const open = () => openMealSlotDialog(meal, mi, d, { weekStart: nextWeekStart, isNextWeek: true });
+  div.addEventListener('click', open);
+  div.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  return div;
+}
+function buildNextWeekRecipeDisplay(meal, mi, d, recipeTok) {
+  const div = document.createElement('div');
+  div.className = 'cell mp-cell mp-cell-slot mp-cell-recipe-compact';
+  div.tabIndex = 0;
+  div.setAttribute('role', 'button');
+  const title = document.createElement('span');
+  title.className = 'mp-recipe-compact-title';
+  title.textContent = recipeTok.recipeTitle;
+  const servingsLabel = `${recipeTok.servings} ${recipeTok.servings === 1 ? 'Person' : 'Personen'}`;
+  const servings = document.createElement('span');
+  servings.className = 'mp-recipe-compact-servings';
+  servings.textContent = servingsLabel;
+  div.append(title, servings);
+  div.setAttribute('aria-label', `Nächste Woche, ${meal.label}, ${DAYS[d]}: ${recipeTok.recipeTitle}, ${servingsLabel} — antippen zum Bearbeiten`);
+  const open = () => openMealSlotRecipeCell(meal, mi, d, recipeTok, { weekStart: nextWeekStart, isNextWeek: true });
+  div.addEventListener('click', open);
+  div.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  return div;
+}
+
 /* ================= AP1.2 (projects/wochenplaner-design-nacharbeiten/plan.md): Zell-Klick-Dialog
    (#mealSlotDialog) -- EIN <dialog> mit mehreren intern umgeschalteten Schritten (".msd-step",
    ein/ausgeblendet ueber das native "hidden"-Attribut, siehe mealSlotShowStep()), kein zweiter
@@ -1385,17 +1541,34 @@ function initMealPlanToolbar() {
    andere Zellenaenderung, kein eigener API-Aufruf noetig. Nur "Rezeptkarte" braucht Serverkontakt
    (POST .../assign-recipe -- dieselbe Route/Skalierungslogik, die bis AP1.4 auch vom inzwischen
    zurueckgebauten Drag&Drop-Pfad genutzt wurde, Backend-Logik unveraendert) sowie optional POST
-   .../add-ingredient-to-list (AP4.1, um AP0s targetWeekStart erweitert). ================= */
+   .../add-ingredient-to-list (AP4.1, um AP0s targetWeekStart erweitert).
+
+   AP2-Update: derselbe Dialog wird jetzt AUCH fuer Zellen der NAECHSTEN Woche (#nextWeekPanel)
+   verwendet -- mealSlotContext traegt dafuer zusaetzlich "weekStart"/"isNextWeek". Fuer die
+   aktuell geladene Woche (isNextWeek:false) bleibt ALLES exakt wie bisher (lokale state.data-
+   Mutation + Autosave). Fuer die naechste Woche (isNextWeek:true) schreiben die 4 einfachen
+   Optionen ueber den neuen, gezielten set-meal-cell-Endpunkt (applyMealSlotTokens()) und
+   "Rezeptkarte" ueber denselben assign-recipe-Endpunkt wie sonst, nur mit targetWeekStart
+   (submitMealSlotRecipe()) -- in BEIDEN Faellen OHNE state.data/dirty/save-Zyklus fuer diese
+   zweite Woche zu halten (MORROWs Kernempfehlung, siehe Ruecklauf an ANORAK). Stattdessen wird
+   direkt das lokale Vorschau-Objekt (nextWeekMeal, siehe loadNextWeekPreview()) aktualisiert und
+   nur das Vorschau-Panel neu gezeichnet (renderNextWeekPanel()) -- state.weekStart/state.data/
+   state.dirty/state.saving bleiben davon vollstaendig unberuehrt. ================= */
 
 // Kontext, welche Zelle der Dialog gerade bearbeitet -- gesetzt beim Oeffnen, zurueckgesetzt im
-// "close"-Handler (siehe boot()).
-let mealSlotContext = null; // {meal, mi, d} oder null
+// "close"-Handler (siehe boot()). "weekStart" ist die tatsaechlich betroffene Woche (== state.
+// weekStart fuer die aktuelle, == nextWeekStart fuer die AP2-Vorschau); "isNextWeek" steuert, ob
+// ueber lokale Mutation+Autosave oder ueber die gezielten Endpunkte geschrieben wird.
+let mealSlotContext = null; // {meal, mi, d, weekStart, isNextWeek} oder null
 // Waehrend Schritt "Rezeptdetails": das per GET /api/recipes/:id geladene Volldetail-Rezept plus
 // die aktuell angezeigte (automatisch skalierte, ggf. manuell ueberschriebene) Zutatenliste.
 let mealSlotRecipe = null; // {recipe, ingredients:[{amount,unit,name,addToList}]} oder null
 // Waehrend Schritt "Einkaufstag": welche Zutaten (Index im Snapshot-Token) nach der Zuweisung
-// tatsaechlich auf die Einkaufsliste sollen.
-let mealSlotShoppingQueue = null; // {dayIndex, slotIndex, indexes:[...]} oder null
+// tatsaechlich auf die Einkaufsliste sollen. "sourceWeekStart" ist die Woche, in die das Rezept
+// GERADE zugewiesen wurde (== mealSlotContext.weekStart zum Zeitpunkt der Zuweisung) -- add-
+// ingredient-to-list liest den Zutaten-Snapshot von DORT, nicht zwingend von state.weekStart
+// (AP2: eine Zuweisung in die naechste Woche liegt eben dort, nicht in der geladenen Woche).
+let mealSlotShoppingQueue = null; // {sourceWeekStart, dayIndex, slotIndex, indexes:[...]} oder null
 // AP1-Korrektur: true, wenn der Rezeptdetails-Schritt gerade eine BEREITS zugewiesene Zelle
 // bearbeitet (Einstieg ueber openMealSlotRecipeCell(), direkt aus der kompakten Zellenanzeige) --
 // steuert, ob "Zuweisung entfernen" sichtbar ist und wohin "Zurueck" fuehrt (zu den 5 Optionen
@@ -1424,15 +1597,18 @@ function mealCellSummaryText(tokens) {
 // Baut Schritt 1 (5 Optionen) fuer eine Zelle auf, OHNE den Dialog zu oeffnen (showModal() auf
 // einem bereits offenen <dialog> wirft) -- getrennt von openMealSlotDialog(), damit "Zurueck" aus
 // dem Rezeptdetails-Schritt einer bereits offenen Sitzung ebenfalls dorthin zurueckspringen kann
-// (siehe $('#msdRecipeDetailBack') in boot()).
-function primeMealSlotOptionsStep(meal, mi, d) {
-  mealSlotContext = { meal, mi, d };
+// (siehe $('#msdRecipeDetailBack') in boot()). "weekCtx" (optional): {weekStart, isNextWeek} --
+// ohne Angabe (Aufruf aus der aktuellen Woche) gilt state.weekStart/isNextWeek:false.
+function primeMealSlotOptionsStep(meal, mi, d, weekCtx) {
+  const weekStart = weekCtx?.weekStart ?? state.weekStart;
+  const isNextWeek = weekCtx?.isNextWeek ?? false;
+  mealSlotContext = { meal, mi, d, weekStart, isNextWeek };
   mealSlotRecipe = null;
   mealSlotShoppingQueue = null;
   mealSlotEditingRecipeCell = false;
   const tokens = meal.cells[d] || [];
   const summary = mealCellSummaryText(tokens);
-  $('#msdTitle').textContent = `${meal.label}, ${DAYS[d]}`;
+  $('#msdTitle').textContent = isNextWeek ? `Nächste Woche, ${meal.label}, ${DAYS[d]}` : `${meal.label}, ${DAYS[d]}`;
   const cur = $('#msdCurrent');
   if (summary) { cur.hidden = false; cur.textContent = `Aktuell: ${summary} — eine neue Auswahl ersetzt diesen Eintrag.`; }
   else { cur.hidden = true; cur.textContent = ''; }
@@ -1442,17 +1618,49 @@ function primeMealSlotOptionsStep(meal, mi, d) {
   $('#msdTextInput').value = tokens.length === 1 && tokens[0].t === 'text' ? tokens[0].v : '';
   mealSlotShowStep('msdStepOptions');
 }
-function openMealSlotDialog(meal, mi, d) {
-  primeMealSlotOptionsStep(meal, mi, d);
+function openMealSlotDialog(meal, mi, d, weekCtx) {
+  primeMealSlotOptionsStep(meal, mi, d, weekCtx);
   $('#mealSlotDialog').showModal();
 }
 function closeMealSlotDialog() {
   $('#mealSlotDialog').close();
 }
 
+// AP2: schreibt "tokens" in die aktuell im Dialog bearbeitete Zelle (die 4 einfachen Optionen,
+// siehe handleMealSlotOption()/submitMealSlotText()) -- fuer die AKTUELL GELADENE Woche
+// unveraendert lokal (state.data-Mutation + markDirty(), derselbe Autosave-Weg wie jede andere
+// Zellenaenderung); fuer die AP2-Vorschau der naechsten Woche stattdessen ueber den gezielten
+// set-meal-cell-Endpunkt (server.js) -- explizit OHNE state.data/dirty/save-Zyklus fuer diese
+// zweite Woche (MORROWs Kernempfehlung). Kein "close"-Aufruf bei einem Fehler im Naechste-Woche-
+// Fall: der Dialog bleibt offen (Schritt unveraendert), Fehlermeldung per flash() (die betroffenen
+// Schritte -- Optionen/Freitext -- haben keine eigene Inline-Fehleranzeige, anders als die
+// Rezeptdetails-/Einkaufstag-Schritte).
+async function applyMealSlotTokens(tokens) {
+  if (!mealSlotContext) return;
+  const { meal, mi, d, weekStart, isNextWeek } = mealSlotContext;
+  // Alte "bereits auf Liste uebernommen"-Markierungen dieser Zelle sind mit JEDER Aenderung
+  // (auch einer Entfernung, siehe #msdRecipeRemove in boot()) obsolet -- unabhaengig davon, ob
+  // vorher ueberhaupt ein Rezept dort lag (harmloser No-Op, falls nicht).
+  clearIngredientListMarksFor(weekStart, d, mi);
+  if (!isNextWeek) {
+    meal.cells[d] = tokens;
+    markDirty();
+    closeMealSlotDialog();
+    return;
+  }
+  try {
+    await api('POST', `/api/weeks/${state.weekStart}/set-meal-cell`,
+      { targetWeekStart: weekStart, dayIndex: d, slotIndex: mi, tokens });
+    meal.cells[d] = tokens; // "meal" ist eine Referenz IN nextWeekMeal (siehe renderNextWeekBody()) -- Mutation wirkt sich direkt dort aus.
+    renderNextWeekPanel();
+    closeMealSlotDialog();
+  } catch (err) {
+    flash('Speichern für die nächste Woche fehlgeschlagen: ' + err.message);
+  }
+}
+
 function handleMealSlotOption(option) {
   if (!mealSlotContext) return;
-  const { meal, d } = mealSlotContext;
   if (option === 'none') { closeMealSlotDialog(); return; }
   if (option === 'text') { mealSlotShowStep('msdStepText'); $('#msdTextInput').focus(); return; }
   if (option === 'recipe') { openMealSlotRecipePick(); return; }
@@ -1463,9 +1671,7 @@ function handleMealSlotOption(option) {
     // unterscheiden und nutzt exakt dieselbe Rendering-Pipeline (tokensToFragment()/iconSpan()).
     const iconId = option === 'out' ? 'i-auswaerts' : 'i-reste';
     const label = option === 'out' ? 'Essen außerhalb' : 'Reste vom Vortag';
-    meal.cells[d] = [{ t: 'icon', v: iconId, l: label }, { t: 'text', v: ' ' + label }];
-    markDirty();
-    closeMealSlotDialog();
+    applyMealSlotTokens([{ t: 'icon', v: iconId, l: label }, { t: 'text', v: ' ' + label }]);
   }
 }
 
@@ -1473,11 +1679,8 @@ function handleMealSlotOption(option) {
 function submitMealSlotText(e) {
   e.preventDefault();
   if (!mealSlotContext) return;
-  const { meal, d } = mealSlotContext;
   const text = $('#msdTextInput').value.trim();
-  meal.cells[d] = text ? [{ t: 'text', v: text }] : [];
-  markDirty();
-  closeMealSlotDialog();
+  applyMealSlotTokens(text ? [{ t: 'text', v: text }] : []);
 }
 
 /* ---------------- Schritt "Rezeptauswahl" ---------------- */
@@ -1516,7 +1719,7 @@ function renderMealSlotIngredientRows(list) {
   const wrap = $('#msdIngredients');
   wrap.textContent = '';
   mealSlotRecipe.ingredients = list;
-  const { mi, d } = mealSlotContext || {};
+  const { mi, d, weekStart } = mealSlotContext || {};
   list.forEach((ing, ii) => {
     const row = document.createElement('div');
     row.className = 'wizard-ing-row';
@@ -1545,7 +1748,7 @@ function renderMealSlotIngredientRows(list) {
     // weiter unten) sind hier -- wie zuvor in der jetzt entfernten buildRecipeAssignToken() --
     // angehakt+deaktiviert, um versehentliche Duplikate durch erneutes Anhaken zu vermeiden
     // (kein serverseitiges Dedup, siehe add-ingredient-to-list in server.js).
-    const alreadyAdded = mi != null && d != null && isIngredientMarkedAddedToList(d, mi, ii);
+    const alreadyAdded = mi != null && d != null && isIngredientMarkedAddedToList(weekStart, d, mi, ii);
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = 'form-check-input wizard-ing-cb';
@@ -1606,12 +1809,16 @@ async function openMealSlotRecipeDetail(recipeOverview) {
 // Skalierungs-Basis bei einem Personenzahl-Wechsel) -- schlaegt das fehl (Rezept zwischenzeitlich
 // geloescht, F6 "recipeId zeigt ins Leere"), bleibt der Snapshot trotzdem vollstaendig anzeig-/
 // entfernbar, nur eine erneute Skalierung ist dann nicht mehr sinnvoll moeglich.
-async function openMealSlotRecipeCell(meal, mi, d, recipeTok) {
-  mealSlotContext = { meal, mi, d };
+// AP2: "weekCtx" (optional) analog primeMealSlotOptionsStep() -- {weekStart, isNextWeek}, ohne
+// Angabe gilt state.weekStart/isNextWeek:false (Klick aus der aktuellen Woche).
+async function openMealSlotRecipeCell(meal, mi, d, recipeTok, weekCtx) {
+  const weekStart = weekCtx?.weekStart ?? state.weekStart;
+  const isNextWeek = weekCtx?.isNextWeek ?? false;
+  mealSlotContext = { meal, mi, d, weekStart, isNextWeek };
   mealSlotShoppingQueue = null;
   mealSlotEditingRecipeCell = true;
   $('#msdRecipeRemove').hidden = false;
-  $('#msdTitle').textContent = `${meal.label}, ${DAYS[d]}`;
+  $('#msdTitle').textContent = isNextWeek ? `Nächste Woche, ${meal.label}, ${DAYS[d]}` : `${meal.label}, ${DAYS[d]}`;
   $('#msdCurrent').hidden = true; // kein Options-Schritt dazwischen, daher kein "Aktuell"-Hinweis noetig
   setStepError('msdRecipeError', '');
   mealSlotShowStep('msdStepRecipeDetail');
@@ -1621,7 +1828,7 @@ async function openMealSlotRecipeCell(meal, mi, d, recipeTok) {
   $('#msdRecipeSubmit').disabled = true;
   const prefill = recipeTok.ingredients.map((ing, ii) => ({
     amount: ing.amount, unit: ing.unit, name: ing.name,
-    addToList: isIngredientMarkedAddedToList(d, mi, ii)
+    addToList: isIngredientMarkedAddedToList(weekStart, d, mi, ii)
   }));
   try {
     const { recipe } = await api('GET', `/api/recipes/${recipeTok.recipeId}`);
@@ -1650,7 +1857,7 @@ async function submitMealSlotRecipe(e) {
     setStepError('msdRecipeError', 'Personenzahl muss eine ganze Zahl zwischen 1 und 20 sein.');
     return;
   }
-  const { mi, d } = mealSlotContext;
+  const { mi, d, weekStart, isNextWeek } = mealSlotContext;
   const recipeId = Number(mealSlotRecipe.recipe.id);
   const wantedInList = mealSlotRecipe.ingredients
     .map((ing, ii) => ({ ing, ii }))
@@ -1658,23 +1865,32 @@ async function submitMealSlotRecipe(e) {
 
   $('#msdRecipeSubmit').disabled = true;
   try {
-    // Erst lokale, noch ungespeicherte Aenderungen sichern, bevor der Server die komplette Woche
-    // zurueckschreibt.
+    // Erst lokale, noch ungespeicherte Aenderungen der AKTUELL GELADENEN Woche sichern, bevor der
+    // Server eine komplette Woche zurueckschreibt -- betrifft state.data unabhaengig davon, in
+    // welche Woche gerade zugewiesen wird (der Dialog ist modal, eine gleichzeitige Bearbeitung
+    // "nebenbei" ist strukturell ausgeschlossen).
     syncFromDOM();
     if (state.dirty) await save();
 
-    const res = await api('POST', `/api/weeks/${state.weekStart}/assign-recipe`, { recipeId, dayIndex: d, slotIndex: mi, servings });
+    // AP2: targetWeekStart (== state.weekStart im Normalfall, == weekStart der Vorschau bei einer
+    // Zuweisung in die naechste Woche) analog AP0s Erweiterung von add-ingredient-to-list.
+    const res = await api('POST', `/api/weeks/${state.weekStart}/assign-recipe`,
+      { recipeId, dayIndex: d, slotIndex: mi, servings, targetWeekStart: weekStart });
 
-    // AP1.2: manuelle Mengen-/Einheit-Korrekturen aus der Wizard-Vorschau auf den soeben vom
-    // Server berechneten/gespeicherten Token uebertragen -- gleiches Prinzip wie die bereits
-    // bestehende Nachbearbeitung (F6), hier nur direkt im Wizard statt erst danach ueber einen
-    // erneuten Dialog-Aufruf (openMealSlotRecipeCell()). placedToken ist eine Referenz IN res.data
-    // (kein Klon) --
-    // die Mutation wirkt sich damit automatisch auf state.data aus, sobald es unten zugewiesen wird.
     const placedRow = res.data.rows.find(r => r.mode === 'week');
     const placedToken = placedRow?.meals?.[mi]?.cells?.[d]?.find(t => t.t === 'recipe');
     let overridden = false;
-    if (placedToken && mealSlotRecipe.ingredients.length === placedToken.ingredients.length) {
+    // AP1.2: manuelle Mengen-/Einheit-Korrekturen aus der Wizard-Vorschau auf den soeben vom
+    // Server berechneten/gespeicherten Token uebertragen -- gleiches Prinzip wie die bereits
+    // bestehende Nachbearbeitung (F6). placedToken ist eine Referenz IN res.data (kein Klon).
+    // AP2-Einschraenkung (bewusst, siehe Ruecklauf an ANORAK): NUR fuer die aktuell geladene Woche,
+    // wo die Korrektur ueber den normalen Autosave von state.data dauerhaft gespeichert wird (siehe
+    // markDirty() unten). Fuer die naechste Woche gibt es bewusst KEINEN eigenen Persistenz-Pfad
+    // fuer einen manuell korrigierten Rezept-Token (set-meal-cell lehnt 'recipe'-Tokens bewusst ab,
+    // siehe server.js) -- eine manuelle Korrektur bleibt dort trotzdem jederzeit ueber erneutes
+    // Oeffnen dieser Zelle (openMealSlotRecipeCell()) nachtraeglich moeglich, sobald sie zugewiesen
+    // ist (dann greift derselbe Mechanismus wie bei der aktuellen Woche).
+    if (!isNextWeek && placedToken && mealSlotRecipe.ingredients.length === placedToken.ingredients.length) {
       placedToken.ingredients.forEach((ing, ii) => {
         const edited = mealSlotRecipe.ingredients[ii];
         if (edited.amount !== ing.amount) { ing.amount = edited.amount; overridden = true; }
@@ -1682,19 +1898,26 @@ async function submitMealSlotRecipe(e) {
       });
     }
 
-    state.data = res.data;
-    clearIngredientListMarksFor(d, mi);
-    state.data.goals = state.data.goals || [];
-    state.data.highlights = state.data.highlights || [];
-    state.data.calls = state.data.calls || [];
-    state.updatedAt = res.updatedAt;
-    state.dirty = false;
-    // Die manuelle Korrektur oben (falls vorhanden) ist noch nicht auf dem Server -- naechster
-    // Autosave (Debounce, wie jede andere Zellenaenderung) nimmt sie mit.
-    if (overridden) markDirty();
+    clearIngredientListMarksFor(weekStart, d, mi);
+    if (isNextWeek) {
+      // MORROWs Kernempfehlung: KEIN state.data/dirty/save-Zyklus fuer die naechste Woche --
+      // stattdessen nur das lokale Vorschau-Objekt aktualisieren und das Panel neu zeichnen.
+      nextWeekMeal = placedRow || null;
+      renderNextWeekPanel();
+    } else {
+      state.data = res.data;
+      state.data.goals = state.data.goals || [];
+      state.data.highlights = state.data.highlights || [];
+      state.data.calls = state.data.calls || [];
+      state.updatedAt = res.updatedAt;
+      state.dirty = false;
+      // Die manuelle Korrektur oben (falls vorhanden) ist noch nicht auf dem Server -- naechster
+      // Autosave (Debounce, wie jede andere Zellenaenderung) nimmt sie mit.
+      if (overridden) markDirty();
+    }
 
     if (wantedInList.length) {
-      mealSlotShoppingQueue = { dayIndex: d, slotIndex: mi, indexes: wantedInList.map(w => w.ii) };
+      mealSlotShoppingQueue = { sourceWeekStart: weekStart, dayIndex: d, slotIndex: mi, indexes: wantedInList.map(w => w.ii) };
       setStepError('msdShopDateError', '');
       const todayIso = isoOf(new Date());
       const dateInput = $('#msdShopDate');
@@ -1704,7 +1927,7 @@ async function submitMealSlotRecipe(e) {
     } else {
       closeMealSlotDialog();
     }
-    flash(`„${res.token.recipeTitle}" wurde ${DAYS[d]} (${res.token.servings} ${res.token.servings === 1 ? 'Person' : 'Personen'}) zugewiesen.`);
+    flash(`„${res.token.recipeTitle}" wurde ${DAYS[d]} (${res.token.servings} ${res.token.servings === 1 ? 'Person' : 'Personen'}) zugewiesen${isNextWeek ? ' (nächste Woche)' : ''}.`);
   } catch (err) {
     setStepError('msdRecipeError', err.message);
   } finally {
@@ -1736,12 +1959,16 @@ async function submitMealSlotShopDate(e) {
   const chosen = parseISO(val);
   const targetWeekStart = isoOf(toMonday(chosen));
   const targetDayIndex = (chosen.getDay() + 6) % 7;
-  const { dayIndex, slotIndex, indexes } = mealSlotShoppingQueue;
+  const { sourceWeekStart, dayIndex, slotIndex, indexes } = mealSlotShoppingQueue;
 
   $('#msdShopDateSubmit').disabled = true;
   try {
+    // AP2: die Zutat-QUELLE (Rezept-Snapshot) liegt in "sourceWeekStart" -- das ist state.weekStart
+    // fuer eine ganz normale Zuweisung, kann aber auch die naechste (Vorschau-)Woche sein, wenn die
+    // Zuweisung gerade dort erfolgt ist (siehe submitMealSlotRecipe()). Nicht zu verwechseln mit
+    // "targetWeekStart" (Ziel der Einkaufsliste, aus dem gewaehlten Datum oben).
     for (const ingredientIndex of indexes) {
-      const res = await api('POST', `/api/weeks/${state.weekStart}/add-ingredient-to-list`,
+      const res = await api('POST', `/api/weeks/${sourceWeekStart}/add-ingredient-to-list`,
         { dayIndex, slotIndex, ingredientIndex, targetDayIndex, targetWeekStart });
       // AP0-Vorgabe: state.data/state.updatedAt nur uebernehmen, wenn die tatsaechlich
       // beschriebene Woche der aktuell geladenen entspricht (identische Begruendung wie beim
@@ -1754,7 +1981,7 @@ async function submitMealSlotShopDate(e) {
         state.updatedAt = res.updatedAt;
         state.dirty = false;
       }
-      markIngredientAddedToList(dayIndex, slotIndex, ingredientIndex);
+      markIngredientAddedToList(sourceWeekStart, dayIndex, slotIndex, ingredientIndex);
     }
     mealSlotShoppingQueue = null;
     closeMealSlotDialog();
@@ -1786,22 +2013,26 @@ async function submitMealSlotShopDate(e) {
    (openIngredientToListDialog()/submitIngredientToList()/pendingIngredientToList/
    #ingredientToListDialog, AP4.2) ist ersatzlos entfernt -- der Wizard-eigene, batch-faehige
    Einkaufstag-Schritt (submitMealSlotShopDate()) deckt denselben Bedarf bereits ab, siehe
-   Kommentar bei buildMealSlotRecipeDisplay() oben. ---------------- */
-const addedToListMarks = new Set(); // Keys: "dayIndex:slotIndex:ingredientIndex"
-function ingredientMarkKey(dayIndex, slotIndex, ingredientIndex) {
-  return `${dayIndex}:${slotIndex}:${ingredientIndex}`;
+   Kommentar bei buildMealSlotRecipeDisplay() oben.
+   AP2-Update: Schluessel um "weekStart" erweitert (vorher nur dayIndex:slotIndex:ingredientIndex)
+   -- ohne Wochenbezug wuerde eine Markierung in der aktuellen Woche faelschlich auch fuer eine
+   Zuweisung an derselben Tag/Mahlzeit/Zutat-Position in der naechsten Woche (oder umgekehrt)
+   gelten, obwohl es zwei voellig unabhaengige Zuweisungen sind. ---------------- */
+const addedToListMarks = new Set(); // Keys: "weekStart:dayIndex:slotIndex:ingredientIndex"
+function ingredientMarkKey(weekStart, dayIndex, slotIndex, ingredientIndex) {
+  return `${weekStart}:${dayIndex}:${slotIndex}:${ingredientIndex}`;
 }
-function isIngredientMarkedAddedToList(dayIndex, slotIndex, ingredientIndex) {
-  return addedToListMarks.has(ingredientMarkKey(dayIndex, slotIndex, ingredientIndex));
+function isIngredientMarkedAddedToList(weekStart, dayIndex, slotIndex, ingredientIndex) {
+  return addedToListMarks.has(ingredientMarkKey(weekStart, dayIndex, slotIndex, ingredientIndex));
 }
-function markIngredientAddedToList(dayIndex, slotIndex, ingredientIndex) {
-  addedToListMarks.add(ingredientMarkKey(dayIndex, slotIndex, ingredientIndex));
+function markIngredientAddedToList(weekStart, dayIndex, slotIndex, ingredientIndex) {
+  addedToListMarks.add(ingredientMarkKey(weekStart, dayIndex, slotIndex, ingredientIndex));
 }
 // Wird gerufen, sobald der Zelleninhalt einer Zuweisung sich aendert (neues Rezept zugewiesen
 // oder Zuweisung entfernt) -- die bisherigen ingredientIndex-basierten Markierungen wuerden sonst
 // auf voellig andere Zutaten eines neuen Snapshots zeigen.
-function clearIngredientListMarksFor(dayIndex, slotIndex) {
-  const prefix = `${dayIndex}:${slotIndex}:`;
+function clearIngredientListMarksFor(weekStart, dayIndex, slotIndex) {
+  const prefix = `${weekStart}:${dayIndex}:${slotIndex}:`;
   Array.from(addedToListMarks).forEach(key => { if (key.startsWith(prefix)) addedToListMarks.delete(key); });
 }
 
@@ -1940,7 +2171,11 @@ async function boot() {
   $('#msdRecipeDetailBack').onclick = () => {
     mealSlotRecipe = null;
     if (mealSlotEditingRecipeCell && mealSlotContext) {
-      primeMealSlotOptionsStep(mealSlotContext.meal, mealSlotContext.mi, mealSlotContext.d);
+      // AP2: weekStart/isNextWeek des BISHERIGEN Kontexts explizit mitgeben -- ohne weekCtx
+      // wuerde primeMealSlotOptionsStep() auf state.weekStart/isNextWeek:false zurueckfallen und
+      // damit bei einer Zelle der naechsten Woche faelschlich in die aktuelle Woche "zurueckspringen".
+      const { meal, mi, d, weekStart, isNextWeek } = mealSlotContext;
+      primeMealSlotOptionsStep(meal, mi, d, { weekStart, isNextWeek });
     } else {
       mealSlotShowStep('msdStepRecipePick');
     }
@@ -1950,14 +2185,10 @@ async function boot() {
   // handleMealSlotOption()) -- entspricht dem frueheren Entfernen-Button direkt in der Zelle
   // (buildRecipeAssignToken(), jetzt entfernt). Nur sichtbar, wenn eine bereits bestehende
   // Zuweisung bearbeitet wird (siehe openMealSlotRecipeCell()/openMealSlotRecipeDetail()).
-  $('#msdRecipeRemove').onclick = () => {
-    if (!mealSlotContext) return;
-    const { meal, mi, d } = mealSlotContext;
-    meal.cells[d] = [];
-    clearIngredientListMarksFor(d, mi);
-    markDirty();
-    closeMealSlotDialog();
-  };
+  // AP2: applyMealSlotTokens([]) statt direkter Mutation -- dieselbe Funktion, die auch die 4
+  // einfachen Optionen nutzen, damit "Entfernen" fuer die naechste Woche automatisch denselben
+  // gezielten set-meal-cell-Schreibpfad nimmt statt state.data/markDirty() zu beruehren.
+  $('#msdRecipeRemove').onclick = () => { applyMealSlotTokens([]); };
   $('#msdRecipeDetailForm').addEventListener('submit', submitMealSlotRecipe);
   $('#msdShopDateForm').addEventListener('submit', submitMealSlotShopDate);
   $('#msdClose').onclick = closeMealSlotDialog;

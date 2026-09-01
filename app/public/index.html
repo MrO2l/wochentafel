@@ -298,11 +298,36 @@
        Erscheinungsbild wie #daynav (.daynav-Klasse wiederverwendet), steuert #mpTable[data-active-day]. -->
   <div class="daynav mp-daynav" id="mpDayNav" aria-label="Tag wählen (Essensplan)"></div>
   <div class="table-responsive">
-    <table class="mp-table" id="mpTable">
+    <table class="mp-table mobile-day-table" id="mpTable">
       <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
       <thead><tr id="mpHeadRow"><th class="corner">Mahlzeit</th></tr></thead>
       <tbody id="mpTableBody"></tbody>
     </table>
+  </div>
+
+  <!-- ================= AP2 (projects/wochenplaner-design-nacharbeiten/plan.md, Stufe 1+2):
+       Read-only-Vorschau der auf die geladene Woche FOLGENDEN Woche, mindestens "Essen & Kochen"
+       (Stufe 1), UND dort gezielt editierbar ueber denselben #mealSlotDialog-Wizard wie oben
+       (Stufe 2, AP1.2/AP1-Korrektur) -- Klick auf eine Zelle hier oeffnet denselben Dialog, aber
+       im "naechste Woche"-Kontext (siehe openMealSlotDialog()/openMealSlotRecipeCell() in app.js,
+       jetzt mit optionalem weekCtx-Parameter). Bewusst OHNE eigenen state.data/dirty/save-Zyklus
+       (MORROWs Kernempfehlung) -- Schreibzugriffe laufen ausschliesslich ueber die gezielten
+       Endpunkte assign-recipe/set-meal-cell (beide mit targetWeekStart, server.js), NICHT ueber
+       PUT /api/weeks/:monday. Eigener, von #mpDayNav/state.mealDay komplett unabhaengiger
+       Mobile-Tagesumschalter (#nextWeekDayNav) -- ".mobile-day-table"-Klasse (statt einer
+       ID-Regel) macht dieselbe CSS-Spaltenausblendung wie bei #mpTable fuer eine ZWEITE,
+       unabhaengige Tabelle nutzbar (siehe style.css). ================= -->
+  <div class="next-week-panel" id="nextWeekPanel">
+    <h2 class="next-week-title">Nächste Woche</h2>
+    <div class="sub" id="nextWeekSub"></div>
+    <div class="daynav mp-daynav" id="nextWeekDayNav" aria-label="Tag wählen (nächste Woche)"></div>
+    <div class="table-responsive">
+      <table class="mp-table mobile-day-table" id="nextWeekTable">
+        <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
+        <thead><tr id="nextWeekHeadRow"><th class="corner">Mahlzeit</th></tr></thead>
+        <tbody id="nextWeekTableBody"></tbody>
+      </table>
+    </div>
   </div>
 </section>
 

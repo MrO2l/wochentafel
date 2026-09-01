@@ -1916,9 +1916,25 @@ app.delete('/api/recipes/:id', requireAuth, rejectForeignHouseholdId, wrap(async
  * die zuletzt committete (FOR UPDATE serialisiert beide Transaktionen strikt
  * nacheinander), ein unkritisches, erwartbares "letzter Drop gewinnt".
  * ------------------------------------------------------------------ */
+// AP2 (projects/wochenplaner-design-nacharbeiten/plan.md), analog zu AP0s Erweiterung von
+// add-ingredient-to-list: optionaler targetWeekStart-Parameter, damit der Essensplan-Dialog (AP1.2)
+// auch fuer die auf state.weekStart FOLGENDE Woche zuweisen kann, ohne dass das Frontend dafuer
+// einen zweiten vollen GET/PUT/baseUpdatedAt-Zyklus fuer diese Woche haelt (MORROWs Kernempfehlung,
+// siehe Ruecklauf an ANORAK). Anders als bei add-ingredient-to-list gibt es hier keine "Quelle" in
+// der URL-Woche zu lesen (das Rezept kommt aus der haushaltsweiten recipes-Tabelle, nicht aus
+// weeks.data) -- deshalb einfacher: bei abweichendem targetWeekStart laufen FOR UPDATE/Vorlagen-
+// Fallback/INSERT ... ON CONFLICT direkt gegen targetWeekStart statt gegen monday, "monday" bleibt
+// nur fuer die URL-/Validierungs-Konsistenz mit den uebrigen Endpunkten erhalten.
 app.post('/api/weeks/:monday/assign-recipe', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
   const monday = req.params.monday;
   if (!isMonday(monday)) return res.status(400).json({ error: 'Datum muss ein Montag im Format JJJJ-MM-TT sein' });
+
+  const targetWeekStart = (req.body?.targetWeekStart != null && req.body.targetWeekStart !== '')
+    ? String(req.body.targetWeekStart)
+    : monday;
+  if (!isMonday(targetWeekStart)) {
+    return res.status(400).json({ error: 'targetWeekStart muss ein Montag im Format JJJJ-MM-TT sein' });
+  }
 
   const recipeId = parseRecipeId(req.body?.recipeId);
   const dayIndex = Number(req.body?.dayIndex);
@@ -1950,10 +1966,11 @@ app.post('/api/weeks/:monday/assign-recipe', requireAuth, rejectForeignHousehold
 
     // FOR UPDATE: serialisiert konkurrierende Zuweisungen/PUTs derselben
     // Woche (siehe Begruendung oben) -- identisches Sperrmuster wie
-    // PUT /api/weeks/:monday.
+    // PUT /api/weeks/:monday. Laeuft gegen targetWeekStart (== monday im Normalfall, siehe
+    // AP2-Kommentar oben).
     const weekQ = await client.query(
       `SELECT data FROM weeks WHERE household_id=$1 AND week_start=$2 FOR UPDATE`,
-      [req.session.householdId, monday]);
+      [req.session.householdId, targetWeekStart]);
 
     let data;
     if (weekQ.rowCount) {
@@ -2000,7 +2017,7 @@ app.post('/api/weeks/:monday/assign-recipe', requireAuth, rejectForeignHousehold
        ON CONFLICT (household_id, week_start)
        DO UPDATE SET data=EXCLUDED.data, updated_by=EXCLUDED.updated_by, updated_at=now()
        RETURNING updated_at AS "updatedAt"`,
-      [req.session.householdId, monday, data, req.session.userId]);
+      [req.session.householdId, targetWeekStart, data, req.session.userId]);
 
     return { ok: true, token, data, updatedAt: saved.rows[0].updatedAt };
   });
@@ -2009,8 +2026,91 @@ app.post('/api/weeks/:monday/assign-recipe', requireAuth, rejectForeignHousehold
   if (result.error === 'meal_row_missing') return res.status(409).json({ error: '"Essen & Kochen"-Zeile in dieser Woche nicht gefunden' });
 
   res.json({
-    ok: true, weekStart: monday, dayIndex, slotIndex,
+    ok: true, weekStart: monday, targetWeekStart, dayIndex, slotIndex,
     token: result.token, data: result.data, updatedAt: result.updatedAt
+  });
+}));
+
+/* ------------------------------------------------------------------ *
+ * AP2 (projects/wochenplaner-design-nacharbeiten/plan.md, Stufe 2): gezielter Schreibpfad fuer
+ * die 4 "einfachen" Essensplan-Dialog-Optionen (Freitext/Außerhalb/Reste/Nicht geplant, AP1.2) --
+ * schreibt GENAU EINE Mahlzeiten-Zelle, exakt nach demselben FOR-UPDATE-/Vorlagen-Fallback-/
+ * INSERT-ON-CONFLICT-Muster wie assign-recipe/add-ingredient-to-list oben, statt dass das Frontend
+ * dafuer den vollen PUT /api/weeks/:monday-Zyklus (kompletter State + baseUpdatedAt-Konflikt-
+ * pruefung) fuer eine zweite, nicht geladene Woche haelt (MORROWs Kernempfehlung). Fuer die
+ * AKTUELL GELADENE Woche (targetWeekStart === state.weekStart im Frontend) bleibt der bisherige
+ * Weg unveraendert bestehen (direkte state.data-Mutation + markDirty()/Autosave, siehe app.js) --
+ * dieser Endpunkt wird vom Frontend ausschliesslich fuer die FOLGENDE, nicht geladene Woche
+ * genutzt (AP2), ist aber bewusst generisch (kein AP2-Sonderfall im Code) und funktioniert fuer
+ * jede Woche.
+ *
+ * Bewusst OHNE "allowRecipe" bei cleanTokens(): ein 'recipe'-Token darf ausschliesslich ueber
+ * assign-recipe entstehen (dort serverseitig aus recipes/recipeId+servings berechnet, inkl.
+ * Mengen-Skalierung) -- ein Client, der versucht, hier direkt einen {t:'recipe',...}-Token
+ * einzuschleusen, wuerde ihn durch cleanTokens() ohne allowRecipe stillschweigend verwerfen (wie
+ * jeden anderen unbekannten Token-Typ), analog zur bestehenden Absicherung in cleanTokens() selbst.
+ * ------------------------------------------------------------------ */
+app.post('/api/weeks/:monday/set-meal-cell', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const monday = req.params.monday;
+  if (!isMonday(monday)) return res.status(400).json({ error: 'Datum muss ein Montag im Format JJJJ-MM-TT sein' });
+
+  const targetWeekStart = (req.body?.targetWeekStart != null && req.body.targetWeekStart !== '')
+    ? String(req.body.targetWeekStart)
+    : monday;
+  if (!isMonday(targetWeekStart)) {
+    return res.status(400).json({ error: 'targetWeekStart muss ein Montag im Format JJJJ-MM-TT sein' });
+  }
+
+  const dayIndex = Number(req.body?.dayIndex);
+  const slotIndex = Number(req.body?.slotIndex);
+  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 6) {
+    return res.status(400).json({ error: 'dayIndex muss eine Ganzzahl zwischen 0 und 6 sein (0=Montag ... 6=Sonntag)' });
+  }
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= MEAL_LABELS.length) {
+    return res.status(400).json({ error: `slotIndex muss eine Ganzzahl zwischen 0 und ${MEAL_LABELS.length - 1} sein (Reihenfolge: ${MEAL_LABELS.join(', ')})` });
+  }
+  const tokens = cleanTokens(req.body?.tokens); // kein allowRecipe, siehe Kommentar oben
+
+  const result = await withTenantClient(req.session.householdId, async client => {
+    const weekQ = await client.query(
+      `SELECT data FROM weeks WHERE household_id=$1 AND week_start=$2 FOR UPDATE`,
+      [req.session.householdId, targetWeekStart]);
+
+    let data;
+    if (weekQ.rowCount) {
+      data = cleanWeek(migrateLegacyWeek(weekQ.rows[0].data));
+    } else {
+      // Noch keine Woche unter diesem Datum angelegt: identischer Vorlagen-Fallback wie bei
+      // assign-recipe/GET /api/weeks/:monday.
+      const t = await client.query('SELECT template_data FROM households WHERE id=$1', [req.session.householdId]);
+      const template = t.rows[0]?.template_data ? migrateLegacyWeek(t.rows[0].template_data) : null;
+      data = cleanWeek(template ? mergeTemplate(structuredClone(template), defaultWeek()) : defaultWeek());
+    }
+
+    const mealRow = data.rows.find(r => r && r.kind === 'shared' && r.mode === 'week');
+    if (!mealRow) return { error: 'meal_row_missing' };
+
+    // Ersetzt den kompletten bisherigen Zelleninhalt (leeres Array raeumt die Zelle) -- identisches
+    // Verhalten zu assign-recipe/den 4 einfachen Dialog-Optionen im Frontend (app.js,
+    // handleMealSlotOption()/submitMealSlotText()).
+    mealRow.meals[slotIndex].cells[dayIndex] = tokens;
+
+    const saved = await client.query(
+      `INSERT INTO weeks(household_id, week_start, data, updated_by)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (household_id, week_start)
+       DO UPDATE SET data=EXCLUDED.data, updated_by=EXCLUDED.updated_by, updated_at=now()
+       RETURNING updated_at AS "updatedAt"`,
+      [req.session.householdId, targetWeekStart, data, req.session.userId]);
+
+    return { ok: true, data, updatedAt: saved.rows[0].updatedAt };
+  });
+
+  if (result.error === 'meal_row_missing') return res.status(409).json({ error: '"Essen & Kochen"-Zeile in dieser Woche nicht gefunden' });
+
+  res.json({
+    ok: true, weekStart: monday, targetWeekStart, dayIndex, slotIndex,
+    data: result.data, updatedAt: result.updatedAt
   });
 }));
 
