@@ -318,41 +318,21 @@
   <div class="view-header d-flex align-items-start justify-content-between flex-wrap gap-2">
     <div>
       <h1 id="rz-h1"><i class="bi bi-journal-richtext" aria-hidden="true"></i> Rezeptkarten</h1>
-      <p class="view-lead">Wiederverwendbare Rezepte mit Zutatenliste (bezogen auf eine Referenz-Personenzahl) und Zubereitung — künftig per Ziehen auf einen Tag im Essensplan einsetzbar.</p>
+      <p class="view-lead">Wiederverwendbare Rezepte mit Zutatenliste (bezogen auf eine Referenz-Personenzahl) und Zubereitung — im Essensplan-Dialog eines Tages einsetzbar (Essen &amp; Kochen).</p>
     </div>
     <button type="button" class="btn btn-primary" id="btnRecipeNew"><i class="bi bi-plus-lg" aria-hidden="true"></i> Neues Rezept</button>
   </div>
   <div id="recipeCards" class="row row-cols-2 row-cols-sm-3 row-cols-lg-4 g-3"></div>
 
-  <!-- ================= AP3.2 (projects/wochenplaner-rezeptkarten/plan.md): kompakte
-       Wochenzuweisungs-Tabelle fuer die aktuell in der Werkzeugleiste geladene Woche
-       (state.weekStart). Architektur-Begruendung (siehe Rueckmeldung an ANORAK): natives HTML5
-       Drag&Drop verlangt, dass Drag-Quelle (Rezeptkarte, oben, data-recipe-id aus AP2.2) und
-       Drop-Ziel GLEICHZEITIG sichtbar und interaktiv sind. Die bestehende Essensplan-Tabelle lag
-       urspruenglich entweder in einem modalen <dialog> (#mealplan, machte per Spezifikation den
-       Rest der Seite inert -- ein dragstart ausserhalb waere dort gar nicht moeglich) oder in
-       einer per .app-view/display:none umgeschalteten eigenen Ansicht (#view-essen) -- in beiden
-       Faellen waren Rezeptkarte und Zielzelle nie gleichzeitig erreichbar. Deshalb bekam die
-       Rezeptkarten-Ansicht diese zusaetzliche, kompakte Tabelle.
-       AP1.1-Update: #mealplan (das <dialog>-Overlay) ist inzwischen entfallen, die Essensplan-
-       Tabelle liegt jetzt permanent in #view-essen -- der zweite der beiden oben genannten Faelle
-       gilt damit unveraendert weiter (zwei verschiedene .app-view-Ansichten sind nie gleichzeitig
-       sichtbar), die Begruendung fuer diese zusaetzliche Tabelle bleibt also bestehen. Das
-       endgueltige Schicksal von #recipeAssignTable (voraussichtlich ersatzlose Entfernung, siehe
-       plan.md) ist AP1.4 vorbehalten, bewusst NICHT Teil von AP1.1.
-       .mealplan-skeleton (style-v2.css) war bereits als bislang ungenutzte Kopf-/Label-Optik im
-       neuen Taupe-Design vorbereitet -- hier erstmals mit echtem Inhalt befuellt. ================= -->
-  <div class="recipe-assign-wrap mt-4" id="recipeAssignWrap">
-    <h2 class="recipe-assign-title"><i class="bi bi-calendar2-week" aria-hidden="true"></i> Auf die geöffnete Woche ziehen</h2>
-    <p class="view-lead" id="recipeAssignSub">Rezeptkarte oben auf eine Mahlzeit/einen Tag unten ziehen, um sie zuzuweisen.</p>
-    <div class="table-responsive">
-      <table class="mealplan-skeleton recipe-assign-table" id="recipeAssignTable">
-        <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
-        <thead><tr id="recipeAssignHead"><th class="lbl">Mahlzeit</th></tr></thead>
-        <tbody id="recipeAssignBody"></tbody>
-      </table>
-    </div>
-  </div>
+  <!-- ================= AP1.4 (projects/wochenplaner-design-nacharbeiten/plan.md): die vormals
+       hier stehende kompakte Wochenzuweisungs-Tabelle (#recipeAssignWrap/#recipeAssignTable,
+       AP3.2) ist ersatzlos entfernt. Sie existierte ausschliesslich als Drop-Ziel fuer natives
+       HTML5-Drag&Drop (Rezeptkarte oben als Drag-Quelle, gleichzeitig sichtbar noetig -- die
+       permanente Essensplan-Tabelle in #view-essen war/ist eine ANDERE .app-view, nie gleichzeitig
+       sichtbar). Mit dem Zell-Klick-Dialog aus AP1.2 als einzigem Zuweisungsweg entfaellt dieser
+       Grund vollstaendig; die Korrektur-Funktion (buildRecipeAssignToken()) bleibt unveraendert
+       direkt in der #view-essen-Wochentabelle erhalten (seit AP1.1), keine Funktion ging damit
+       verloren. Vom Nutzer explizit bestaetigt. ================= -->
 </section>
 
   </main>
@@ -441,37 +421,14 @@
   </div>
 </dialog>
 
-<!-- ================= AP3.2 (projects/wochenplaner-rezeptkarten/plan.md): Personenzahl-Abfrage
-     nach einem Drag&Drop einer Rezeptkarte auf eine Tag/Slot-Zelle (#recipeAssignTable/#mealplan,
-     app.js). Gleiches natives <dialog>-Muster wie #recipeForm (F3-Wertebereich 1-20, siehe dort)
-     -- bewusst ein eigenes, schlankes Formular statt Wiederverwendung von #recipeForm, da hier
-     nur EIN Feld noetig ist und der Bezug (Rezept -> Zieltag/-slot) sich aus dem vorangegangenen
-     Drop ergibt (siehe pendingAssignment in app.js), nicht aus einem eigenen Rezept-Datensatz. ================= -->
-<dialog class="recipe-form" id="recipeServingsDialog" aria-labelledby="rsdTitle">
-  <div class="recipe-form-head modal-header">
-    <h2 id="rsdTitle" class="font-heading">Personenzahl</h2>
-    <div class="grow"></div>
-    <button type="button" class="btn btn-outline-secondary btn-sm" id="rsdClose" title="Schließen">Schließen</button>
-  </div>
-  <div class="recipe-form-body modal-body">
-    <form id="rsdForm" novalidate>
-      <p class="recipe-servings-summary" id="rsdSummary"></p>
-      <div class="mb-3">
-        <label class="form-label" for="rsdServings">Für wie viele Personen?</label>
-        <input type="number" class="form-control" id="rsdServings" min="1" max="20" step="1" required style="max-width:8rem">
-        <div class="form-text">Ganze Zahl zwischen 1 und 20 — die Zutatenmengen werden automatisch umgerechnet und lassen sich danach weiterhin manuell anpassen.</div>
-      </div>
-      <div class="recipe-form-error" id="rsdError" role="alert" hidden></div>
-      <div class="recipe-form-actions">
-        <button type="submit" class="btn btn-primary" id="rsdSubmit">Zuweisen</button>
-      </div>
-    </form>
-  </div>
-</dialog>
+<!-- ================= AP1.4: #recipeServingsDialog (Personenzahl-Abfrage nach einem Drag&Drop-
+     Drop, siehe Git-Historie) ist mit dem D&D-Rueckbau ersatzlos entfernt -- der einzige
+     verbleibende Zuweisungsweg (Zell-Klick-Dialog, AP1.2) hat sein eigenes Personenzahl-Feld
+     (#msdServings) direkt in #mealSlotDialog, siehe unten. ================= -->
 
 <!-- ================= AP4.2 (projects/wochenplaner-rezeptkarten/plan.md): Tag-Auswahl beim
      Uebernehmen einer einzelnen Zutat auf die Einkaufsliste (Checkbox je Zutatenzeile in
-     buildRecipeAssignToken(), app.js). Gleiches natives <dialog>-Muster wie #recipeServingsDialog
+     buildRecipeAssignToken(), app.js). Gleiches natives <dialog>-Muster wie #recipeForm
      (F2-Entscheidung: Ziel-Wochentag vorbelegt mit dem Zuweisungstag, aber aenderbar) -- eigenes
      schlankes Formular, da hier nur EIN Feld (Ziel-Wochentag) noetig ist und der Bezug (welche
      Zutat aus welcher Zuweisung) sich aus dem vorangegangenen Checkbox-Klick ergibt (siehe

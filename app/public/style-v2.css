@@ -328,8 +328,6 @@ hr, .border, .border-top, .border-bottom, .border-start, .border-end{
   display:inline-block; margin-top:.25rem; font-size:.65rem; font-weight:700; color:#fff;
   background:var(--primary); border-radius:1rem; padding:.05rem .4rem;
 }
-.mealplan-skeleton th, .mealplan-skeleton td{
-  border:1px solid var(--border-color); text-align:center; font-size:.72rem; padding:.5rem .3rem;
-}
-.mealplan-skeleton thead th{ background:var(--secondary); color:var(--primary); font-weight:700 }
-.mealplan-skeleton td.lbl{ background:var(--secondary); font-weight:600; color:var(--primary); text-align:left; padding-left:.6rem }
+/* AP1.4 (projects/wochenplaner-design-nacharbeiten/plan.md): ".mealplan-skeleton" (Kopf-/Label-
+   Optik, urspruenglich fuer die inzwischen ersatzlos entfernte Wochenzuweisungs-Tabelle
+   #recipeAssignTable genutzt, siehe style.css/index.html) ist mit deren Wegfall entfernt. */

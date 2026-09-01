@@ -421,7 +421,7 @@ function renderDay() {
 }
 
 function activeContainer() { return state.view === 'sheet' ? $('.stage') : $('#dayview'); }
-function renderAll() { renderSheet(); renderDay(); renderShoppingView(); renderMealPlanEntry(); renderFocusBlocks(); renderRecipeAssignGrid(); }
+function renderAll() { renderSheet(); renderDay(); renderShoppingView(); renderMealPlanEntry(); renderFocusBlocks(); }
 
 /* ---------------- AP3.3: Fokusbloecke "Wochenziele" / "Besonders diese Woche" /
    "Anrufen/Kontaktieren" (Datenmodell-Fokusbloecke-v2.md). Anders als die Tokenzellen im
@@ -436,13 +436,9 @@ const FOCUS_LIMITS = { goals: 12, highlights: 8, calls: 20 }; // siehe LIMITS in
 // Bild/eine zu lange Zutatenliste nicht erst nach einem Roundtrip zum Server auffaellt. Die
 // eigentliche, verbindliche Pruefung bleibt serverseitig (cleanIngredients()/multer-Limit).
 const RECIPE_LIMITS = { ingredients: 60, imageMaxBytes: 5 * 1024 * 1024 };
-// AP3.2: eigener, custom MIME-Typ als Traeger der Rezept-ID waehrend eines nativen HTML5-Drags
-// (siehe renderRecipesView()/registerAssignDropTarget() unten) -- 'text/plain' waere ebenfalls
-// moeglich, wuerde aber unspezifisch mit JEDEM Drop-Ziel interagieren (z. B. Texteingabefeldern),
-// das zufaellig Text-Drops akzeptiert. Der eigene Typ macht "das ist eine Wochenplaner-Rezept-ID"
-// explizit und laesst sich in dragover bereits ueber dataTransfer.types pruefen (getData() selbst
-// ist waehrend dragover aus Sicherheitsgruenden nicht lesbar, types schon).
-const RECIPE_DRAG_MIME = 'application/x-wochenplaner-recipe-id';
+// AP1.4: RECIPE_DRAG_MIME (eigener MIME-Typ fuer die frühere Drag&Drop-Zuweisung) ist mit dem
+// D&D-Rueckbau entfallen -- die Zuweisung laeuft seit AP1.2 ausschliesslich ueber den
+// Zell-Klick-Dialog (openMealSlotDialog()/submitMealSlotRecipe()).
 
 /* "Wochenziele" (nummeriert, Checkbox links) und "Anrufen/Kontaktieren" (Checkbox rechts):
    Text wird wie bei der Tagesliste (renderItemsList() oben) nur beim Hinzufuegen erfasst und
@@ -659,26 +655,11 @@ function renderRecipesView() {
     col.className = 'col';
     const card = document.createElement('div');
     card.className = 'card recipe-card h-100';
-    // AP3.2: Drag-Quelle fuer die Essensplan-Zuweisung (data-recipe-id wurde bereits in AP2.2
-    // dafuer vorbereitet). draggable="true" auf der ganzen Karte, nicht nur auf einem Teilbereich
-    // -- die Karte enthaelt zwar auch Buttons (Bearbeiten/Loeschen), ein Mausklick DARAUF loest
-    // trotzdem normal deren click-Handler aus (kein Konflikt: draggable startet einen Drag erst
-    // bei tatsaechlicher Zugbewegung, ein reiner Klick bleibt ein Klick).
-    card.dataset.recipeId = r.id;
-    card.draggable = true;
-    card.addEventListener('dragstart', e => {
-      e.dataTransfer.setData(RECIPE_DRAG_MIME, String(r.id));
-      e.dataTransfer.effectAllowed = 'copy';
-      card.classList.add('dragging');
-    });
-    card.addEventListener('dragend', () => card.classList.remove('dragging'));
 
     if (r.imagePath) {
       const img = document.createElement('img');
       img.className = 'recipe-card-img';
       img.alt = '';
-      img.draggable = false; // sonst startet der Browser bei einem Ziehen auf dem Bild selbst
-                              // dessen EIGENEN nativen Bild-Drag statt des Karten-dragstart oben
       // Cache-Buster ueber updatedAt statt Date.now(): dieselbe URL (nach Rezept-ID, nicht nach
       // Dateiname) koennte sonst nach einem Bild-Austausch (PUT) eine veraltete, gecachte Antwort
       // liefern, obwohl sich der zugrunde liegende image_path geaendert hat.
@@ -1300,10 +1281,10 @@ function renderMealDayNav() {
 // Aenderungen an tok.ingredients[i].amount/.unit wirken sich damit direkt auf state.data aus,
 // ganz ohne Sync-Schritt, und werden ueber die bestehende markDirty()/save()-Kette (PUT
 // /api/weeks/:monday) wie jede andere Zellenaenderung gespeichert (F6: nach der Zuweisung ganz
-// normal weiter editierbar). Wird sowohl von der kompakten Wochenzuweisungs-Tabelle
-// (#recipeAssignTable) als auch vom vollstaendigen Essensplan-Overlay (#mealplan) verwendet,
-// damit eine Mengenkorrektur an beiden Stellen gleichermassen moeglich ist und sofort ueberall
-// sichtbar wird (renderAll() zeichnet ohnehin beide neu).
+// normal weiter editierbar). AP1.4: die vormals ZWEITE Verwendungsstelle (die kompakte
+// Wochenzuweisungs-Tabelle #recipeAssignTable) ist mit dem D&D-Rueckbau entfallen -- diese
+// Funktion wird seither ausschliesslich von der permanenten Essensplan-Tabelle (#view-essen,
+// renderMealPlanBody()) genutzt.
 function buildRecipeAssignToken(meal, mi, d, tok) {
   const box = document.createElement('div');
   box.className = 'recipe-assign-token';
@@ -1460,13 +1441,12 @@ function initMealPlanToolbar() {
    Dialogtyp. 4 der 5 Optionen (Freitext/Außerhalb/Reste/Nicht geplant) schreiben direkt in
    state.data + markDirty() und schliessen sofort -- dieselbe Debounce-/Speicherkette wie jede
    andere Zellenaenderung, kein eigener API-Aufruf noetig. Nur "Rezeptkarte" braucht Serverkontakt
-   (POST .../assign-recipe, exakt dieselbe Route/Skalierungslogik wie handleRecipeDrop()/
-   submitRecipeServings() oben -- Drag&Drop selbst faellt erst mit AP1.4 weg, die Backend-Logik
-   bleibt unveraendert bestehen) sowie optional POST .../add-ingredient-to-list (AP4.1, um AP0s
-   targetWeekStart erweitert). ================= */
+   (POST .../assign-recipe -- dieselbe Route/Skalierungslogik, die bis AP1.4 auch vom inzwischen
+   zurueckgebauten Drag&Drop-Pfad genutzt wurde, Backend-Logik unveraendert) sowie optional POST
+   .../add-ingredient-to-list (AP4.1, um AP0s targetWeekStart erweitert). ================= */
 
 // Kontext, welche Zelle der Dialog gerade bearbeitet -- gesetzt beim Oeffnen, zurueckgesetzt im
-// "close"-Handler (siehe boot()), analog zu pendingAssignment/pendingIngredientToList oben.
+// "close"-Handler (siehe boot()), analog zu pendingIngredientToList unten.
 let mealSlotContext = null; // {meal, mi, d} oder null
 // Waehrend Schritt "Rezeptdetails": das per GET /api/recipes/:id geladene Volldetail-Rezept plus
 // die aktuell angezeigte (automatisch skalierte, ggf. manuell ueberschriebene) Zutatenliste.
@@ -1622,7 +1602,8 @@ async function openMealSlotRecipeDetail(recipeOverview) {
     mealSlotRecipe = { recipe, ingredients: [] };
     renderMealSlotIngredients(recipe, recipe.baseServings);
     $('#msdInstructions').textContent = recipe.instructions || '(keine Zubereitungshinweise hinterlegt)';
-    // Fokus auf die Personenzahl, analog handleRecipeDrop() oben (dortselbe Feld-Funktion).
+    // Fokus auf die Personenzahl -- gleiches Prinzip wie beim (mit AP1.4 entfallenen) frueheren
+    // Drag&Drop-Personenzahl-Dialog (siehe Git-Historie).
     $('#msdServings').focus();
     $('#msdServings').select();
   } catch (err) {
@@ -1648,7 +1629,7 @@ async function submitMealSlotRecipe(e) {
 
   $('#msdRecipeSubmit').disabled = true;
   try {
-    // Gleiche Vorsichtsmassnahme wie submitRecipeServings()/submitIngredientToList() oben: erst
+    // Gleiche Vorsichtsmassnahme wie submitIngredientToList() unten: erst
     // lokale, noch ungespeicherte Aenderungen sichern, bevor der Server die komplette Woche
     // zurueckschreibt.
     syncFromDOM();
@@ -1755,203 +1736,15 @@ async function submitMealSlotShopDate(e) {
   }
 }
 
-/* ---------------- AP3.2: kompakte Wochenzuweisungs-Tabelle (#recipeAssignTable) in der
-   Rezeptkarten-Ansicht -- Drop-Ziel fuer alle 7 Tage x 4 Mahlzeiten der aktuell geladenen Woche
-   (state.weekStart), aus genau demselben Grund wie in index.html/style.css dokumentiert: die
-   Essensplan-Tabelle selbst ist entweder modal (#mealplan, macht den Rest der Seite inert) oder
-   in einer anderen, per display:none umgeschalteten Ansicht (#view-essen) -- Drag-Quelle
-   (Rezeptkarte) und Drop-Ziel muessen fuer natives HTML5-Drag&Drop aber gleichzeitig sichtbar
-   sein. Wird wie renderSheet()/renderMealPlanEntry() bei jeder Datenaenderung ueber renderAll()
-   neu gezeichnet. ---------------- */
-function renderRecipeAssignHead() {
-  const headRow = $('#recipeAssignHead');
-  if (!headRow) return;
-  headRow.querySelectorAll('th:not(.lbl)').forEach(th => th.remove());
-  const todayIdx = todayColumnIndex();
-  DAYS.forEach((name, i) => {
-    const d = parseISO(state.weekStart); d.setDate(d.getDate() + i);
-    const th = document.createElement('th');
-    if (i === todayIdx) th.className = 'today';
-    th.innerHTML = `<span class="dw"></span><span class="dt"></span>`;
-    th.querySelector('.dw').textContent = DAYS_S[i];
-    th.querySelector('.dt').textContent = fmtShort(d);
-    headRow.appendChild(th);
-  });
-}
-
-// Zelleninhalt der kompakten Tabelle: strukturierte Rezept-Zuweisung (wiederverwendet
-// buildRecipeAssignToken() 1:1, siehe dort), sonst ein reiner Lesetext bereits vorhandener
-// Freitext-/Icon-Eintraege (Bearbeiten bleibt Aufgabe des #mealplan-Overlays, diese Tabelle ist
-// in erster Linie das Drop-Ziel), oder ein Leer-Hinweis.
-function buildAssignCellContent(meal, mi, d) {
-  const wrap = document.createElement('div');
-  const tokens = meal.cells[d] || [];
-  const recipeTok = tokens.find(t => t && t.t === 'recipe');
-  if (recipeTok) {
-    wrap.appendChild(buildRecipeAssignToken(meal, mi, d, recipeTok));
-  } else if (tokens.length) {
-    const p = document.createElement('div');
-    p.className = 'recipe-assign-freetext';
-    p.textContent = tokensText(tokens);
-    wrap.appendChild(p);
-  } else {
-    const empty = document.createElement('div');
-    empty.className = 'recipe-assign-empty';
-    empty.textContent = 'Leer';
-    wrap.appendChild(empty);
-  }
-  return wrap;
-}
-
-// Traegt waehrend eines Drags die vom Browser (noch) nicht per getData() lesbare Rezept-ID im
-// dragover-Handler nur ueber dataTransfer.types (siehe RECIPE_DRAG_MIME-Kommentar oben); erst im
-// drop-Handler selbst ist getData() erlaubt.
-function recipeIdFromDrag(e) {
-  return Number(e.dataTransfer.getData(RECIPE_DRAG_MIME));
-}
-
-function registerAssignDropTarget(td, meal, mi, d) {
-  td.addEventListener('dragover', e => {
-    if (!e.dataTransfer.types.includes(RECIPE_DRAG_MIME)) return; // fremder Drag (z. B. Text/Datei) -- kein Drop-Ziel
-    e.preventDefault(); // noetig, damit der Browser 'drop' ueberhaupt feuert
-    e.dataTransfer.dropEffect = 'copy';
-    td.classList.add('drag-over');
-  });
-  td.addEventListener('dragleave', () => td.classList.remove('drag-over'));
-  td.addEventListener('drop', e => {
-    e.preventDefault();
-    td.classList.remove('drag-over');
-    const recipeId = recipeIdFromDrag(e);
-    if (!Number.isInteger(recipeId) || recipeId < 1) return;
-    handleRecipeDrop(recipeId, mi, d, meal);
-  });
-}
-
-function renderRecipeAssignBody(row) {
-  const tbody = $('#recipeAssignBody');
-  tbody.textContent = '';
-  const todayIdx = todayColumnIndex();
-  row.meals.forEach((meal, mi) => {
-    const tr = document.createElement('tr');
-    const tdLbl = document.createElement('td');
-    tdLbl.className = 'lbl';
-    tdLbl.textContent = meal.label;
-    tr.appendChild(tdLbl);
-    for (let d = 0; d < 7; d++) {
-      const td = document.createElement('td');
-      td.className = 'recipe-assign-cell' + (d === todayIdx ? ' today' : '');
-      td.appendChild(buildAssignCellContent(meal, mi, d));
-      registerAssignDropTarget(td, meal, mi, d);
-      tr.appendChild(td);
-    }
-    tbody.appendChild(tr);
-  });
-}
-
-function renderRecipeAssignGrid() {
-  const wrap = $('#recipeAssignWrap');
-  if (!wrap || !state.data) return;
-  const row = state.data.rows.find(r => r.mode === 'week');
-  const sub = $('#recipeAssignSub');
-  if (sub) {
-    const mon = parseISO(state.weekStart);
-    sub.textContent = row
-      ? `Woche ab ${mon.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' })} — Rezeptkarte oben auf eine Mahlzeit/einen Tag unten ziehen, um sie zuzuweisen.`
-      : 'Für diese Woche ist aktuell keine Essensplan-Zeile angelegt.';
-  }
-  if (!row) { $('#recipeAssignBody').textContent = ''; $('#recipeAssignHead').querySelectorAll('th:not(.lbl)').forEach(th => th.remove()); return; }
-  renderRecipeAssignHead();
-  renderRecipeAssignBody(row);
-}
-
-/* ---------------- AP3.2: Personenzahl-Dialog (#recipeServingsDialog) nach einem Drop, danach
-   POST /api/weeks/:monday/assign-recipe. pendingAssignment merkt sich Rezept + Zieltag/-slot
-   zwischen Drop und Formular-Absenden (der Dialog selbst kennt beides nicht). ---------------- */
-let pendingAssignment = null; // {recipeId, dayIndex, slotIndex} oder null
-
-function showRecipeServingsError(text) {
-  const el = $('#rsdError');
-  el.textContent = text;
-  el.hidden = !text;
-}
-
-function closeRecipeServingsDialog() {
-  $('#recipeServingsDialog').close();
-  pendingAssignment = null;
-}
-
-async function handleRecipeDrop(recipeId, slotIndex, dayIndex, meal) {
-  // Number(r.id): recipes.id ist bigint -- node-postgres liefert bigint-Spalten grundsaetzlich
-  // als String (siehe GET /api/recipes in server.js, identischer Kommentar bei assign-recipe
-  // dort), waehrend recipeId hier bereits ueber recipeIdFromDrag()/Number() eine echte Zahl ist.
-  // Ohne diese Umwandlung wuerde ein strikter ===-Vergleich (String "3" !== Zahl 3) JEDES
-  // Rezept faelschlich als "nicht gefunden" melden.
-  const recipe = state.recipes.find(r => Number(r.id) === recipeId);
-  if (!recipe) { flash('Dieses Rezept konnte nicht gefunden werden (evtl. zwischenzeitlich gelöscht).'); return; }
-
-  // Zielzelle bereits belegt (Freitext ODER eine vorherige Rezept-Zuweisung)? Der Server ersetzt
-  // den kompletten Zelleninhalt (siehe Kommentar bei assign-recipe in server.js) -- deshalb hier
-  // VOR dem Request nachfragen, analog zum bestehenden Bestaetigungsmuster der App (z. B.
-  // Zeile-entfernen/Rezept-loeschen oben, jeweils window.confirm()).
-  const existing = meal.cells[dayIndex] || [];
-  if (existing.length && !confirm('Bestehender Inhalt wird ersetzt — fortfahren?')) return;
-
-  pendingAssignment = { recipeId, dayIndex, slotIndex };
-  showRecipeServingsError('');
-  $('#rsdSummary').textContent = `„${recipe.title}" → ${meal.label}, ${DAYS[dayIndex]}`;
-  $('#rsdServings').value = recipe.baseServings;
-  $('#recipeServingsDialog').showModal();
-  $('#rsdServings').focus();
-  $('#rsdServings').select();
-}
-
-async function submitRecipeServings(e) {
-  e.preventDefault();
-  showRecipeServingsError('');
-  if (!pendingAssignment) return;
-
-  // F3-Wertebereich (1-20), identische Regel wie im Rezeptkarten-Formular (siehe
-  // submitRecipeForm()) und serverseitig in server.js.
-  const servings = Number($('#rsdServings').value);
-  if (!Number.isInteger(servings) || servings < 1 || servings > 20) {
-    showRecipeServingsError('Personenzahl muss eine ganze Zahl zwischen 1 und 20 sein.');
-    return;
-  }
-
-  const { recipeId, dayIndex, slotIndex } = pendingAssignment;
-  $('#rsdSubmit').disabled = true;
-  try {
-    // Erst lokale, noch ungespeicherte Aenderungen sichern: der Zuweisungs-Endpunkt liest den
-    // aktuellen DB-Stand (nicht das im Browser gehaltene Dokument) und schreibt die komplette
-    // Woche zurueck -- ein noch ungespeichertes Freitext-Edit an einer ANDEREN Zelle wuerde sonst
-    // unbemerkt verworfen, sobald die Server-Antwort state.data ueberschreibt (siehe unten).
-    syncFromDOM();
-    if (state.dirty) await save();
-
-    const res = await api('POST', `/api/weeks/${state.weekStart}/assign-recipe`, { recipeId, dayIndex, slotIndex, servings });
-    state.data = res.data;
-    // AP4.2: eine neue Zuweisung ersetzt den kompletten Zelleninhalt (siehe Bestaetigungsfrage
-    // oben) -- ingredientIndex-basierte "bereits auf Liste uebernommen"-Markierungen der ALTEN
-    // Zuweisung wuerden sonst faelschlich auf Zutaten des NEUEN Rezepts weiterwirken.
-    clearIngredientListMarksFor(dayIndex, slotIndex);
-    // Fokusbloecke (Datenmodell-Fokusbloecke-v2.md): siehe identischer Fallback in loadWeek()/
-    // save() -- falls die zurueckgegebene Woche (theoretisch) noch keine dieser Felder kennt.
-    state.data.goals = state.data.goals || [];
-    state.data.highlights = state.data.highlights || [];
-    state.data.calls = state.data.calls || [];
-    state.updatedAt = res.updatedAt;
-    state.dirty = false;
-
-    closeRecipeServingsDialog();
-    renderAll();
-    setStatus('Gespeichert ' + new Date(res.updatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }), 'saved');
-    flash(`„${res.token.recipeTitle}" wurde ${DAYS[dayIndex]} (${res.token.servings} ${res.token.servings === 1 ? 'Person' : 'Personen'}) zugewiesen.`);
-  } catch (err) {
-    showRecipeServingsError(err.message);
-  } finally {
-    $('#rsdSubmit').disabled = false;
-  }
-}
+// AP1.4: die kompakte Wochenzuweisungs-Tabelle (#recipeAssignTable/#recipeAssignWrap, vormals
+// renderRecipeAssignHead()/buildAssignCellContent()/renderRecipeAssignBody()/
+// renderRecipeAssignGrid()) sowie die Drag&Drop-Zuweisung selbst (recipeIdFromDrag()/
+// registerAssignDropTarget()/handleRecipeDrop()/submitRecipeServings()/#recipeServingsDialog/
+// pendingAssignment) sind ersatzlos entfernt -- siehe Kommentar bei #view-rezepte in index.html.
+// Der Zell-Klick-Dialog aus AP1.2 (openMealSlotDialog()/submitMealSlotRecipe()) ist seither der
+// einzige Zuweisungsweg; buildRecipeAssignToken() (Korrektur bereits zugewiesener Rezepte) bleibt
+// unveraendert bestehen, wird jetzt ausschliesslich von der permanenten #view-essen-Tabelle
+// genutzt.
 
 /* ---------------- AP4.2: Checkbox "auf Einkaufsliste setzen" je Zutatenzeile
    (buildRecipeAssignToken()) + Tag-Auswahl-Dialog (#ingredientToListDialog), danach
@@ -1978,8 +1771,7 @@ function clearIngredientListMarksFor(dayIndex, slotIndex) {
 }
 
 // pendingIngredientToList haelt neben Rezept-Zuweisungs-/Zutat-Indizes auch die auszuloesende
-// Checkbox selbst fest (anders als pendingAssignment oben, das die Servings-Zuweisung nur ueber
-// den Dialog kennt) -- so kann die Checkbox bei einem Abbruch (Schliessen/ESC/Backdrop-Klick)
+// Checkbox selbst fest -- so kann die Checkbox bei einem Abbruch (Schliessen/ESC/Backdrop-Klick)
 // zuverlaessig wieder zurueckgesetzt werden, ohne eine erneute DOM-Suche ueber die Indizes.
 let pendingIngredientToList = null; // {dayIndex, slotIndex, ingredientIndex, checkbox} oder null
 
@@ -2030,7 +1822,7 @@ async function submitIngredientToList(e) {
 
   $('#itlSubmit').disabled = true;
   try {
-    // Gleiche Vorsichtsmassnahme wie in submitRecipeServings(): ungesicherte lokale Aenderungen
+    // Gleiche Vorsichtsmassnahme wie in submitMealSlotRecipe(): ungesicherte lokale Aenderungen
     // (z. B. eine gerade manuell editierte Menge in einer ANDEREN Zelle) zuerst speichern, bevor
     // der Server die komplette Woche zurueckschreibt.
     syncFromDOM();
@@ -2240,16 +2032,12 @@ async function boot() {
   // direkt auf das <dialog>-Element selbst bedeutet "ausserhalb der Karte geklickt").
   $('#recipeForm').addEventListener('click', e => { if (e.target.id === 'recipeForm') $('#recipeForm').close(); });
 
-  // AP3.2: Personenzahl-Dialog nach einem Drag&Drop (siehe handleRecipeDrop()/
-  // submitRecipeServings() oben) -- identisches Schliess-/Backdrop-Muster wie #recipeForm.
-  $('#rsdForm').addEventListener('submit', submitRecipeServings);
-  $('#rsdClose').onclick = closeRecipeServingsDialog;
-  $('#recipeServingsDialog').addEventListener('click', e => { if (e.target.id === 'recipeServingsDialog') closeRecipeServingsDialog(); });
-  $('#recipeServingsDialog').addEventListener('close', () => { pendingAssignment = null; });
+  // AP1.4: #recipeServingsDialog/submitRecipeServings()/handleRecipeDrop() (Drag&Drop-Zuweisung)
+  // sind ersatzlos entfernt -- keine Verdrahtung mehr noetig.
 
   // AP4.2: Tag-Auswahl-Dialog nach Aktivierung einer Zutat-Checkbox (siehe
   // buildRecipeAssignToken()/openIngredientToListDialog()/submitIngredientToList() oben) --
-  // identisches Schliess-/Backdrop-Muster wie #recipeServingsDialog, ergaenzt um den Checkbox-
+  // identisches Schliess-/Backdrop-Muster wie #recipeForm, ergaenzt um den Checkbox-
   // Reset im "close"-Handler: JEDER Schliessweg ausser einem erfolgreichen submitIngredientToList()
   // (das pendingIngredientToList vorher selbst auf null setzt) gilt als Abbruch.
   $('#itlForm').addEventListener('submit', submitIngredientToList);
