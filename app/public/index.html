@@ -498,6 +498,101 @@
   </div>
 </dialog>
 
+<!-- ================= AP1.2 (projects/wochenplaner-design-nacharbeiten/plan.md): Zell-Klick-
+     Dialog fuer einen Essensplan-Slot -- EIN natives <dialog> mit mehreren intern umgeschalteten
+     "Schritten" (".msd-step", per "hidden"-Attribut, siehe app.js mealSlotShowStep()) statt
+     mehrerer Dialogtypen, exakt wie vom Nutzer/A3CH abgestimmt (Begruendung: Konsistenz mit dem
+     app-weiten <dialog>-Muster, siehe plan.md AP1.2-Abschnitt). 4 der 5 Optionen (Freitext/
+     Außerhalb/Reste/Nicht geplant) schliessen sofort nach Auswahl; nur "Rezeptkarte" fuehrt zu
+     weiteren Schritten IM SELBEN Dialog (Rezeptauswahl -> Rezeptdetails+Personenzahl -> optional
+     Einkaufstag). Gleiches "close"-Event-Hook-Muster wie alle uebrigen Overlays der App (app.js,
+     $('#mealSlotDialog').addEventListener('close', ...)) -- deckt jeden Schliessweg (Button/ESC/
+     Backdrop) gleichermassen ab, keine Sync-Luecke. ================= -->
+<dialog class="recipe-form meal-slot-dialog" id="mealSlotDialog" aria-labelledby="msdTitle">
+  <div class="recipe-form-head modal-header">
+    <h2 id="msdTitle" class="font-heading">Essen eintragen</h2>
+    <div class="grow"></div>
+    <button type="button" class="btn btn-outline-secondary btn-sm" id="msdClose" title="Schließen">Schließen</button>
+  </div>
+  <div class="recipe-form-body modal-body">
+    <!-- Schritt 1: die 5 Optionen (immer der Einstiegspunkt). -->
+    <div id="msdStepOptions" class="msd-step">
+      <p class="msd-current" id="msdCurrent" hidden></p>
+      <div class="msd-options">
+        <button type="button" class="btn btn-outline-secondary msd-option" data-option="text">Freitext</button>
+        <button type="button" class="btn btn-outline-secondary msd-option" data-option="recipe">Rezeptkarte</button>
+        <button type="button" class="btn btn-outline-secondary msd-option" data-option="out">Essen außerhalb</button>
+        <button type="button" class="btn btn-outline-secondary msd-option" data-option="leftover">Reste vom Vortag</button>
+        <button type="button" class="btn btn-outline-secondary msd-option" data-option="none">Nicht geplant</button>
+      </div>
+    </div>
+
+    <!-- Schritt "Freitext": einziges Feld, direkt speichern (kein Zwischenschritt). -->
+    <div id="msdStepText" class="msd-step" hidden>
+      <form id="msdTextForm" novalidate>
+        <div class="mb-3">
+          <label class="form-label" for="msdTextInput">Text</label>
+          <textarea class="form-control" id="msdTextInput" maxlength="400" rows="3"></textarea>
+        </div>
+        <div class="recipe-form-actions">
+          <button type="button" class="btn btn-outline-secondary" id="msdTextBack">Zurück</button>
+          <button type="submit" class="btn btn-primary">Speichern</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Schritt "Rezeptauswahl": Liste aller Rezeptkarten (state.recipes, app.js). -->
+    <div id="msdStepRecipePick" class="msd-step" hidden>
+      <p class="view-empty" id="msdRecipeEmpty" hidden>Noch keine Rezeptkarten angelegt.</p>
+      <div class="list-group msd-recipe-list" id="msdRecipeList"></div>
+      <div class="recipe-form-actions">
+        <button type="button" class="btn btn-outline-secondary" id="msdRecipePickBack">Zurück</button>
+      </div>
+    </div>
+
+    <!-- Schritt "Rezeptdetails": Personenzahl (skaliert automatisch, Mengen frei editierbar),
+         Zubereitung nur Anzeige, pro Zutat Checkbox "in Einkaufsliste". -->
+    <div id="msdStepRecipeDetail" class="msd-step" hidden>
+      <form id="msdRecipeDetailForm" novalidate>
+        <h3 class="msd-recipe-title" id="msdRecipeDetailTitle"></h3>
+        <div class="mb-3">
+          <label class="form-label" for="msdServings">Für wie viele Personen?</label>
+          <input type="number" class="form-control" id="msdServings" min="1" max="20" step="1" required style="max-width:8rem">
+          <div class="form-text">Zutatenmengen werden automatisch umgerechnet, zusätzlich frei editierbar.</div>
+        </div>
+        <div class="mb-2" id="msdIngredients"></div>
+        <div class="mb-3">
+          <label class="form-label">Zubereitung</label>
+          <div class="msd-instructions" id="msdInstructions"></div>
+        </div>
+        <div class="recipe-form-error" id="msdRecipeError" role="alert" hidden></div>
+        <div class="recipe-form-actions">
+          <button type="button" class="btn btn-outline-secondary" id="msdRecipeDetailBack">Zurück</button>
+          <button type="submit" class="btn btn-primary" id="msdRecipeSubmit">Zuweisen</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Schritt "Einkaufstag": nur falls mindestens eine Zutaten-Checkbox aktiviert wurde.
+         Natives <input type="date"> (Browser-eigener Monatspicker) statt eines eigenen
+         Kalender-Widgets -- min=heute sperrt vergangene Tage nativ/barrierefrei, kein
+         zusaetzlicher JS-Kalender noetig. -->
+    <div id="msdStepShopDate" class="msd-step" hidden>
+      <form id="msdShopDateForm" novalidate>
+        <p class="view-lead">Für welchen Tag sollen die ausgewählten Zutaten auf die Einkaufsliste?</p>
+        <div class="mb-3">
+          <label class="form-label" for="msdShopDate">Einkaufstag</label>
+          <input type="date" class="form-control" id="msdShopDate" required style="max-width:12rem">
+        </div>
+        <div class="recipe-form-error" id="msdShopDateError" role="alert" hidden></div>
+        <div class="recipe-form-actions">
+          <button type="submit" class="btn btn-primary" id="msdShopDateSubmit">Übernehmen</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</dialog>
+
 <script src="icons.js"></script>
 <script src="app.js"></script>
 </body>
