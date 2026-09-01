@@ -330,9 +330,15 @@
        HTML5-Drag&Drop (Rezeptkarte oben als Drag-Quelle, gleichzeitig sichtbar noetig -- die
        permanente Essensplan-Tabelle in #view-essen war/ist eine ANDERE .app-view, nie gleichzeitig
        sichtbar). Mit dem Zell-Klick-Dialog aus AP1.2 als einzigem Zuweisungsweg entfaellt dieser
-       Grund vollstaendig; die Korrektur-Funktion (buildRecipeAssignToken()) bleibt unveraendert
-       direkt in der #view-essen-Wochentabelle erhalten (seit AP1.1), keine Funktion ging damit
-       verloren. Vom Nutzer explizit bestaetigt. ================= -->
+       Grund vollstaendig. Vom Nutzer explizit bestaetigt.
+       AP1-Korrektur-Update: die urspruenglich hier erwaehnte Korrektur-Funktion
+       (buildRecipeAssignToken(), volle Zutatenliste inline in der #view-essen-Zelle) ist
+       inzwischen ebenfalls ersetzt -- Rezept-Zellen zeigen dort seither nur noch kompakt Name +
+       Personenzahl (buildMealSlotRecipeDisplay(), app.js), Mengen-Nachbearbeitung/Einkaufslisten-
+       Uebernahme laufen ueber denselben Zell-Klick-Dialog wie jede andere Zuweisung
+       (openMealSlotRecipeCell()) -- das urspruengliche Druckbarkeits-Ziel des Projekts war mit der
+       vorherigen Inline-Anzeige noch nicht erreicht, siehe Nutzer-Feedback nach dem ersten
+       AP1-Browsertest. ================= -->
 </section>
 
   </main>
@@ -426,34 +432,11 @@
      verbleibende Zuweisungsweg (Zell-Klick-Dialog, AP1.2) hat sein eigenes Personenzahl-Feld
      (#msdServings) direkt in #mealSlotDialog, siehe unten. ================= -->
 
-<!-- ================= AP4.2 (projects/wochenplaner-rezeptkarten/plan.md): Tag-Auswahl beim
-     Uebernehmen einer einzelnen Zutat auf die Einkaufsliste (Checkbox je Zutatenzeile in
-     buildRecipeAssignToken(), app.js). Gleiches natives <dialog>-Muster wie #recipeForm
-     (F2-Entscheidung: Ziel-Wochentag vorbelegt mit dem Zuweisungstag, aber aenderbar) -- eigenes
-     schlankes Formular, da hier nur EIN Feld (Ziel-Wochentag) noetig ist und der Bezug (welche
-     Zutat aus welcher Zuweisung) sich aus dem vorangegangenen Checkbox-Klick ergibt (siehe
-     pendingIngredientToList in app.js), nicht aus einem eigenen Formularfeld. ================= -->
-<dialog class="recipe-form" id="ingredientToListDialog" aria-labelledby="itlTitle">
-  <div class="recipe-form-head modal-header">
-    <h2 id="itlTitle" class="font-heading">Auf Einkaufsliste setzen</h2>
-    <div class="grow"></div>
-    <button type="button" class="btn btn-outline-secondary btn-sm" id="itlClose" title="Schließen">Schließen</button>
-  </div>
-  <div class="recipe-form-body modal-body">
-    <form id="itlForm" novalidate>
-      <p class="recipe-servings-summary" id="itlSummary"></p>
-      <div class="mb-3">
-        <label class="form-label" for="itlDay">Für welchen Tag der Einkaufsliste?</label>
-        <select class="form-select" id="itlDay"></select>
-        <div class="form-text">Vorbelegt mit dem Tag der Rezept-Zuweisung — bei Bedarf einen anderen Wochentag wählen.</div>
-      </div>
-      <div class="recipe-form-error" id="itlError" role="alert" hidden></div>
-      <div class="recipe-form-actions">
-        <button type="submit" class="btn btn-primary" id="itlSubmit">Übernehmen</button>
-      </div>
-    </form>
-  </div>
-</dialog>
+<!-- ================= AP1-Korrektur (Nutzer-Feedback nach dem ersten AP1-Browsertest): das
+     bisherige #ingredientToListDialog (AP4.2, Einzel-Zutat-Tagesauswahl nach Checkbox-Klick in
+     der jetzt entfernten buildRecipeAssignToken()) ist ersatzlos entfernt -- der Wizard-eigene,
+     batch-faehige Einkaufstag-Schritt (#msdStepShopDate weiter unten) deckt denselben Bedarf
+     bereits ab. ================= -->
 
 <!-- ================= AP1.2 (projects/wochenplaner-design-nacharbeiten/plan.md): Zell-Klick-
      Dialog fuer einen Essensplan-Slot -- EIN natives <dialog> mit mehreren intern umgeschalteten
@@ -508,7 +491,11 @@
     </div>
 
     <!-- Schritt "Rezeptdetails": Personenzahl (skaliert automatisch, Mengen frei editierbar),
-         Zubereitung nur Anzeige, pro Zutat Checkbox "in Einkaufsliste". -->
+         Zubereitung nur Anzeige, pro Zutat Checkbox "in Einkaufsliste". Erreichbar sowohl beim
+         Neuzuweisen (ueber Rezeptauswahl) als auch beim Bearbeiten einer bereits zugewiesenen
+         Zelle (openMealSlotRecipeCell(), app.js -- direkter Einstieg, vorbefuellt mit dem
+         aktuellen Snapshot). "Zuweisung entfernen" ist nur im zweiten Fall sichtbar (siehe
+         dortiger Kommentar/Verdrahtung in app.js). -->
     <div id="msdStepRecipeDetail" class="msd-step" hidden>
       <form id="msdRecipeDetailForm" novalidate>
         <h3 class="msd-recipe-title" id="msdRecipeDetailTitle"></h3>
@@ -524,6 +511,7 @@
         </div>
         <div class="recipe-form-error" id="msdRecipeError" role="alert" hidden></div>
         <div class="recipe-form-actions">
+          <button type="button" class="btn btn-outline-secondary text-danger" id="msdRecipeRemove" hidden>Zuweisung entfernen</button>
           <button type="button" class="btn btn-outline-secondary" id="msdRecipeDetailBack">Zurück</button>
           <button type="submit" class="btn btn-primary" id="msdRecipeSubmit">Zuweisen</button>
         </div>

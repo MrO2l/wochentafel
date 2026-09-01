@@ -877,7 +877,7 @@ function syncFromDOM() {
   // AP1.2: Essensplan-Zellen sind seit dem Zell-Klick-Dialog nicht mehr contentEditable (siehe
   // buildMealCellDisplay()) -- es gibt daher kein "[data-mealcell]" mehr, ueber das hier aus dem
   // DOM zurueckgeschrieben werden muesste. Schreibzugriffe laufen jetzt ausschliesslich direkt auf
-  // state.data (Wizard-Funktionen unten sowie weiterhin buildRecipeAssignToken()s Inputs),
+  // state.data (Wizard-Funktionen unten, seit der AP1-Korrektur auch fuer Rezept-Zuweisungen),
   // jeweils gefolgt von markDirty() -- dieselbe Debounce-/Speicherkette wie ueberall sonst, nur
   // ohne den Umweg ueber DOM-Scraping. Frueher stand hier eine eigene ".mp-cell[data-mealcell]"-
   // Sync-Schleife (siehe Git-Historie vor AP1.2), die mit dem Wegfall der contentEditable-Zellen
@@ -1271,102 +1271,19 @@ function renderMealDayNav() {
   const table = $('#mpTable');
   if (table) table.dataset.activeDay = String(state.mealDay);
 }
-// AP3.2 (projects/wochenplaner-rezeptkarten/plan.md): strukturierte Anzeige + manuelle
-// Bearbeitung eines zugewiesenen Rezepts (Snapshot-Token {t:'recipe', recipeId, recipeTitle,
-// servings, ingredients}, siehe cleanRecipeToken() in server.js). Ersetzt in einer Zelle mit
-// Rezept-Zuweisung die sonst freie contentEditable-Zelle -- der Inhalt ist hier strukturiert
-// (Objekte mit amount/unit/name) statt reiner Text-/Icon-Tokens, daher direkte Bindung per
-// Input-Listener statt DOM-Scraping ueber cellToTokens()/syncFromDOM(). "meal"/"d" sind
-// Referenzen auf die tatsaechlichen Objekte/Indizes in state.data.rows[...].meals[mi].cells[d] --
-// Aenderungen an tok.ingredients[i].amount/.unit wirken sich damit direkt auf state.data aus,
-// ganz ohne Sync-Schritt, und werden ueber die bestehende markDirty()/save()-Kette (PUT
-// /api/weeks/:monday) wie jede andere Zellenaenderung gespeichert (F6: nach der Zuweisung ganz
-// normal weiter editierbar). AP1.4: die vormals ZWEITE Verwendungsstelle (die kompakte
-// Wochenzuweisungs-Tabelle #recipeAssignTable) ist mit dem D&D-Rueckbau entfallen -- diese
-// Funktion wird seither ausschliesslich von der permanenten Essensplan-Tabelle (#view-essen,
-// renderMealPlanBody()) genutzt.
-function buildRecipeAssignToken(meal, mi, d, tok) {
-  const box = document.createElement('div');
-  box.className = 'recipe-assign-token';
-
-  const title = document.createElement('span');
-  title.className = 'rat-title';
-  title.textContent = tok.recipeTitle;
-  box.appendChild(title);
-
-  const servings = document.createElement('span');
-  servings.className = 'rat-servings';
-  servings.textContent = `Für ${tok.servings} ${tok.servings === 1 ? 'Person' : 'Personen'}`;
-  box.appendChild(servings);
-
-  const list = document.createElement('ul');
-  list.className = 'rat-ingredients';
-  // AP4.2: ii = ingredientIndex im Sinne von POST .../add-ingredient-to-list (server.js) --
-  // Index der Zutat INNERHALB dieses Snapshot-Arrays, nicht irgendein globaler Zaehler.
-  tok.ingredients.forEach((ing, ii) => {
-    const li = document.createElement('li');
-    li.className = 'rat-ingredient';
-
-    const amount = document.createElement('input');
-    amount.type = 'number'; amount.step = 'any';
-    amount.className = 'form-control form-control-sm rat-ing-amount';
-    amount.setAttribute('aria-label', `Menge für ${ing.name}`);
-    amount.value = ing.amount ?? '';
-    amount.addEventListener('input', () => {
-      const v = amount.value;
-      ing.amount = v === '' ? null : Number(v);
-      markDirty();
-    });
-
-    const unit = document.createElement('input');
-    unit.type = 'text'; unit.maxLength = 20; // siehe LIMITS.ingredientUnit in server.js
-    unit.className = 'form-control form-control-sm rat-ing-unit';
-    unit.setAttribute('aria-label', `Einheit für ${ing.name}`);
-    unit.value = ing.unit || '';
-    unit.addEventListener('input', () => { ing.unit = unit.value.slice(0, 20); markDirty(); });
-
-    const name = document.createElement('span');
-    name.className = 'rat-ing-name';
-    name.textContent = ing.name;
-
-    // AP4.2: Checkbox "auf Einkaufsliste setzen" -- oeffnet bei Aktivierung den Tag-Auswahl-
-    // Dialog (openIngredientToListDialog()); der eigentliche POST .../add-ingredient-to-list
-    // laeuft erst nach Bestaetigung dort (submitIngredientToList()). Kein Zurueck-Pfad (Abwaehlen
-    // loescht nichts serverseitig, siehe Auftrag Punkt 5) -- die Checkbox dient nach erfolgreicher
-    // Uebernahme nur noch als "bereits erledigt"-Hinweis (siehe addedToListMarks weiter unten),
-    // um versehentliche Duplikate durch Mehrfachklick zu vermeiden (kein serverseitiges Dedup).
-    const listCb = document.createElement('input');
-    listCb.type = 'checkbox';
-    listCb.className = 'form-check-input rat-ing-list-cb';
-    const alreadyAdded = isIngredientMarkedAddedToList(d, mi, ii);
-    listCb.checked = alreadyAdded;
-    listCb.disabled = alreadyAdded;
-    listCb.title = alreadyAdded ? 'Bereits auf eine Einkaufsliste übernommen' : 'Auf Einkaufsliste setzen';
-    listCb.setAttribute('aria-label', `${ing.name} auf Einkaufsliste setzen`);
-    listCb.addEventListener('change', () => {
-      if (!listCb.checked) return; // Abwaehlen loest bewusst nichts aus, siehe Kommentar oben
-      openIngredientToListDialog(d, mi, ii, ing.name, meal.label, listCb);
-    });
-
-    li.append(amount, unit, name, listCb);
-    list.appendChild(li);
-  });
-  box.appendChild(list);
-
-  const removeBtn = document.createElement('button');
-  removeBtn.type = 'button';
-  removeBtn.className = 'focus-remove rat-remove';
-  removeBtn.textContent = 'Zuweisung entfernen';
-  removeBtn.addEventListener('click', () => {
-    meal.cells[d] = [];
-    clearIngredientListMarksFor(d, mi); // AP4.2: alte "bereits uebernommen"-Markierungen dieser Zelle sind mit dem Snapshot obsolet
-    markDirty();
-    renderAll();
-  });
-  box.appendChild(removeBtn);
-
-  return box;
-}
+// AP1-Korrektur (Nutzer-Feedback nach dem ersten AP1-Browsertest, projects/wochenplaner-design-
+// nacharbeiten/plan.md): buildRecipeAssignToken() (die vormals volle Inline-Anzeige einer
+// Rezept-Zuweisung mit Mengen-/Einheit-Eingabefeldern und Einkaufslisten-Checkboxen DIREKT in der
+// Zelle) ist ersatzlos entfernt -- genau das widersprach dem eigentlichen Plan-Ziel "Essensplan-
+// Zellen sind grundsaetzlich kompakt/druckbar" (siehe AP1.4-Kommentar unten, Git-Historie fuer den
+// vollstaendigen alten Code). Zugewiesene Rezepte zeigen jetzt nur noch Name+Personenzahl
+// (buildMealSlotRecipeDisplay() weiter unten) -- Mengen-Nachbearbeitung und Einkaufslisten-
+// Uebernahme laufen seither ausschliesslich ueber den Zell-Klick-Dialog (openMealSlotRecipeCell()),
+// konsistent mit allen anderen Zelltypen. Das damit ebenfalls obsolet gewordene Einzel-Zutat-
+// Tag-Auswahl-Dialog-Paar (openIngredientToListDialog()/submitIngredientToList()/
+// #ingredientToListDialog, AP4.2) ist aus demselben Grund mit entfernt -- der Wizard-eigene
+// Einkaufstag-Schritt (submitMealSlotShopDate(), AP1.2/AP0) deckt denselben Bedarf bereits ab,
+// batch-faehig und mit Wochenwechsel-Unterstuetzung.
 
 // AP1.2 (projects/wochenplaner-design-nacharbeiten/plan.md): Anzeige einer Essensplan-Zelle OHNE
 // Rezept-Zuweisung -- ersetzt die bisherige contentEditable-Zelle (editableCell()) durch eine rein
@@ -1397,6 +1314,32 @@ function buildMealCellDisplay(meal, mi, d) {
   return div;
 }
 
+// AP1-Korrektur (siehe Kommentar oben): kompakte Anzeige einer Rezept-Zuweisung -- nur Name +
+// Personenzahl, druckfreundlich, gleiches Klick-/Tastatur-/Hover-Verhalten wie buildMealCellDisplay()
+// (dieselbe .mp-cell-slot-Klasse, dieselbe CSS-Hover-/Fokus-Regel). Mengen-Nachbearbeitung/
+// Einkaufslisten-Uebernahme laufen ueber openMealSlotRecipeCell() (Zell-Klick-Dialog, direkt im
+// Rezept-Bearbeitungsschritt vorbefuellt).
+function buildMealSlotRecipeDisplay(meal, mi, d, recipeTok) {
+  const div = document.createElement('div');
+  div.className = 'cell mp-cell mp-cell-slot mp-cell-recipe-compact';
+  div.tabIndex = 0;
+  div.setAttribute('role', 'button');
+  const title = document.createElement('span');
+  title.className = 'mp-recipe-compact-title';
+  title.textContent = recipeTok.recipeTitle;
+  const servingsLabel = `${recipeTok.servings} ${recipeTok.servings === 1 ? 'Person' : 'Personen'}`;
+  const servings = document.createElement('span');
+  servings.className = 'mp-recipe-compact-servings';
+  servings.textContent = servingsLabel;
+  div.append(title, servings);
+  div.setAttribute('aria-label', `${meal.label}, ${DAYS[d]}: ${recipeTok.recipeTitle}, ${servingsLabel} — antippen zum Bearbeiten`);
+  div.addEventListener('click', () => openMealSlotRecipeCell(meal, mi, d, recipeTok));
+  div.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMealSlotRecipeCell(meal, mi, d, recipeTok); }
+  });
+  return div;
+}
+
 function renderMealPlanBody() {
   const row = state.data.rows.find(r => r.mode === 'week');
   const tbody = $('#mpTableBody');
@@ -1414,15 +1357,14 @@ function renderMealPlanBody() {
       const td = document.createElement('td');
       td.dataset.day = String(d); // AP1.1: siehe renderMealPlanHead() -- Mobile-Tagesumschalter
       if (d === todayIdx) td.classList.add('today');
-      // AP3.2: eine Zelle mit Rezept-Zuweisung bekommt die strukturierte Anzeige/Bearbeitung
-      // (buildRecipeAssignToken()) statt der freien contentEditable-Zelle -- siehe Kommentar dort.
-      // AP1.2: alle UEBRIGEN Zellen (leer oder Freitext/Piktogramm-Vermerk) sind seit dem
-      // Zell-Klick-Dialog nicht mehr direkt per Tippen editierbar (siehe buildMealCellDisplay()
-      // weiter unten) -- Bearbeitung laeuft ausschliesslich ueber openMealSlotDialog().
+      // Alle Zellen sind seit dem Zell-Klick-Dialog (AP1.2) sowie der AP1-Korrektur fuer
+      // Rezept-Zellen (siehe buildMealSlotRecipeDisplay()) rein lesende, kompakte Anzeigen --
+      // Bearbeitung laeuft ausschliesslich ueber den Dialog (openMealSlotDialog()/
+      // openMealSlotRecipeCell()), nie mehr direkt per Tippen in der Zelle.
       const recipeTok = (meal.cells[d] || []).find(t => t && t.t === 'recipe');
       if (recipeTok) {
         td.classList.add('mp-cell-recipe');
-        td.appendChild(buildRecipeAssignToken(meal, mi, d, recipeTok));
+        td.appendChild(buildMealSlotRecipeDisplay(meal, mi, d, recipeTok));
       } else {
         td.appendChild(buildMealCellDisplay(meal, mi, d));
       }
@@ -1446,7 +1388,7 @@ function initMealPlanToolbar() {
    .../add-ingredient-to-list (AP4.1, um AP0s targetWeekStart erweitert). ================= */
 
 // Kontext, welche Zelle der Dialog gerade bearbeitet -- gesetzt beim Oeffnen, zurueckgesetzt im
-// "close"-Handler (siehe boot()), analog zu pendingIngredientToList unten.
+// "close"-Handler (siehe boot()).
 let mealSlotContext = null; // {meal, mi, d} oder null
 // Waehrend Schritt "Rezeptdetails": das per GET /api/recipes/:id geladene Volldetail-Rezept plus
 // die aktuell angezeigte (automatisch skalierte, ggf. manuell ueberschriebene) Zutatenliste.
@@ -1454,6 +1396,11 @@ let mealSlotRecipe = null; // {recipe, ingredients:[{amount,unit,name,addToList}
 // Waehrend Schritt "Einkaufstag": welche Zutaten (Index im Snapshot-Token) nach der Zuweisung
 // tatsaechlich auf die Einkaufsliste sollen.
 let mealSlotShoppingQueue = null; // {dayIndex, slotIndex, indexes:[...]} oder null
+// AP1-Korrektur: true, wenn der Rezeptdetails-Schritt gerade eine BEREITS zugewiesene Zelle
+// bearbeitet (Einstieg ueber openMealSlotRecipeCell(), direkt aus der kompakten Zellenanzeige) --
+// steuert, ob "Zuweisung entfernen" sichtbar ist und wohin "Zurueck" fuehrt (zu den 5 Optionen
+// statt zur Rezeptauswahl, siehe dortige Kommentare).
+let mealSlotEditingRecipeCell = false;
 
 const MEAL_SLOT_STEPS = ['msdStepOptions', 'msdStepText', 'msdStepRecipePick', 'msdStepRecipeDetail', 'msdStepShopDate'];
 function mealSlotShowStep(id) {
@@ -1464,22 +1411,39 @@ function setStepError(id, text) {
   el.textContent = text;
   el.hidden = !text;
 }
+// AP1-Korrektur: einheitliche "Aktuell: ..."-Zusammenfassung fuer JEDEN Zelleninhalt -- inkl.
+// Rezept-Token, den das generische tokensText() (nur text/icon-Tokens) nicht sinnvoll abbildet.
+// Gebraucht sowohl von primeMealSlotOptionsStep() (Schritt 1) als auch indirekt beim Zurueck-Weg
+// aus dem Rezeptdetails-Schritt einer bereits zugewiesenen Zelle.
+function mealCellSummaryText(tokens) {
+  const recipeTok = (tokens || []).find(t => t && t.t === 'recipe');
+  if (recipeTok) return `${recipeTok.recipeTitle} (${recipeTok.servings} ${recipeTok.servings === 1 ? 'Person' : 'Personen'})`;
+  return tokensText(tokens || []).trim();
+}
 
-function openMealSlotDialog(meal, mi, d) {
+// Baut Schritt 1 (5 Optionen) fuer eine Zelle auf, OHNE den Dialog zu oeffnen (showModal() auf
+// einem bereits offenen <dialog> wirft) -- getrennt von openMealSlotDialog(), damit "Zurueck" aus
+// dem Rezeptdetails-Schritt einer bereits offenen Sitzung ebenfalls dorthin zurueckspringen kann
+// (siehe $('#msdRecipeDetailBack') in boot()).
+function primeMealSlotOptionsStep(meal, mi, d) {
   mealSlotContext = { meal, mi, d };
   mealSlotRecipe = null;
   mealSlotShoppingQueue = null;
+  mealSlotEditingRecipeCell = false;
   const tokens = meal.cells[d] || [];
-  const summary = tokensText(tokens).trim();
+  const summary = mealCellSummaryText(tokens);
   $('#msdTitle').textContent = `${meal.label}, ${DAYS[d]}`;
   const cur = $('#msdCurrent');
   if (summary) { cur.hidden = false; cur.textContent = `Aktuell: ${summary} — eine neue Auswahl ersetzt diesen Eintrag.`; }
   else { cur.hidden = true; cur.textContent = ''; }
-  // Freitext-Feld vorbelegen, wenn die Zelle bereits reiner Text ist (kein Icon-Vermerk) -- passt
-  // zum in der Rueckmeldung an ANORAK festgelegten Standardverhalten fuer bereits belegte Zellen
-  // (derselbe Dialog oeffnet sich, Auswahl ersetzt den bisherigen Inhalt).
+  // Freitext-Feld vorbelegen, wenn die Zelle bereits reiner Text ist (kein Icon-/Rezept-Vermerk)
+  // -- passt zum in der Rueckmeldung an ANORAK festgelegten Standardverhalten fuer bereits belegte
+  // Zellen (derselbe Dialog oeffnet sich, Auswahl ersetzt den bisherigen Inhalt).
   $('#msdTextInput').value = tokens.length === 1 && tokens[0].t === 'text' ? tokens[0].v : '';
   mealSlotShowStep('msdStepOptions');
+}
+function openMealSlotDialog(meal, mi, d) {
+  primeMealSlotOptionsStep(meal, mi, d);
   $('#mealSlotDialog').showModal();
 }
 function closeMealSlotDialog() {
@@ -1543,16 +1507,17 @@ function scaleIngredientsClient(ingredients, baseServings, targetServings) {
     return { amount: Math.round(ing.amount * factor * 100) / 100, unit: ing.unit, name: ing.name };
   });
 }
-// Baut die editierbaren Zutatenzeilen NEU aus den frisch skalierten Werten -- ein bewusster,
-// dokumentierter Nutzerkompromiss: ein Personenzahl-Wechsel verwirft etwaige manuelle
-// Mengen-/Einheit-Korrekturen der vorherigen Personenzahl (Neuberechnung statt Verrechnung
-// zweier unabhaengiger Aenderungen, die sich sonst unvorhersehbar ueberlagern wuerden).
-function renderMealSlotIngredients(recipe, servings) {
+// AP1-Korrektur: aus renderMealSlotIngredients() herausgezogener, reiner DOM-Aufbau -- wird jetzt
+// von ZWEI Quellen befuellt: einer frisch skalierten Liste (Personenzahl-Aenderung/Neuzuweisung,
+// siehe renderMealSlotIngredients()) UND einem bestehenden Snapshot 1:1 ohne Neuskalierung
+// (Bearbeiten einer bereits zugewiesenen Zelle, siehe openMealSlotRecipeCell()). "list" ist
+// bereits die endgueltige {amount,unit,name,addToList}-Form.
+function renderMealSlotIngredientRows(list) {
   const wrap = $('#msdIngredients');
   wrap.textContent = '';
-  const scaled = scaleIngredientsClient(recipe.ingredients, recipe.baseServings, servings);
-  mealSlotRecipe.ingredients = scaled.map(i => ({ ...i, addToList: false }));
-  scaled.forEach((ing, ii) => {
+  mealSlotRecipe.ingredients = list;
+  const { mi, d } = mealSlotContext || {};
+  list.forEach((ing, ii) => {
     const row = document.createElement('div');
     row.className = 'wizard-ing-row';
 
@@ -1576,17 +1541,36 @@ function renderMealSlotIngredients(recipe, servings) {
     name.className = 'wizard-ing-name';
     name.textContent = ing.name;
 
+    // AP1-Korrektur: bereits auf eine Einkaufsliste uebernommene Zutaten (addedToListMarks, siehe
+    // weiter unten) sind hier -- wie zuvor in der jetzt entfernten buildRecipeAssignToken() --
+    // angehakt+deaktiviert, um versehentliche Duplikate durch erneutes Anhaken zu vermeiden
+    // (kein serverseitiges Dedup, siehe add-ingredient-to-list in server.js).
+    const alreadyAdded = mi != null && d != null && isIngredientMarkedAddedToList(d, mi, ii);
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = 'form-check-input wizard-ing-cb';
+    cb.checked = ing.addToList || alreadyAdded;
+    cb.disabled = alreadyAdded;
+    cb.title = alreadyAdded ? 'Bereits auf eine Einkaufsliste übernommen' : 'Auf Einkaufsliste setzen';
     cb.setAttribute('aria-label', `${ing.name} auf Einkaufsliste setzen`);
     cb.addEventListener('change', () => { mealSlotRecipe.ingredients[ii].addToList = cb.checked; });
+    mealSlotRecipe.ingredients[ii].addToList = cb.checked; // Anfangszustand (alreadyAdded) uebernehmen
 
     row.append(amount, unit, name, cb);
     wrap.appendChild(row);
   });
 }
+// Baut die editierbaren Zutatenzeilen NEU aus den frisch skalierten Werten -- ein bewusster,
+// dokumentierter Nutzerkompromiss: ein Personenzahl-Wechsel verwirft etwaige manuelle
+// Mengen-/Einheit-Korrekturen der vorherigen Personenzahl (Neuberechnung statt Verrechnung
+// zweier unabhaengiger Aenderungen, die sich sonst unvorhersehbar ueberlagern wuerden).
+function renderMealSlotIngredients(recipe, servings) {
+  const scaled = scaleIngredientsClient(recipe.ingredients, recipe.baseServings, servings);
+  renderMealSlotIngredientRows(scaled.map(i => ({ ...i, addToList: false })));
+}
 async function openMealSlotRecipeDetail(recipeOverview) {
+  mealSlotEditingRecipeCell = false;
+  $('#msdRecipeRemove').hidden = true;
   setStepError('msdRecipeError', '');
   mealSlotShowStep('msdStepRecipeDetail');
   $('#msdRecipeDetailTitle').textContent = recipeOverview.title;
@@ -1612,6 +1596,51 @@ async function openMealSlotRecipeDetail(recipeOverview) {
     $('#msdRecipeSubmit').disabled = false;
   }
 }
+// AP1-Korrektur: Einstieg fuer eine BEREITS zugewiesene Zelle (Klick auf buildMealSlotRecipeDisplay())
+// -- oeffnet den Dialog direkt im Rezeptdetails-Schritt (kein Umweg ueber die 5 Optionen/die
+// Rezeptauswahl), vorbefuellt mit dem AKTUELLEN Snapshot (recipeTok.ingredients) statt einer
+// frischen Skalierung vom Referenzrezept -- sonst gingen bereits vorhandene manuelle Mengen-/
+// Einheit-Korrekturen (F6) beim blossen Oeffnen verloren. Erst ein tatsaechlicher Personenzahl-
+// Wechsel im Dialog skaliert wieder frisch (renderMealSlotIngredients(), siehe deren Listener
+// weiter unten). Das Referenzrezept wird trotzdem nachgeladen (fuer Zubereitungstext und als
+// Skalierungs-Basis bei einem Personenzahl-Wechsel) -- schlaegt das fehl (Rezept zwischenzeitlich
+// geloescht, F6 "recipeId zeigt ins Leere"), bleibt der Snapshot trotzdem vollstaendig anzeig-/
+// entfernbar, nur eine erneute Skalierung ist dann nicht mehr sinnvoll moeglich.
+async function openMealSlotRecipeCell(meal, mi, d, recipeTok) {
+  mealSlotContext = { meal, mi, d };
+  mealSlotShoppingQueue = null;
+  mealSlotEditingRecipeCell = true;
+  $('#msdRecipeRemove').hidden = false;
+  $('#msdTitle').textContent = `${meal.label}, ${DAYS[d]}`;
+  $('#msdCurrent').hidden = true; // kein Options-Schritt dazwischen, daher kein "Aktuell"-Hinweis noetig
+  setStepError('msdRecipeError', '');
+  mealSlotShowStep('msdStepRecipeDetail');
+  $('#msdRecipeDetailTitle').textContent = recipeTok.recipeTitle;
+  $('#msdInstructions').textContent = '';
+  $('#msdServings').value = recipeTok.servings;
+  $('#msdRecipeSubmit').disabled = true;
+  const prefill = recipeTok.ingredients.map((ing, ii) => ({
+    amount: ing.amount, unit: ing.unit, name: ing.name,
+    addToList: isIngredientMarkedAddedToList(d, mi, ii)
+  }));
+  try {
+    const { recipe } = await api('GET', `/api/recipes/${recipeTok.recipeId}`);
+    mealSlotRecipe = { recipe, ingredients: [] };
+    renderMealSlotIngredientRows(prefill);
+    $('#msdInstructions').textContent = recipe.instructions || '(keine Zubereitungshinweise hinterlegt)';
+    $('#msdServings').focus();
+    $('#msdServings').select();
+  } catch (err) {
+    // Referenzrezept nicht (mehr) verfuegbar -- Snapshot bleibt trotzdem nutzbar (siehe Kommentar
+    // oben), nur eine Personenzahl-Aenderung wuerde beim Zuweisen serverseitig 404 liefern
+    // (bestehende Fehlerbehandlung in submitMealSlotRecipe()), ein reines Entfernen bleibt moeglich.
+    mealSlotRecipe = { recipe: { id: recipeTok.recipeId, baseServings: recipeTok.servings, ingredients: recipeTok.ingredients, instructions: '' }, ingredients: [] };
+    renderMealSlotIngredientRows(prefill);
+    $('#msdInstructions').textContent = '(Zubereitung nicht verfügbar — das zugrunde liegende Rezept wurde inzwischen gelöscht.)';
+  } finally {
+    $('#msdRecipeSubmit').disabled = false;
+  }
+}
 async function submitMealSlotRecipe(e) {
   e.preventDefault();
   setStepError('msdRecipeError', '');
@@ -1629,8 +1658,7 @@ async function submitMealSlotRecipe(e) {
 
   $('#msdRecipeSubmit').disabled = true;
   try {
-    // Gleiche Vorsichtsmassnahme wie submitIngredientToList() unten: erst
-    // lokale, noch ungespeicherte Aenderungen sichern, bevor der Server die komplette Woche
+    // Erst lokale, noch ungespeicherte Aenderungen sichern, bevor der Server die komplette Woche
     // zurueckschreibt.
     syncFromDOM();
     if (state.dirty) await save();
@@ -1639,8 +1667,9 @@ async function submitMealSlotRecipe(e) {
 
     // AP1.2: manuelle Mengen-/Einheit-Korrekturen aus der Wizard-Vorschau auf den soeben vom
     // Server berechneten/gespeicherten Token uebertragen -- gleiches Prinzip wie die bereits
-    // bestehende Nachbearbeitung ueber buildRecipeAssignToken() (F6), hier nur direkt im Wizard
-    // statt erst danach in der Zelle. placedToken ist eine Referenz IN res.data (kein Klon) --
+    // bestehende Nachbearbeitung (F6), hier nur direkt im Wizard statt erst danach ueber einen
+    // erneuten Dialog-Aufruf (openMealSlotRecipeCell()). placedToken ist eine Referenz IN res.data
+    // (kein Klon) --
     // die Mutation wirkt sich damit automatisch auf state.data aus, sobald es unten zugewiesen wird.
     const placedRow = res.data.rows.find(r => r.mode === 'week');
     const placedToken = placedRow?.meals?.[mi]?.cells?.[d]?.find(t => t.t === 'recipe');
@@ -1691,9 +1720,10 @@ async function submitMealSlotRecipe(e) {
    (Montag der Zielwoche) und targetDayIndex (0=Montag..6=Sonntag) abgeleitet und an
    add-ingredient-to-list durchgereicht (AP0-Erweiterung) -- fuer mehrere angehakte Zutaten
    bewusst EIN gemeinsamer Schritt/EIN gewaehltes Datum statt eines Dialogs pro Zutat (schnellere
-   Batch-Uebernahme, abweichend vom aelteren Einzel-Zutat-Tagesauswahl-Dialog oben, der fuer die
-   Checkbox in buildRecipeAssignToken() -- also NACH einer bereits bestehenden Zuweisung --
-   weiterhin unveraendert bestehen bleibt). Sequentiell (nicht parallel) abgearbeitet, damit
+   Batch-Uebernahme -- ersetzt seit der AP1-Korrektur auch den frueheren Einzel-Zutat-
+   Tagesauswahl-Dialog, der ausschliesslich fuer die Checkbox in der jetzt entfernten
+   buildRecipeAssignToken() existierte, siehe Kommentar bei addedToListMarks weiter unten).
+   Sequentiell (nicht parallel) abgearbeitet, damit
    mehrere Zutaten in dieselbe (evtl. neu anzulegende) Zielwoche einander nicht per Race
    ueberschreiben (jeder Aufruf serialisiert ohnehin per FOR UPDATE serverseitig, sequentielle
    Aufrufe vermeiden zusaetzlich unnoetige 409/Retry-Faelle). */
@@ -1714,8 +1744,8 @@ async function submitMealSlotShopDate(e) {
       const res = await api('POST', `/api/weeks/${state.weekStart}/add-ingredient-to-list`,
         { dayIndex, slotIndex, ingredientIndex, targetDayIndex, targetWeekStart });
       // AP0-Vorgabe: state.data/state.updatedAt nur uebernehmen, wenn die tatsaechlich
-      // beschriebene Woche der aktuell geladenen entspricht (siehe submitIngredientToList() oben,
-      // identische Begruendung).
+      // beschriebene Woche der aktuell geladenen entspricht (identische Begruendung wie beim
+      // AP0-Ruecklauf/submitMealSlotRecipe() oben).
       if (res.targetWeekStart === state.weekStart) {
         state.data = res.data;
         state.data.goals = state.data.goals || [];
@@ -1741,17 +1771,22 @@ async function submitMealSlotShopDate(e) {
 // renderRecipeAssignGrid()) sowie die Drag&Drop-Zuweisung selbst (recipeIdFromDrag()/
 // registerAssignDropTarget()/handleRecipeDrop()/submitRecipeServings()/#recipeServingsDialog/
 // pendingAssignment) sind ersatzlos entfernt -- siehe Kommentar bei #view-rezepte in index.html.
-// Der Zell-Klick-Dialog aus AP1.2 (openMealSlotDialog()/submitMealSlotRecipe()) ist seither der
-// einzige Zuweisungsweg; buildRecipeAssignToken() (Korrektur bereits zugewiesener Rezepte) bleibt
-// unveraendert bestehen, wird jetzt ausschliesslich von der permanenten #view-essen-Tabelle
-// genutzt.
+// Der Zell-Klick-Dialog aus AP1.2 (openMealSlotDialog()/submitMealSlotRecipe()) war seither der
+// einzige NEUE Zuweisungsweg; die Korrektur bereits zugewiesener Rezepte lief zunaechst weiterhin
+// inline in der Zelle (buildRecipeAssignToken()). AP1-Korrektur (siehe Kommentar dort): auch das
+// ist inzwischen ersetzt -- openMealSlotRecipeCell() (weiter oben) uebernimmt diese Aufgabe jetzt
+// ebenfalls ueber denselben Dialog.
 
-/* ---------------- AP4.2: Checkbox "auf Einkaufsliste setzen" je Zutatenzeile
-   (buildRecipeAssignToken()) + Tag-Auswahl-Dialog (#ingredientToListDialog), danach
-   POST /api/weeks/:monday/add-ingredient-to-list (AP4.1, server.js). Rein clientseitige
-   Markierung bereits uebernommener Zutaten (addedToListMarks) -- der Server dedupliziert
-   bewusst nicht (siehe Kommentar dort), die Markierung ist nur ein UX-Hinweis gegen
-   versehentliche Mehrfachklicks und ueberlebt keinen Seitenneuladen. ---------------- */
+/* ---------------- Rein clientseitige Markierung bereits auf eine Einkaufsliste uebernommener
+   Zutaten (addedToListMarks) -- der Server dedupliziert bewusst nicht (siehe add-ingredient-to-
+   list in server.js), die Markierung ist nur ein UX-Hinweis gegen versehentliche Mehrfachklicks
+   und ueberlebt keinen Seitenneuladen. Gebraucht von renderMealSlotIngredientRows() (Checkbox-
+   Anfangszustand) und submitMealSlotShopDate() (setzt die Markierung nach erfolgreicher
+   Uebernahme). AP1-Korrektur: das fruehere Einzel-Zutat-Tag-Auswahl-Dialog-Paar
+   (openIngredientToListDialog()/submitIngredientToList()/pendingIngredientToList/
+   #ingredientToListDialog, AP4.2) ist ersatzlos entfernt -- der Wizard-eigene, batch-faehige
+   Einkaufstag-Schritt (submitMealSlotShopDate()) deckt denselben Bedarf bereits ab, siehe
+   Kommentar bei buildMealSlotRecipeDisplay() oben. ---------------- */
 const addedToListMarks = new Set(); // Keys: "dayIndex:slotIndex:ingredientIndex"
 function ingredientMarkKey(dayIndex, slotIndex, ingredientIndex) {
   return `${dayIndex}:${slotIndex}:${ingredientIndex}`;
@@ -1768,116 +1803,6 @@ function markIngredientAddedToList(dayIndex, slotIndex, ingredientIndex) {
 function clearIngredientListMarksFor(dayIndex, slotIndex) {
   const prefix = `${dayIndex}:${slotIndex}:`;
   Array.from(addedToListMarks).forEach(key => { if (key.startsWith(prefix)) addedToListMarks.delete(key); });
-}
-
-// pendingIngredientToList haelt neben Rezept-Zuweisungs-/Zutat-Indizes auch die auszuloesende
-// Checkbox selbst fest -- so kann die Checkbox bei einem Abbruch (Schliessen/ESC/Backdrop-Klick)
-// zuverlaessig wieder zurueckgesetzt werden, ohne eine erneute DOM-Suche ueber die Indizes.
-let pendingIngredientToList = null; // {dayIndex, slotIndex, ingredientIndex, checkbox} oder null
-
-function showIngredientToListError(text) {
-  const el = $('#itlError');
-  el.textContent = text;
-  el.hidden = !text;
-}
-
-function openIngredientToListDialog(dayIndex, slotIndex, ingredientIndex, ingredientName, mealLabel, checkbox) {
-  pendingIngredientToList = { dayIndex, slotIndex, ingredientIndex, checkbox };
-  showIngredientToListError('');
-  $('#itlSummary').textContent = `„${ingredientName}" aus ${mealLabel}, ${DAYS[dayIndex]}`;
-
-  const select = $('#itlDay');
-  select.textContent = '';
-  DAYS.forEach((name, i) => {
-    const d = parseISO(state.weekStart); d.setDate(d.getDate() + i);
-    const opt = document.createElement('option');
-    opt.value = String(i);
-    opt.textContent = `${name}, ${fmtShort(d)}`;
-    select.appendChild(opt);
-  });
-  select.value = String(dayIndex); // F2: vorbelegt mit dem Tag der Zuweisung, aenderbar
-
-  $('#ingredientToListDialog').showModal();
-}
-
-// Einheitlicher Schliesspfad ueber das native "close"-Ereignis (wie #daylist/#mealplan, siehe
-// dortiger Kommentar) statt separater Funktionen fuer Button-/Backdrop-/ESC-Schliessen -- deckt
-// damit ALLE Wege ab. submitIngredientToList() setzt pendingIngredientToList bei Erfolg VOR dem
-// eigenen dialog.close()-Aufruf bereits auf null, der Reset-Zweig hier greift dann nicht.
-function closeIngredientToListDialog() {
-  document.getElementById('ingredientToListDialog').close();
-}
-
-async function submitIngredientToList(e) {
-  e.preventDefault();
-  showIngredientToListError('');
-  if (!pendingIngredientToList) return;
-
-  const { dayIndex, slotIndex, ingredientIndex, checkbox } = pendingIngredientToList;
-  const targetDayIndex = Number($('#itlDay').value);
-  if (!Number.isInteger(targetDayIndex) || targetDayIndex < 0 || targetDayIndex > 6) {
-    showIngredientToListError('Bitte einen Wochentag auswählen.');
-    return;
-  }
-
-  $('#itlSubmit').disabled = true;
-  try {
-    // Gleiche Vorsichtsmassnahme wie in submitMealSlotRecipe(): ungesicherte lokale Aenderungen
-    // (z. B. eine gerade manuell editierte Menge in einer ANDEREN Zelle) zuerst speichern, bevor
-    // der Server die komplette Woche zurueckschreibt.
-    syncFromDOM();
-    if (state.dirty) await save();
-
-    const res = await api('POST', `/api/weeks/${state.weekStart}/add-ingredient-to-list`,
-      { dayIndex, slotIndex, ingredientIndex, targetDayIndex });
-
-    // AP0 (projects/wochenplaner-design-nacharbeiten/plan.md): der Server kann inzwischen auch in
-    // eine ANDERE, nicht geladene Woche schreiben (targetWeekStart im Request -- diese Aufrufstelle
-    // sendet ihn noch nicht, das kommt erst mit dem Monatspicker in AP1.2; der Server setzt ohne
-    // dieses Feld unveraendert monday=state.weekStart als Ziel). state.data/state.updatedAt duerfen
-    // trotzdem nur uebernommen werden, wenn res.targetWeekStart WIRKLICH der aktuell geladenen
-    // Woche entspricht -- sonst wuerde ein (kuenftiger) Schreibzugriff auf eine fremde Woche den
-    // lokalen Zustand der gerade offenen Woche ueberschreiben, inklusive eines darin evtl. gerade
-    // gehaltenen, noch ungespeicherten Standes einer ANDEREN Zelle. Kein Rendering-Trigger fuer
-    // eine nicht geladene Woche: renderAll()/Statuszeile laufen deshalb ebenfalls nur im
-    // Gleichlauf-Fall.
-    const isCurrentWeek = res.targetWeekStart === state.weekStart;
-    if (isCurrentWeek) {
-      state.data = res.data;
-      state.data.goals = state.data.goals || [];
-      state.data.highlights = state.data.highlights || [];
-      state.data.calls = state.data.calls || [];
-      state.updatedAt = res.updatedAt;
-      state.dirty = false;
-    }
-
-    // Betrifft immer die QUELL-Zutat (dayIndex/slotIndex/ingredientIndex), die unveraendert aus der
-    // aktuell geladenen Woche stammt -- unabhaengig davon, in welche Woche sie geschrieben wurde.
-    markIngredientAddedToList(dayIndex, slotIndex, ingredientIndex);
-    pendingIngredientToList = null; // vor dem close(): der generische "close"-Handler soll die Checkbox NICHT zuruecksetzen
-    checkbox.checked = true;
-    closeIngredientToListDialog();
-
-    if (isCurrentWeek) {
-      renderAll();
-      // renderAll() zeichnet nur die Uebersicht (renderShoppingView(), Zaehl-Badges) neu, nicht den
-      // Body eines GERADE GEOEFFNETEN #daylist-Overlays (siehe openDayList()/renderDayListBody()
-      // oben, dessen offene Tagesliste unabhaengig von renderAll() gehalten wird). Zeigt das
-      // Overlay zufaellig genau die Zielliste dieser Uebernahme an, wird es hier zusaetzlich neu
-      // gezeichnet, damit die neue Zutat auch dort sofort sichtbar ist (Auftrag Punkt 3).
-      const daylistEl = document.getElementById('daylist');
-      if (daylistEl.open && openListRow !== null && openListDay === targetDayIndex) {
-        const listRow = state.data.rows[openListRow];
-        if (listRow && listRow.listMode === true) renderDayListBody();
-      }
-      setStatus('Gespeichert ' + new Date(res.updatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }), 'saved');
-    }
-    flash(`Zutat wurde der Einkaufsliste vom ${DAYS[targetDayIndex]} hinzugefügt.`);
-  } catch (err) {
-    showIngredientToListError(err.message);
-  } finally {
-    $('#itlSubmit').disabled = false;
-  }
 }
 
 /* ---------------- Kontomenue ---------------- */
@@ -2006,7 +1931,33 @@ async function boot() {
   $('#msdTextForm').addEventListener('submit', submitMealSlotText);
   $('#msdTextBack').onclick = () => mealSlotShowStep('msdStepOptions');
   $('#msdRecipePickBack').onclick = () => mealSlotShowStep('msdStepOptions');
-  $('#msdRecipeDetailBack').onclick = () => { mealSlotRecipe = null; mealSlotShowStep('msdStepRecipePick'); };
+  // AP1-Korrektur: "Zurueck" ist kontextabhaengig -- kam der Rezeptdetails-Schritt ueber
+  // openMealSlotRecipeCell() (Bearbeiten einer bereits zugewiesenen Zelle, kein Options-/
+  // Rezeptauswahl-Schritt dazwischen), fuehrt "Zurueck" zu den 5 Optionen (ermoeglicht z. B. auch
+  // einen Wechsel zu Freitext/Außerhalb oder -- ueber "Rezeptkarte" erneut -- ein anderes Rezept);
+  // kam er ueber die normale Neuzuweisungs-Kette (Optionen -> Rezeptauswahl -> Details), fuehrt
+  // "Zurueck" wie bisher zur Rezeptauswahl zurueck.
+  $('#msdRecipeDetailBack').onclick = () => {
+    mealSlotRecipe = null;
+    if (mealSlotEditingRecipeCell && mealSlotContext) {
+      primeMealSlotOptionsStep(mealSlotContext.meal, mealSlotContext.mi, mealSlotContext.d);
+    } else {
+      mealSlotShowStep('msdStepRecipePick');
+    }
+  };
+  // AP1-Korrektur: Direktes Entfernen der Zuweisung, ohne den Umweg ueber "Zurueck" -> Optionen ->
+  // "Nicht geplant" (das laesst eine bestehende Zuweisung bewusst UNVERAENDERT, siehe
+  // handleMealSlotOption()) -- entspricht dem frueheren Entfernen-Button direkt in der Zelle
+  // (buildRecipeAssignToken(), jetzt entfernt). Nur sichtbar, wenn eine bereits bestehende
+  // Zuweisung bearbeitet wird (siehe openMealSlotRecipeCell()/openMealSlotRecipeDetail()).
+  $('#msdRecipeRemove').onclick = () => {
+    if (!mealSlotContext) return;
+    const { meal, mi, d } = mealSlotContext;
+    meal.cells[d] = [];
+    clearIngredientListMarksFor(d, mi);
+    markDirty();
+    closeMealSlotDialog();
+  };
   $('#msdRecipeDetailForm').addEventListener('submit', submitMealSlotRecipe);
   $('#msdShopDateForm').addEventListener('submit', submitMealSlotShopDate);
   $('#msdClose').onclick = closeMealSlotDialog;
@@ -2017,6 +1968,7 @@ async function boot() {
     mealSlotContext = null;
     mealSlotRecipe = null;
     mealSlotShoppingQueue = null;
+    mealSlotEditingRecipeCell = false;
   });
 
   // AP2.2: Rezeptkarten-Ansicht + Anlegen-/Bearbeiten-Formular.
@@ -2034,18 +1986,10 @@ async function boot() {
 
   // AP1.4: #recipeServingsDialog/submitRecipeServings()/handleRecipeDrop() (Drag&Drop-Zuweisung)
   // sind ersatzlos entfernt -- keine Verdrahtung mehr noetig.
-
-  // AP4.2: Tag-Auswahl-Dialog nach Aktivierung einer Zutat-Checkbox (siehe
-  // buildRecipeAssignToken()/openIngredientToListDialog()/submitIngredientToList() oben) --
-  // identisches Schliess-/Backdrop-Muster wie #recipeForm, ergaenzt um den Checkbox-
-  // Reset im "close"-Handler: JEDER Schliessweg ausser einem erfolgreichen submitIngredientToList()
-  // (das pendingIngredientToList vorher selbst auf null setzt) gilt als Abbruch.
-  $('#itlForm').addEventListener('submit', submitIngredientToList);
-  $('#itlClose').onclick = closeIngredientToListDialog;
-  $('#ingredientToListDialog').addEventListener('click', e => { if (e.target.id === 'ingredientToListDialog') closeIngredientToListDialog(); });
-  $('#ingredientToListDialog').addEventListener('close', () => {
-    if (pendingIngredientToList) { pendingIngredientToList.checkbox.checked = false; pendingIngredientToList = null; }
-  });
+  // AP1-Korrektur: #ingredientToListDialog/submitIngredientToList()/closeIngredientToListDialog()
+  // (AP4.2, Einzel-Zutat-Tagesauswahl nach Checkbox-Klick in der jetzt entfernten
+  // buildRecipeAssignToken()) sind ebenfalls ersatzlos entfernt -- der Wizard-eigene
+  // Einkaufstag-Schritt (#msdShopDateForm, siehe oben) deckt denselben Bedarf batch-faehig ab.
 
   window.addEventListener('beforeprint', () => { if (state.view === 'day') { syncFromDOM(); renderSheet(); } });
   window.addEventListener('afterprint', () => {

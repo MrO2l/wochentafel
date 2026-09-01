@@ -710,28 +710,17 @@ body:not(.section-wochenuebersicht) .cal-only{display:none !important}
    -empty/-freetext, siehe Git-Historie) sind mit dem zugehoerigen Markup (index.html) und JS
    (app.js) weggefallen. Einziger verbleibender Zuweisungsweg ist der Zell-Klick-Dialog (AP1.2).
 
-   Strukturierte Anzeige/Bearbeitung eines zugewiesenen Rezepts (Snapshot-Token {t:'recipe',...},
-   server.js) -- seit AP1.1 ausschliesslich in der permanenten Essensplan-Tabelle (#view-essen),
-   siehe buildRecipeAssignToken() in app.js. Ersetzt dort die sonst reine Lese-Anzeige (AP1.2:
-   buildMealCellDisplay(), seit dem Zell-Klick-Dialog kein contentEditable mehr fuer irgendeine
-   Essensplan-Zelle), da der Inhalt hier strukturiert (Objekt-Referenzen, keine reinen Tokens)
-   direkt an state.data gebunden ist. */
-.recipe-assign-token{background:var(--secondary); border-radius:calc(var(--radius) - 2px); padding:.45rem .55rem; font-size:.75rem}
-.recipe-assign-token .rat-title{font-weight:700; color:var(--primary); display:block; margin-bottom:.1rem}
-.recipe-assign-token .rat-servings{opacity:.75; display:block; margin-bottom:.35rem}
-.recipe-assign-token .rat-ingredients{list-style:none; margin:0 0 .35rem; padding:0}
-.recipe-assign-token .rat-ingredient{display:flex; gap:.25rem; align-items:center; margin-bottom:.15rem}
-.recipe-assign-token .rat-ingredient .form-control{padding:.05rem .2rem; font-size:.72rem; height:auto}
-.recipe-assign-token .rat-ing-amount{width:3.2rem; flex:none}
-.recipe-assign-token .rat-ing-unit{width:3rem; flex:none}
-.recipe-assign-token .rat-ing-name{flex:1 1 auto; min-width:0; overflow-wrap:anywhere}
-/* AP4.2: Checkbox "auf Einkaufsliste setzen" je Zutatenzeile -- disabled+checked signalisiert
-   nach erfolgreicher Uebernahme (siehe addedToListMarks in app.js), dass ein erneuter Klick
-   einen weiteren, eigenstaendigen Eintrag anlegen wuerde (kein Dedup serverseitig, siehe
-   add-ingredient-to-list in server.js) und deshalb bewusst nicht mehr moeglich ist. */
-.recipe-assign-token .rat-ing-list-cb{width:15px; height:15px; flex:none; accent-color:var(--accent); cursor:pointer}
-.recipe-assign-token .rat-ing-list-cb:disabled{cursor:default; opacity:.75}
-.recipe-assign-token .rat-remove{font-size:.7rem; padding:0}
+   AP1-Korrektur (Nutzer-Feedback nach dem ersten AP1-Browsertest): ".recipe-assign-token"/".rat-*"
+   (die vormals volle Inline-Anzeige einer Rezept-Zuweisung mit Mengen-/Einheit-Eingabefeldern und
+   Einkaufslisten-Checkboxen DIREKT in der Zelle, siehe Git-Historie) sind ebenfalls ersatzlos
+   entfernt -- widersprach dem eigentlichen Plan-Ziel "Essensplan-Zellen sind grundsaetzlich
+   kompakt/druckbar". Ersetzt durch die folgende, rein lesende Kompaktanzeige
+   (buildMealSlotRecipeDisplay(), app.js) -- Mengen-Nachbearbeitung/Einkaufslisten-Uebernahme laufen
+   seither ueber denselben Zell-Klick-Dialog wie jede andere Zuweisung
+   (openMealSlotRecipeCell()). */
+.mp-cell-recipe-compact{display:flex; flex-direction:column; gap:.1rem}
+.mp-recipe-compact-title{font-weight:700; color:var(--accent)}
+.mp-recipe-compact-servings{opacity:.75; font-size:11.5px}
 .mp-table td.mp-cell-recipe{padding:6px 8px; vertical-align:top}
 
 /* Anlegen-/Bearbeiten-Formular (#recipeForm, index.html): natives <dialog>, gleiches
@@ -769,21 +758,28 @@ dialog.recipe-form::backdrop{background:rgba(20,26,32,.45)}
 .msd-recipe-list{max-height:14rem; overflow-y:auto; margin-bottom:.75rem}
 .msd-recipe-title{font-size:1.05rem; font-weight:700; color:var(--primary); margin:0 0 .75rem}
 .msd-instructions{white-space:pre-line; font-size:.85rem; color:var(--text-body); opacity:.85; background:var(--secondary); border-radius:calc(var(--radius) - 2px); padding:.6rem .7rem; max-height:8rem; overflow-y:auto}
-/* Zutatenzeilen der Wizard-Vorschau -- bewusst eigene Klassen statt Wiederverwendung von ".rat-*"
-   (deren Selektoren an ".recipe-assign-token" als Elternklasse gebunden sind, siehe dort), aber
-   dieselben Proportionen/dasselbe Erscheinungsbild fuer visuelle Konsistenz. */
+/* Zutatenzeilen der Wizard-Vorschau (renderMealSlotIngredientRows(), app.js) -- gebraucht sowohl
+   fuer eine frische Skalierung (Neuzuweisung) als auch fuer die 1:1-Anzeige eines bestehenden
+   Snapshots (Bearbeiten einer bereits zugewiesenen Zelle, openMealSlotRecipeCell()). */
 .wizard-ing-row{display:flex; gap:.4rem; align-items:center; margin-bottom:.4rem}
 .wizard-ing-amount{width:4.5rem; flex:none}
 .wizard-ing-unit{width:4.5rem; flex:none}
 .wizard-ing-name{flex:1 1 auto; min-width:0; overflow-wrap:anywhere; font-size:.85rem}
 .wizard-ing-cb{width:16px; height:16px; flex:none; accent-color:var(--primary); cursor:pointer}
+/* AP1-Korrektur: bereits auf eine Einkaufsliste uebernommene Zutaten sind angehakt+deaktiviert
+   (siehe renderMealSlotIngredientRows()), damit ein erneutes Anhaken keinen doppelten, eigen-
+   staendigen Eintrag anlegt (kein Dedup serverseitig, siehe add-ingredient-to-list in server.js) --
+   identisches Verhalten zur inzwischen entfernten ".rat-ing-list-cb:disabled" (Git-Historie). */
+.wizard-ing-cb:disabled{cursor:default; opacity:.75}
 
-/* Essensplan-Slot ohne Rezept-Zuweisung (buildMealCellDisplay(), app.js): seit AP1.2 kein
-   contentEditable-Feld mehr, sondern eine klickbare Anzeige, die den Zell-Klick-Dialog oeffnet --
-   ".mp-cell"/".cell:empty::before" (Platzhalter "–") bleiben unveraendert (siehe dortiger
-   Kommentar), hier nur Zeigecursor + sichtbares Hover-/Fokus-Feedback ergaenzt (vorher durch den
-   blinkenden Caret eines contentEditable-Feldes selbsterklaerend, jetzt braucht ein reiner
-   Klick-/Tastatur-Ziel-Bereich ein eigenes visuelles Signal). */
+/* Klickbare Essensplan-Zelle, die den Zell-Klick-Dialog oeffnet -- sowohl fuer Zellen ohne
+   Rezept-Zuweisung (buildMealCellDisplay()) als auch (seit der AP1-Korrektur) fuer die kompakte
+   Anzeige einer bestehenden Rezept-Zuweisung (buildMealSlotRecipeDisplay()), app.js. Seit AP1.2
+   nirgends mehr contentEditable -- ".mp-cell"/".cell:empty::before" (Platzhalter "–") bleiben fuer
+   den Freitext-Fall unveraendert (siehe dortiger Kommentar), hier nur Zeigecursor + sichtbares
+   Hover-/Fokus-Feedback ergaenzt (vorher durch den blinkenden Caret eines contentEditable-Feldes
+   selbsterklaerend, jetzt braucht ein reiner Klick-/Tastatur-Ziel-Bereich ein eigenes visuelles
+   Signal). */
 .mp-cell-slot{cursor:pointer}
 .mp-cell-slot:hover{background:var(--tint2)}
 .mp-cell-slot:focus-visible{outline:2px solid var(--accent); outline-offset:-2px; background:var(--tint2)}
