@@ -1821,6 +1821,13 @@ async function openMealSlotRecipeCell(meal, mi, d, recipeTok, weekCtx) {
   $('#msdTitle').textContent = isNextWeek ? `Nächste Woche, ${meal.label}, ${DAYS[d]}` : `${meal.label}, ${DAYS[d]}`;
   $('#msdCurrent').hidden = true; // kein Options-Schritt dazwischen, daher kein "Aktuell"-Hinweis noetig
   setStepError('msdRecipeError', '');
+  // Bugfix (Nutzer-Feedback nach AP1+AP2-Test): anders als openMealSlotDialog() (Einstieg ueber
+  // die 5 Optionen) fehlte hier der eigentliche showModal()-Aufruf -- der Dialoginhalt wurde zwar
+  // korrekt fuer den Rezeptdetails-Schritt aufgebaut, aber nie sichtbar geoeffnet. Kein Schutz vor
+  // einem bereits offenen Dialog noetig: diese Funktion wird ausschliesslich per Klick auf eine
+  // Zelle AUSSERHALB des (modalen, den Rest der Seite waehrenddessen inerten) Dialogs ausgeloest,
+  // der Dialog kann in diesem Moment also nie schon offen sein.
+  $('#mealSlotDialog').showModal();
   mealSlotShowStep('msdStepRecipeDetail');
   $('#msdRecipeDetailTitle').textContent = recipeTok.recipeTitle;
   $('#msdInstructions').textContent = '';
