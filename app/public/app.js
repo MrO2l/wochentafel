@@ -17,6 +17,12 @@ const state = {
   saving: false,
   view: 'sheet',
   day: 0,
+  // AP1.1 (projects/wochenplaner-design-nacharbeiten/plan.md): eigener, von "day" unabhaengiger
+  // Mobile-Tag fuer die jetzt permanente "Essen & Kochen"-Tabelle (siehe renderMealDayNav()) --
+  // eine gemeinsame Variable mit "day" wuerde die Tagesnavigation der Hauptraster-Tagesansicht
+  // ungewollt an die des Essensplans koppeln, obwohl beides unabhaengige Ansichten sind. Default
+  // wie beim analogen Hauptraster-Boot-Verhalten (siehe boot()) der heutige Wochentag.
+  mealDay: (new Date().getDay() + 6) % 7,
   recipes: [] // AP2.2: haushaltsweite Rezeptkarten-Uebersicht, unabhaengig von der Wochenansicht
 };
 
@@ -246,27 +252,9 @@ function renderListLink(row, ri, d) {
   btn.addEventListener('click', () => openDayList(ri, d));
   return btn;
 }
-/* Entsprechender Link fuer Zeilen mit mode:'week' ("Essen & Kochen"): oeffnet den
-   Essensplan der ganzen Woche statt einer einzelnen Tageszelle. */
-function renderWeekLink(row) {
-  const totalCount = row.meals.reduce((n, meal) => n + meal.cells.filter(c => c && c.length).length, 0);
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'listlink' + (totalCount ? ' filled' : '');
-  btn.appendChild(iconSvg('i-liste'));
-  const lbl = document.createElement('span');
-  lbl.className = 'll-label';
-  lbl.textContent = totalCount ? 'Essensplan öffnen' : 'Essensplan für die Woche anlegen';
-  btn.appendChild(lbl);
-  if (totalCount) {
-    const badge = document.createElement('span');
-    badge.className = 'badge';
-    badge.textContent = String(totalCount);
-    btn.appendChild(badge);
-  }
-  btn.addEventListener('click', openMealPlan);
-  return btn;
-}
+// AP1.1: renderWeekLink() (Button "Essensplan öffnen" fuer die alte Einstiegskarte) ist mit dem
+// #mealplan-Overlay-Wegfall entfallen -- "Essen & Kochen" ist jetzt permanent sichtbar, kein
+// Link/Button noetig, der sie erst oeffnet.
 
 /* AP3.1/AP3.3 (Konzept-Hauptraster-Option-B.md Abschnitt 3/5): gemeinsamer Avatar-Chip-Baustein
    (Kreis mit Initiale aus row.label, bei gemeinsamen Zeilen Haus-Icon statt Initiale) -- von
@@ -581,17 +569,20 @@ function initFocusBlocks() {
   $('#callsInput').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addCall(); } });
 }
 
-/* ---------------- AP3.2: Inhalte der beiden neuen Linksmenue-Ansichten "Einkaufen &
-   Besorgungen" / "Essen & Kochen". Fachlogik/Datenhaltung bleibt vollstaendig unveraendert
-   (dieselben Zeilen, dieselben Overlays, dasselbe openDayList()/openMealPlan()) -- hier werden
-   die bereits vorhandenen renderListLink()/renderWeekLink()-Bausteine in einem eigenen
-   Kartenraster wiederverwendet. Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19): urspruenglich
-   ein ZWEITER, zusaetzlicher Einstieg neben einem gleichwertigen Link im Hauptraster -- renderSheet()
-   zeigt diese Zeilen inzwischen nicht mehr an (siehe dort), diese beiden Ansichten sind daher jetzt
-   der jeweils EINZIGE Einstiegspunkt. Werden wie renderSheet()/renderDay() bei jeder
-   Datenaenderung ueber renderAll() neu gezeichnet, auch waehrend die jeweilige Ansicht gerade
-   nicht sichtbar ist (reines display:none/-block, siehe .app-view in style-v2.css — kein
-   erneutes Rendern beim Ansichtswechsel selbst noetig). */
+/* ---------------- AP3.2: Inhalt der Linksmenue-Ansicht "Einkaufen & Besorgungen". Fachlogik/
+   Datenhaltung bleibt vollstaendig unveraendert (dieselben Zeilen, dasselbe openDayList()) --
+   hier wird der bereits vorhandene renderListLink()-Baustein in einem eigenen Kartenraster
+   wiederverwendet. Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19): urspruenglich ein
+   ZWEITER, zusaetzlicher Einstieg neben einem gleichwertigen Link im Hauptraster -- renderSheet()
+   zeigt diese Zeile inzwischen nicht mehr an (siehe dort), diese Ansicht ist daher jetzt der
+   EINZIGE Einstiegspunkt. Wird wie renderSheet()/renderDay() bei jeder Datenaenderung ueber
+   renderAll() neu gezeichnet, auch waehrend die Ansicht gerade nicht sichtbar ist (reines
+   display:none/-block, siehe .app-view in style-v2.css — kein erneutes Rendern beim
+   Ansichtswechsel selbst noetig).
+   AP1.1-Update: "Essen & Kochen" folgte urspruenglich demselben Karten-Link-Muster
+   (renderWeekLink()/openMealPlan(), siehe Git-Historie) -- ist mit dem #mealplan-Overlay-Wegfall
+   entfallen, diese Ansicht ist jetzt permanent die Tabelle selbst statt eines Links dorthin (siehe
+   renderMealPlanEntry() weiter unten). */
 function renderShoppingView() {
   const wrap = $('#shoppingLists');
   if (!wrap) return;
@@ -632,23 +623,11 @@ function renderShoppingView() {
     wrap.appendChild(section);
   });
 }
-function renderMealPlanEntry() {
-  const wrap = $('#mealplanEntry');
-  if (!wrap) return;
-  wrap.textContent = '';
-  const row = state.data.rows.find(r => r.mode === 'week');
-  if (!row) {
-    const p = document.createElement('p');
-    p.className = 'view-empty';
-    p.textContent = 'Für diese Woche ist aktuell keine Essensplan-Zeile angelegt.';
-    wrap.appendChild(p);
-    return;
-  }
-  const card = document.createElement('div');
-  card.className = 'mealplan-entry-card';
-  card.appendChild(renderWeekLink(row)); // dieselbe Schaltflaeche/Zaehlung wie im Hauptraster
-  wrap.appendChild(card);
-}
+// AP1.1: renderMealPlanEntry() (die eigentliche Renderfunktion fuer die jetzt permanente
+// "Essen & Kochen"-Tabelle) steht weiter unten, direkt bei renderMealPlanHead()/
+// renderMealPlanBody()/renderMealDayNav() -- diese Stelle hatte zuvor nur die kleine
+// Einstiegskarte mit "Essensplan öffnen"-Button gebaut (renderWeekLink()), die mit dem
+// Overlay-Wegfall entfallen ist.
 
 /* ---------------- AP2.2 (projects/wochenplaner-rezeptkarten/plan.md): Rezeptkarten-Ansicht.
    Anders als die Wochendaten oben (state.data) sind Rezepte KEIN Bestandteil einer einzelnen
@@ -914,10 +893,11 @@ function syncFromDOM() {
   if (motto) state.data.motto = cellToTokens(motto);
   const notes = root.querySelector('[data-bind="notes"]');
   if (notes) state.data.notes = cellToTokens(notes);
-  // Essensplan-Zellen liegen in einem eigenen Overlay ausserhalb von .stage/#dayview (so wie
-  // Blatt und Tagesansicht immer beide im Dokument stehen, siehe Dokumentation 4.9, hier um
-  // eine dritte Darstellung erweitert) — deshalb unabhaengig von der aktiven Ansicht immer
-  // mitsynchronisiert, nicht nur wenn das Overlay gerade sichtbar ist.
+  // Essensplan-Zellen liegen in #view-essen ausserhalb von .stage/#dayview (so wie Blatt und
+  // Tagesansicht immer beide im Dokument stehen, siehe Dokumentation 4.9, hier um eine dritte
+  // Darstellung erweitert -- AP1.1: vormals ein eigenes #mealplan-<dialog>-Overlay, seit dem
+  // Wegfall des Overlays eine ganz normale, permanente .app-view) — deshalb unabhaengig von der
+  // aktiven Ansicht immer mitsynchronisiert, nicht nur wenn "Essen & Kochen" gerade sichtbar ist.
   document.querySelectorAll('.mp-cell[data-mealcell]').forEach(el => {
     const [mi, di] = el.getAttribute('data-mealcell').split(',').map(Number);
     const weekRow = state.data.rows.find(r => r.mode === 'week');
@@ -1242,23 +1222,24 @@ function renderDayListBody() {
    eine Tabelle statt sieben getrennter Tageslinks. Zellen sind direkt beschreibbare
    Token-Felder wie im Hauptraster (kein Checkbox-Konzept, Mahlzeiten werden nicht
    abgehakt). ---------------- */
-function openMealPlan() {
-  syncFromDOM();
-  const mon = parseISO(state.weekStart);
-  const sun = parseISO(state.weekStart); sun.setDate(sun.getDate() + 6);
-  $('#mpSub').textContent =
-    'KW ' + isoWeek(mon) + ' · ' +
-    mon.toLocaleDateString('de-DE', { day: '2-digit', month: 'long' }) + ' – ' +
-    sun.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' });
+// AP1.1 (projects/wochenplaner-design-nacharbeiten/plan.md): "Essen & Kochen" ist jetzt eine
+// PERMANENTE Ansicht -- ersetzt das vorherige openMealPlan()/closeMealPlan()-Paar (kein Button/
+// #mealplan-<dialog>-Umweg mehr). renderMealPlanEntry() ist der Einstiegspunkt, den renderAll()
+// bereits vorher kannte (frueher fuer die kleine Einstiegskarte, jetzt fuer die vollstaendige
+// Tabelle inkl. KW-Unterzeile) -- kein neuer Aufruf-/Renderpfad noetig, nur ein neuer Inhalt.
+function renderMealPlanEntry() {
+  const sub = $('#mpSub');
+  if (sub) {
+    const mon = parseISO(state.weekStart);
+    const sun = parseISO(state.weekStart); sun.setDate(sun.getDate() + 6);
+    sub.textContent =
+      'KW ' + isoWeek(mon) + ' · ' +
+      mon.toLocaleDateString('de-DE', { day: '2-digit', month: 'long' }) + ' – ' +
+      sun.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' });
+  }
   renderMealPlanHead();
   renderMealPlanBody();
-  document.getElementById('mealplan').showModal();
-}
-// AP2.2: siehe Kommentar bei closeDayList() -- syncFromDOM() (Zellen-Eintraege aus der
-// Essensplan-Tabelle uebernehmen) laeuft ueber das "close"-Ereignis, damit es fuer JEDEN
-// Schliessweg greift, nicht nur den Button-Klick (z.B. auch bei ESC, vorher gar nicht moeglich).
-function closeMealPlan() {
-  document.getElementById('mealplan').close();
+  renderMealDayNav();
 }
 function renderMealPlanHead() {
   const headRow = $('#mpHeadRow');
@@ -1267,7 +1248,8 @@ function renderMealPlanHead() {
   DAYS.forEach((name, i) => {
     const d = parseISO(state.weekStart); d.setDate(d.getDate() + i);
     const th = document.createElement('th');
-    if (i === todayIdx) th.className = 'today';
+    th.dataset.day = String(i); // AP1.1: Mobile-Tagesumschalter blendet darueber alle Spalten bis auf state.mealDay aus (siehe style.css)
+    if (i === todayIdx) th.classList.add('today');
     th.innerHTML = `<span class="dw"></span><span class="dt"></span>`;
     th.querySelector('.dw').textContent = name;
     th.querySelector('.dt').textContent = fmtShort(d);
@@ -1279,6 +1261,36 @@ function renderMealPlanHead() {
     }
     headRow.appendChild(th);
   });
+}
+// AP1.1: Mobile-Tagesumschalter fuer die jetzt permanente Essensplan-Tabelle, im Erscheinungsbild
+// bewusst analog #daynav/renderDay() (Hauptraster) -- baut denselben Tages-Pillenstreifen (gleiche
+// .daynav-Klasse), steuert aber (anders als dort) KEINE zweite Ansicht/DOM-Kopie, sondern nur eine
+// CSS-Spaltenausblendung auf DERSELBEN Tabelle (#mpTable[data-active-day], siehe style.css) -- eine
+// echte zweite DOM-Kopie der Zellen wuerde syncFromDOM() dieselbe [mi,di]-Zelle doppelt vorfinden
+// (Kollisionsrisiko, siehe Rueckmeldung an ANORAK/JOHNSON zur Konzept-Diskussion). Kein
+// syncFromDOM()-Aufruf vor dem Tageswechsel noetig (anders als renderDay()): die Zellen selbst
+// werden beim Wechsel nicht neu aufgebaut, nur ein-/ausgeblendet -- ein gerade in Bearbeitung
+// befindlicher Zelleninhalt eines anderen Tages geht dabei nicht verloren.
+function renderMealDayNav() {
+  const nav = $('#mpDayNav');
+  if (!nav) return;
+  nav.textContent = '';
+  const todayIdx = todayColumnIndex();
+  DAYS.forEach((name, i) => {
+    const d = parseISO(state.weekStart); d.setDate(d.getDate() + i);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('aria-current', String(i === state.mealDay));
+    if (i === todayIdx) b.classList.add('today');
+    b.innerHTML = '<span></span><small></small>';
+    b.querySelector('span').textContent = DAYS_S[i];
+    b.querySelector('small').textContent = fmtShort(d);
+    b.onclick = () => { state.mealDay = i; renderMealDayNav(); };
+    nav.appendChild(b);
+  });
+  nav.children[state.mealDay]?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  const table = $('#mpTable');
+  if (table) table.dataset.activeDay = String(state.mealDay);
 }
 // AP3.2 (projects/wochenplaner-rezeptkarten/plan.md): strukturierte Anzeige + manuelle
 // Bearbeitung eines zugewiesenen Rezepts (Snapshot-Token {t:'recipe', recipeId, recipeTitle,
@@ -1392,7 +1404,8 @@ function renderMealPlanBody() {
     tr.appendChild(tdLbl);
     for (let d = 0; d < 7; d++) {
       const td = document.createElement('td');
-      if (d === todayIdx) td.className = 'today';
+      td.dataset.day = String(d); // AP1.1: siehe renderMealPlanHead() -- Mobile-Tagesumschalter
+      if (d === todayIdx) td.classList.add('today');
       // AP3.2: eine Zelle mit Rezept-Zuweisung bekommt die strukturierte Anzeige/Bearbeitung
       // (buildRecipeAssignToken()) statt der freien contentEditable-Zelle -- siehe Kommentar dort.
       const recipeTok = (meal.cells[d] || []).find(t => t && t.t === 'recipe');
@@ -1851,11 +1864,9 @@ async function boot() {
   // sobald body.printing-daylist gesetzt ist) — keine Laufzeit-Style-Injektion noetig/erlaubt.
   $('#dlPrint').onclick = () => { syncFromDOM(); document.body.classList.add('printing-daylist'); window.print(); };
 
-  $('#mpClose').onclick = closeMealPlan;
-  $('#mealplan').addEventListener('click', e => { if (e.target.id === 'mealplan') closeMealPlan(); });
-  // syncFromDOM() (Essensplan-Zelleneintraege uebernehmen) laeuft hier bewusst ueber das
-  // "close"-Ereignis statt nur im Button-Klick, siehe Kommentar bei closeMealPlan().
-  $('#mealplan').addEventListener('close', () => { syncFromDOM(); renderAll(); });
+  // AP1.1: kein #mealplan-<dialog> mehr, also kein eigener close-Event-Sync-Pfad noetig -- die
+  // permanente Tabelle nutzt bereits den generischen, delegierten "input"-Listener oben
+  // (data-mealcell ist dort bereits gelistet) fuer markDirty()/Autosave, exakt wie .stage/#dayview.
   $('#mpPrint').onclick = () => { syncFromDOM(); document.body.classList.add('printing-mealplan'); window.print(); };
 
   // AP2.2: Rezeptkarten-Ansicht + Anlegen-/Bearbeiten-Formular.

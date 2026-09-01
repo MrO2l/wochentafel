@@ -440,18 +440,16 @@ td.weekcell .listlink .badge{position:static; margin-left:auto}
    Ecken/Schatten unveraendert). "top:26px" statt vertikaler Zentrierung, damit die Karte wie
    zuvor (".daylist-overlay{align-items:flex-start;padding:26px 14px}") nahe am oberen Rand
    erscheint statt seitenmittig -- reine Positionsuebernahme, keine optische Aenderung. */
-dialog.daylist, dialog.mealplan{
+/* AP1.1 (projects/wochenplaner-design-nacharbeiten/plan.md): "dialog.mealplan" (das ehemalige
+   Essensplan-Overlay) ist mit dem Wegfall von #mealplan entfallen, ebenso die eigens dafuer
+   noetig gewesene max-width:980px-Ausnahme -- #daylist ist jetzt der einzige Nutzer dieser
+   Basisregel. */
+dialog.daylist{
   border:0; margin:0; padding:0; position:fixed; top:26px; left:50%; transform:translateX(-50%);
   max-height:calc(100vh - 52px); overflow-x:hidden; overflow-y:auto;
   background:var(--surface); width:100%; max-width:640px; border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,.3);
 }
-dialog.daylist::backdrop, dialog.mealplan::backdrop{background:rgba(20,26,32,.45)}
-/* dialog.mealplan (Tag+Klasse) statt nur .mealplan: die Basisregel oben nutzt jetzt ebenfalls
-   "dialog.daylist, dialog.mealplan" (Spezifitaet Element+Klasse) -- ohne das gleiche Praefix
-   hier wuerde diese Regel (nur Klasse, niedrigere Spezifitaet) nicht mehr gewinnen, egal an
-   welcher Stelle sie im Stylesheet steht (im Regressionstest so aufgefallen: Essensplan-Karte
-   blieb bei 640px statt 980px breit). */
-dialog.mealplan{max-width:980px}
+dialog.daylist::backdrop{background:rgba(20,26,32,.45)}
 /* Design-Mischmasch-Fix, zweite Runde (Nutzer-Feedback 2026-08-19): der Pastell-Farbtupfer-
    Verlauf hier gehoert zur selben veralteten Design-Runde wie der frueher entfernte
    body{background}-Verlauf (siehe dortiger Kommentar) und wurde ebenso ersatzlos durch eine
@@ -474,7 +472,6 @@ dialog.mealplan{max-width:980px}
 .daylist-head .sub{font-size:12px; color:var(--muted); margin-top:1px}
 .daylist-head .grow{flex:1}
 .daylist-body{padding:14px 18px 20px}
-.mealplan .daylist-body{padding-top:12px}
 
 .dl-section{margin-bottom:16px}
 .dl-items{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px}
@@ -523,6 +520,40 @@ dialog.mealplan{max-width:980px}
 tr.mealrow td{height:78px}
 .mp-table .mp-cell{padding:6px 8px; font-size:12.5px; line-height:1.5}
 .mp-table .mp-cell:empty::before{font-size:11.5px}
+
+/* AP1.1 (projects/wochenplaner-design-nacharbeiten/plan.md): Mobile-Tagesumschalter fuer die
+   jetzt permanente Essensplan-Tabelle. Default versteckt (Desktop zeigt die volle Tabelle) --
+   ".daynav" (Basis-Optik, siehe "Tagesansicht (Handy)" unten) ist selbst IMMER display:flex, war
+   bisher aber nur ueber den versteckten Elternknoten ".dayview" unsichtbar; #mpDayNav haengt nicht
+   in ".dayview", braucht daher diese eigene Sichtbarkeitsregel. */
+.mp-daynav{display:none}
+@media screen and (max-width:767.98px){
+  .mp-daynav{display:flex}
+  /* Reine Spalten-Ausblendung auf DERSELBEN Tabelle (kein zweiter DOM-Baum, siehe app.js-
+     Kommentar bei renderMealDayNav()) -- ".col"-Elemente muessen mit ausgeblendet werden, sonst
+     reserviert das "table-layout:fixed" der Tabelle trotzdem deren Spaltenbreite. */
+  #mpTable[data-active-day] col[data-day],
+  #mpTable[data-active-day] th[data-day],
+  #mpTable[data-active-day] td[data-day]{display:none}
+  #mpTable[data-active-day="0"] col[data-day="0"]{display:table-column}
+  #mpTable[data-active-day="0"] th[data-day="0"], #mpTable[data-active-day="0"] td[data-day="0"]{display:table-cell}
+  #mpTable[data-active-day="1"] col[data-day="1"]{display:table-column}
+  #mpTable[data-active-day="1"] th[data-day="1"], #mpTable[data-active-day="1"] td[data-day="1"]{display:table-cell}
+  #mpTable[data-active-day="2"] col[data-day="2"]{display:table-column}
+  #mpTable[data-active-day="2"] th[data-day="2"], #mpTable[data-active-day="2"] td[data-day="2"]{display:table-cell}
+  #mpTable[data-active-day="3"] col[data-day="3"]{display:table-column}
+  #mpTable[data-active-day="3"] th[data-day="3"], #mpTable[data-active-day="3"] td[data-day="3"]{display:table-cell}
+  #mpTable[data-active-day="4"] col[data-day="4"]{display:table-column}
+  #mpTable[data-active-day="4"] th[data-day="4"], #mpTable[data-active-day="4"] td[data-day="4"]{display:table-cell}
+  #mpTable[data-active-day="5"] col[data-day="5"]{display:table-column}
+  #mpTable[data-active-day="5"] th[data-day="5"], #mpTable[data-active-day="5"] td[data-day="5"]{display:table-cell}
+  #mpTable[data-active-day="6"] col[data-day="6"]{display:table-column}
+  #mpTable[data-active-day="6"] th[data-day="6"], #mpTable[data-active-day="6"] td[data-day="6"]{display:table-cell}
+  /* Bekanntes Ueberlappungsproblem (siehe Mobile-Baseline-Screenshot, plan.md AP1.1): mit nur
+     einer sichtbaren Tagesspalte braucht die Beschriftungsspalte nicht mehr 130px, mehr Platz
+     fuer die einzige Tagesspalte. */
+  .mp-table col.lbl{width:96px}
+}
 
 /* ---------------- Tagesansicht (Handy) ---------------- */
 .dayview{display:none; padding:10px 10px 60px; max-width:760px; margin:0 auto}
@@ -630,6 +661,10 @@ body:not(.section-wochenuebersicht) .cal-only{display:none !important}
 .view-header{margin-bottom:1.25rem}
 .view-header h1{display:flex; align-items:center; gap:.5rem; color:var(--primary); font-weight:800; font-size:1.6rem; margin:0 0 .4rem}
 .view-lead{color:var(--text-body); opacity:.8; margin:0; max-width:640px}
+/* AP1.1: KW-/Datumsbereich-Unterzeile der jetzt permanenten Essensplan-Ansicht (#mpSub) -- vorher
+   in .daylist-head .sub (ehemaliger #mealplan-Dialogkopf) gestylt, hier derselbe unauffaellige
+   "Sub-Label"-Look wie .week-header-bar .sub (style-v2.css) fuer den analogen Anwendungsfall. */
+.view-header .sub{color:var(--text-body); opacity:.75; font-size:.85rem; margin-top:.2rem}
 /* AP3.5-Kontrastnachbesserung: --text-body bei 75% Deckkraft auf --background ergibt rechnerisch
    nur ca. 4,16:1 -- unter der AA-Schwelle (4,5:1) fuer normal grossen Fliesstext. Gezielt nur hier
    (nicht an der globalen --text-body-Variable, die auch opak an vielen anderen Stellen verwendet
@@ -648,10 +683,8 @@ body:not(.section-wochenuebersicht) .cal-only{display:none !important}
 .shopping-day .listlink svg{width:20px; height:20px}
 @media (max-width:575.98px){ .shopping-days{grid-template-columns:repeat(4,1fr)} }
 
-.mealplan-entry-card{max-width:420px}
-.mealplan-entry-card .listlink{flex-direction:row; justify-content:flex-start; gap:.75rem; height:auto; min-height:64px; padding:.75rem 1rem; font-size:.95rem; border-radius:var(--radius)}
-.mealplan-entry-card .listlink svg{width:26px; height:26px}
-.mealplan-entry-card .listlink .badge{position:static; margin-left:auto}
+/* AP1.1: ".mealplan-entry-card" (Einstiegskarte mit "Essensplan öffnen"-Button) ist mit dem
+   #mealplan-Overlay-Wegfall entfallen -- "Essen & Kochen" ist jetzt permanent die Tabelle selbst. */
 
 /* ---------------- AP2.2 (projects/wochenplaner-rezeptkarten/plan.md): neue Ansicht
    "Rezeptkarten" -- wie "Einkaufen"/"Essen & Kochen" oben neue, in diesem Arbeitspaket
@@ -694,8 +727,9 @@ body:not(.section-wochenuebersicht) .cal-only{display:none !important}
 .recipe-assign-freetext{color:var(--text-body); opacity:.8; font-size:.75rem; white-space:pre-line}
 
 /* Strukturierte Anzeige/Bearbeitung eines zugewiesenen Rezepts (Snapshot-Token {t:'recipe',...},
-   server.js) -- verwendet SOWOHL in der kompakten Tabelle oben ALS AUCH im vollstaendigen
-   Essensplan-Overlay (#mealplan), siehe buildRecipeAssignToken() in app.js. Ersetzt dort die
+   server.js) -- verwendet SOWOHL in der kompakten Tabelle oben ALS AUCH in der vollstaendigen,
+   seit AP1.1 permanenten Essensplan-Tabelle (#view-essen), siehe buildRecipeAssignToken() in
+   app.js. Ersetzt dort die
    sonst freie contentEditable-Zelle, da der Inhalt strukturiert (Objekt-Referenzen, keine reinen
    Tokens) statt per DOM-Scraping (cellToTokens()) ausgelesen wird. */
 .recipe-assign-token{background:var(--secondary); border-radius:calc(var(--radius) - 2px); padding:.45rem .55rem; font-size:.75rem}
@@ -868,12 +902,31 @@ dialog.recipe-form::backdrop{background:rgba(20,26,32,.45)}
      das halbtransparente Abdunkeln hinter der Karte) als deckende graue Flaeche unter die Karte
      mit aus -- im Druck-Regressionstest so aufgefallen. Die alte div-Overlay-Loesung hatte
      denselben Fall bereits ueber "#daylistOverlay{background:none}" abgefangen. */
-  dialog.daylist::backdrop, dialog.mealplan::backdrop{background:none}
+  dialog.daylist::backdrop{background:none}
 
-  body.printing-mealplan > *:not(#mealplan){display:none !important}
-  body.printing-mealplan .mealplan{max-width:none; box-shadow:none; border-radius:0; background:#fff}
-  body.printing-mealplan .daylist-head{background:#f2f4f6}
-  body.printing-mealplan .daylist-head .legacy-btn{display:none}
+  /* AP1.1 (projects/wochenplaner-design-nacharbeiten/plan.md): kein #mealplan-<dialog> mehr --
+     dasselbe ".app-view"-Muster wie der Hauptraster-Druck oben (Zeile 799ff. in style-v2.css:
+     "#view-wochenuebersicht{display:block !important}" + uebrige Views ausgeblendet), nur fuer
+     "#view-essen" statt "#view-wochenuebersicht". ".app-sidebar{display:none}"/".app-main{padding:0}"
+     gelten bereits unbedingt fuer JEDEN Druck (siehe Regel oben, nicht wiederholt). Eigene,
+     spezifischere Selektoren noetig, weil die unbedingte Grundregel oben "#view-wochenuebersicht"
+     erzwingt und "#view-essen" verbirgt -- ohne body.printing-mealplan-Praefix (und damit hoehere
+     Spezifitaet) wuerde diese hier ins Leere laufen. */
+  body.printing-mealplan #view-wochenuebersicht,
+  body.printing-mealplan #view-einkaufen,
+  body.printing-mealplan #view-rezepte{display:none !important}
+  body.printing-mealplan #view-essen{display:block !important}
+  /* Ueberschrift/Lead-Text der Ansicht beim Druck ausgeblendet, gleiches Muster wie bereits bei
+     ".composer,.mini-pal,.mealplan-toolbar" oben (unbedingt, jeder Druck) -- ".view-lead" gab es
+     im alten Dialogkopf nicht, "#mpSub" (KW/Datumsbereich) bleibt bewusst sichtbar wie zuvor. */
+  body.printing-mealplan .view-lead, body.printing-mealplan #mpPrint{display:none !important}
+  /* Mobile-Tagesumschalter (siehe media-query weiter oben) blendet sonst Tagesspalten aus --
+     gedruckt wird immer die volle Woche, unabhaengig vom zuletzt auf dem Handy gewaehlten Tag.
+     !important noetig, um die (auf ein schmales Druck-Viewport theoretisch ebenfalls zutreffende)
+     Mobile-Regel zuverlaessig zu uebersteuern. */
+  body.printing-mealplan #mpDayNav{display:none !important}
+  body.printing-mealplan .mp-table th[data-day], body.printing-mealplan .mp-table td[data-day]{display:table-cell !important}
+  body.printing-mealplan .mp-table col[data-day]{display:table-column !important}
   /* A4 quer auf einer Seite: 277×190mm nutzbare Flaeche bei 10mm Rand (Standard-@page ist
      bereits Querformat, siehe oben — hier nur die Tabellenmasse ans Papier angepasst).
      4 Mahlzeiten-Zeilen a 30mm + 12mm Kopfzeile = 132mm, bleibt darunter — bewusst grosszuegig,
