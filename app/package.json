@@ -1,7 +1,7 @@
 {
   "name": "wochenplaner",
   "version": "1.0.0",
-  "description": "Familien-Wochenplaner mit A4-Druckansicht, Piktogrammen und PostgreSQL-Speicherung",
+  "description": "Wochentafel – Wochenplan für die ganze Familie mit A4-Druckansicht, Piktogrammen und PostgreSQL-Speicherung",
   "type": "module",
   "main": "server.js",
   "engines": { "node": ">=20" },

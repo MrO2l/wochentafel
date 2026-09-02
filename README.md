@@ -1,6 +1,6 @@
-# Familien-Wochenplan
+# Wochentafel
 
-Wochenplaner für die ganze Familie: am Rechner ausfüllen, auf **A4 quer** ausdrucken,
+Der Wochenplan für die ganze Familie: am Rechner ausfüllen, auf **A4 quer** ausdrucken,
 vom Handy nachschauen. Mit Piktogrammen für Schule, Ganztagsschule, Arzt, Sport,
 Einkauf und zwei Dutzend weitere wiederkehrende Termine.
 

@@ -3,8 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#8D7C75">
-<title>Familien-Wochenplan</title>
+<!-- AP6-Nachtrag (Bugfix, entdeckt beim Umsetzen der Markenumbenennung): theme-color war noch
+     der alte Taupe-Ton (#8D7C75) aus der Zeit vor AP4.2 -- die Bildschirmpalette wechselte dort
+     bereits auf Gruen (#2F7A3D, siehe style-v2.css :root), dieser eine Meta-Tag wurde damals
+     uebersehen. Hier korrigiert, kein Teil des eigentlichen AP6-Auftrags (Markenname), aber
+     direkt zusammenhaengend mit bereits abgenommenem AP4.2 -- an ANORAK zurueckgemeldet. -->
+<meta name="theme-color" content="#2F7A3D">
+<title>Wochentafel</title>
 <!-- AP3.1 (siehe Asset-Vendoring-Konzept-v2.md): Bootstrap/Bootstrap Icons/Open Sans lokal
      vendored, kein CDN-Zugriff mehr zur Laufzeit (siehe angepasste CSP in server.js, ohne
      fonts.googleapis.com/fonts.gstatic.com-Ausnahme).
@@ -147,7 +152,7 @@
     <div class="head">
       <div>
         <h1 class="font-heading" id="wu-h1">Unsere Woche</h1>
-        <div class="sub" id="householdName">Familien-Wochenplan</div>
+        <div class="sub" id="householdName">Wochentafel</div>
       </div>
       <div class="motto cell" contenteditable="true" data-ph="Motto / Schwerpunkt dieser Woche …" data-bind="motto"></div>
       <div class="meta">
