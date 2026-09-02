@@ -151,13 +151,8 @@
       </div>
       <div class="motto cell" contenteditable="true" data-ph="Motto / Schwerpunkt dieser Woche …" data-bind="motto"></div>
       <div class="meta">
-        <!-- AP3.1: "js-kw-label"/"js-range-label" sind zusaetzliche, rein technische Marker-Klassen
-             fuer qs(pane, sel) (app.js) -- IDs bleiben unveraendert (bestehende CSS-Regeln/etwaige
-             externe Referenzen greifen weiterhin), die Klasse ermoeglicht denselben Selektor-String
-             fuer die neue "naechste Woche"-Pane (#nextPane), die aus ID-Eindeutigkeitsgruenden keine
-             gleichlautenden IDs tragen kann. -->
-        <div class="kw js-kw-label" id="kwLabel">KW –</div>
-        <div class="js-range-label" id="rangeLabel">– bis –</div>
+        <div class="kw" id="kwLabel">KW –</div>
+        <div id="rangeLabel">– bis –</div>
       </div>
     </div>
 
@@ -176,9 +171,8 @@
     <div class="grid-card card">
       <table id="grid">
         <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
-        <!-- AP3.1: "js-head-row"/"js-grid-body" siehe Kommentar bei "js-kw-label" oben. -->
-        <thead><tr class="js-head-row" id="headRow"><th class="corner">Wer / Was</th></tr></thead>
-        <tbody class="js-grid-body" id="gridBody"></tbody>
+        <thead><tr id="headRow"><th class="corner">Wer / Was</th></tr></thead>
+        <tbody id="gridBody"></tbody>
       </table>
     </div>
 
@@ -207,61 +201,10 @@
       </div>
     </div>
   </div>
-
-  <!-- ================= AP3.1 (projects/wochenplaner-design-nacharbeiten/plan.md, "Architektur-
-       Fundament: State-/DOM-Entkopplung fuer Zwei-Wochen-Betrieb"): kompakte, gleichzeitig NEBEN
-       der aktuellen Woche editierbare Zweit-Pane fuer die unmittelbar folgende Woche -- immer
-       panes.current.weekStart + 7 Tage, KEINE eigene Datums-/Archiv-Navigation (siehe loadWeek()/
-       panes.next in app.js). Bewusst NICHT im vollen A4-Blattformat (".sheet" ist fest 281mm breit,
-       fuer eine zweite, gleichzeitig sichtbare Pane auf ueblichen Bildschirmen ungeeignet), sondern
-       eine kompakte Kartenvariante derselben Tabelle -- erbt dieselben generischen Zell-/Zeilen-/
-       Avatar-Regeln (table/th/td/.cell/.avatar/tr.person usw. in style.css sind NICHT auf "#grid"
-       beschraenkt; die wenigen gezielt "#grid"-praefigierten Kopfzeilen-/Rahmenfarb-Regeln wurden
-       um ".next-pane-grid" ergaenzt, siehe dort). Eigenes Kopfzeilen-Chrome (KW/Datumsbereich/
-       Status, Klassen "js-kw-label"/"js-range-label"/"js-pane-status") -- Pflichtbestandteil der
-       AP3.1-Abnahme ("Kopfzeilen-Chrome pro Pane eindeutig zuordenbar"). Fokusbloecke/Legende/
-       Vorlage/Export/Druck bleiben bewusst NUR bei der aktuellen Woche (nicht Teil der im Plan
-       festgelegten AP3.1-"harter Kern"-Funktionsliste) -- an ANORAK/JOHNSON zurueckgemeldet, falls
-       das kuenftig erweitert werden soll. Auf Mobile bleibt diese Karte ausgeblendet
-       (body.view-day .stage{display:none} deckt sie automatisch mit ab, siehe .next-pane-card-
-       Regel in style.css) -- dort uebernimmt stattdessen der Wochen-Umschalter-Tab (#paneSwitch) im
-       gemeinsamen #dayview weiter unten. ================= -->
-  <div class="next-pane-card" id="nextPane" data-pane="next">
-    <div class="next-pane-head">
-      <div>
-        <h2 class="font-heading">Nächste Woche</h2>
-        <div class="next-pane-sub">
-          <span class="js-kw-label">KW –</span>
-          <span class="js-range-label">– bis –</span>
-        </div>
-      </div>
-      <span class="status js-pane-status" id="nextStatus">…</span>
-    </div>
-    <div class="motto cell" contenteditable="true" data-ph="Motto / Schwerpunkt dieser Woche …" data-bind="motto"></div>
-    <div class="grid-card card">
-      <table class="next-pane-grid">
-        <colgroup><col class="lbl"><col><col><col><col><col><col><col></colgroup>
-        <thead><tr class="js-head-row"><th class="corner">Wer / Was</th></tr></thead>
-        <tbody class="js-grid-body"></tbody>
-      </table>
-    </div>
-    <div class="notes">
-      <div class="cell" contenteditable="true" data-ph="Was diese Woche sonst noch wichtig ist …" data-bind="notes"></div>
-    </div>
-  </div>
 </div>
 
 <!-- ================= Tagesansicht ================= -->
 <div class="dayview" id="dayview">
-  <!-- ================= AP3.1 (Frage 3, Mobile bleibt sequenziell): Wochen-Umschalter fuer die
-       mobile Tagesansicht -- es gibt bewusst KEIN zweites #dayview-Markup (Ruecklauf an ANORAK/
-       JOHNSON): beide Panes teilen sich dieselbe Tagesansicht, dieser Umschalter bestimmt nur,
-       welche Pane sie aktuell befuellt (switchDayViewPane() in app.js). Die jeweils inaktive Pane
-       bleibt unveraendert als JS-Objekt (Daten + Dirty-Zustand) erhalten. ================= -->
-  <div class="pane-switch" id="paneSwitch" role="tablist" aria-label="Woche wählen">
-    <button type="button" class="pane-switch-btn" data-pane="current" role="tab" aria-selected="true">Diese Woche <small class="pane-tab-status"></small></button>
-    <button type="button" class="pane-switch-btn" data-pane="next" role="tab" aria-selected="false">Nächste Woche <small class="pane-tab-status"></small></button>
-  </div>
   <div class="daynav" id="daynav"></div>
   <div id="dayCards"></div>
 </div>
