@@ -1,10 +1,17 @@
 :root{
   /* Bildschirm-Palette: freundlicher/waermer als die urspruengliche sachliche Grau-Blau-Optik
      (Design-Feedback ueber mehrere Runden, siehe mockups/tageslisten-mockup.html fuer die
-     Entwicklung). Flaechen/Rahmen warme Creme-/Taupe-Toene, dazu eine matte Vierfarb-Palette
+     Entwicklung). Flaechen/Rahmen warme Creme-Toene, dazu eine matte Vierfarb-Palette
      fuer die Personenzeilen und ein eigener Ton fuer die "Heute"-Hervorhebung. Fuer den Ausdruck
      werden die Bildschirm-Toene unten in @media print gezielt zurueckgesetzt — der Ausdruck
      bleibt bewusst nuechtern.
+     AP4.2-Nachtrag (projects/wochenplaner-design-nacharbeiten/plan.md, 2026-09-02): die im
+     folgenden Verlauf mehrfach erwaehnte "Taupe/Greige"-Herkunft von --primary/--secondary ist
+     historisch zu lesen -- der Umleitungs-MECHANISMUS (--accent/--tint/--tint2/--surface zeigen
+     auf die Design-v2-Variablen in style-v2.css) gilt unveraendert, nur deren konkrete Hex-Werte
+     wurden dort im Zuge von AP4.2 auf ein warmes Gruen/Gelb/Creme-Schema umgestellt (siehe
+     Kommentar in style-v2.css :root sowie FARBPALETTE.md). Kein Aenderungsbedarf an dieser
+     Redirect-Logik selbst.
      Design-Mischmasch-Fix, Fortsetzung (Nutzer-Feedback 2026-08-19, zweite Runde): --accent
      (urspruenglich ein eigenstaendiges, helles Kobaltblau) traegt inzwischen ALLE verbliebenen
      Bildschirm-Bereiche mit — auch .sheet .head, .daylist/.mealplan-Overlay, .dayview/.daynav
@@ -39,19 +46,26 @@
   --accent-tint:var(--secondary); /* Hover-/aktiv-Toenung, jetzt einheitlich die Design-v2-
      Palette statt der frueheren eigenstaendigen Blau-Toenung */
   --accent-ring:var(--primary);   /* Fokus-/Hover-Rahmenton, dito */
-  --today-bg:#fbead0; --today-line:#c17a35; /* "Heute"-Hervorhebung: warmer Amber-Ton */
-  /* Matte, gedeckte Vierfarb-Palette fuer die vier Personenzeilen. Design-Mischmasch-Fix
-     (Nutzer-Feedback 2026-08-19): vormals Ziegelrot/Taubenblau/Senfgelb/Salbeigruen, jetzt auf
-     Toene umgestellt, die sich saettigungs-/hellwertmaessig eng an --primary (#8D7C75, Design-
-     Vorgabe v2) anlehnen, dabei aber je einen eigenen, klar unterscheidbaren Farbton (Terrakotta/
-     Steinblau/Ocker/Salbei) behalten — funktional weiterhin zur Unterscheidung der vier
-     Familienmitglieder gedacht, jetzt nur "leiser"/waermer statt der alten, kraeftigeren Toene.
-     Tints werden bewusst per color-mix() aus der jeweiligen Basisfarbe abgeleitet (gleiches
-     Muster wie .day-col.alt in style-v2.css) statt separat gepflegter Hex-Werte. */
-  --fam-a:#A9785F; --fam-a-tint:color-mix(in srgb, var(--fam-a) 15%, var(--background));   /* gedecktes Terrakotta */
-  --fam-b:#7D8B95; --fam-b-tint:color-mix(in srgb, var(--fam-b) 15%, var(--background));   /* gedecktes Steinblau */
-  --fam-c:#B79661; --fam-c-tint:color-mix(in srgb, var(--fam-c) 15%, var(--background));   /* gedecktes Ocker */
-  --fam-d:#7C9179; --fam-d-tint:color-mix(in srgb, var(--fam-d) 15%, var(--background));   /* gedecktes Salbeigruen */
+  /* AP4.2 (projects/wochenplaner-design-nacharbeiten/plan.md): --today-bg/--today-line sowie die
+     vier --fam-*-Personenfarben sind NICHT auf --primary/--secondary/--background zurueckgefuehrt
+     (siehe AP4.1-Befund/FARBPALETTE.md Abschnitt 2) -- werden deshalb hier explizit auf die im
+     freigegebenen Mockup (ap4-variante-a-farbpalette.html) verwendeten neuen Werte umgestellt,
+     damit sie nicht vom neuen Look ausgenommen bleiben. --ok/--warn/--bad bewusst UNVERAENDERT
+     (siehe FARBPALETTE.md Abschnitt 2: eigene semantische Rolle, --ok liegt bereits nah an der
+     neuen --primary -- eine gewollte, aber nicht erzwungene Kohaerenz). Druck bleibt unveraendert:
+     alle vier Personenfarben werden fuer den Ausdruck ueber die bereits bestehende
+     "tr.person.fam-*{background:var(--tint)}"/".avatar{display:none}"-Regel im @media
+     print-Block unten neutralisiert (unabhaengig vom hier gesetzten Bildschirm-Wert), "Heute"
+     ueber "td.today,th.today{background:none !important}" im selben Block. */
+  --today-bg:#FFF1D6; --today-line:#E0932E; /* "Heute"-Hervorhebung: warmer Amber-Ton */
+  /* Matte, gedeckte Vierfarb-Palette fuer die vier Personenzeilen -- etwas kraeftiger/
+     kindgerechter als die vorherige, sehr gedeckte Taupe-Ableitung, bewusst weiterhin matt statt
+     neonbunt (siehe FARBPALETTE.md Abschnitt 2). Tints weiterhin per color-mix() aus der
+     jeweiligen Basisfarbe abgeleitet (unveraendertes Muster). */
+  --fam-a:#E07856; --fam-a-tint:color-mix(in srgb, var(--fam-a) 15%, var(--background));   /* warme Koralle/Terrakotta */
+  --fam-b:#5B93C4; --fam-b-tint:color-mix(in srgb, var(--fam-b) 15%, var(--background));   /* Himmelblau */
+  --fam-c:#D6A428; --fam-c-tint:color-mix(in srgb, var(--fam-c) 15%, var(--background));   /* Sonnenocker */
+  --fam-d:#5E9456; --fam-d-tint:color-mix(in srgb, var(--fam-d) 15%, var(--background));   /* Laubgruen */
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}

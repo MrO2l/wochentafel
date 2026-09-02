@@ -21,13 +21,29 @@
    angelehnt (ohne fuehrendes $), damit der Bezug zur Design-Vorgabe-Datei nachvollziehbar bleibt.
    ========================================================================================= */
 :root{
-  --primary:      #8D7C75; /* Dunkles Taupe/Greige -- Ueberschriften, Primaer-Aktionen, Akzente */
-  --secondary:    #E2DCD5; /* Helles Greige -- Spalten-Hintergruende, funktionale Bloecke */
-  --background:   #FCFAF8; /* Gebrochenes Warmweiss -- App-Gesamthintergrund & Karten */
-  --border-color: #D1C7BD; /* Softes Sand-Grau -- Trennlinien & Rahmen */
-  --text-body:    #564D47; /* Warmes Dunkelbraun/Grau -- Fliesstext */
-  --primary-dark: #6f605a; /* Abgeleitet aus --primary, nur fuer Hover/aktive Zustaende (Kontrast) */
-  --radius:       0.5rem;  /* Abschnitt 4.4: globaler Soft-Edge-Radius */
+  /* AP4.2 (projects/wochenplaner-design-nacharbeiten/plan.md): Farbschema-Auffrischung nach
+     Vorbild "FamilienWelt" (Generated_Image.jpg) -- Nutzer hat AP4.1-Variante A (nur Farbpalette,
+     Struktur/Layout unveraendert) freigegeben. Werte 1:1 aus dem freigegebenen Mockup
+     projects/wochenplaner-design-nacharbeiten/mockups/ap4-variante-a-farbpalette.html bzw.
+     FARBPALETTE.md uebernommen -- warmes Grasgruen statt Taupe (angelehnt an den gruenen
+     CTA-Button des Referenzbilds), sonniges, aber entsaettigtes Butterblond statt Greige, warmes
+     Creme statt kuehlem Warmweiss. Kontrastwerte (WCAG-Formel, siehe FARBPALETTE.md Abschnitt 1):
+     Weiss auf --primary ~5,3:1, --primary-Text auf --background ~5,0:1 -- beide klar ueber der
+     AA-Schwelle (4,5:1) fuer normalen Fliesstext, ohne die bei der vorherigen Taupe-Palette
+     noetige "-dark"-Sonderregel fuer Textflaechen (siehe .focus-goals/.focus-notes-Kommentare
+     weiter unten, die bereits VOR AP4.2 wegen eines Kontrastproblems der alten Taupe-Farbe
+     eingefuehrt wurden -- --primary-dark bleibt als Variable bestehen, deckt jetzt aber ein neues
+     Gruen ab, keine strukturelle Aenderung an diesen Regeln noetig).
+     Druck bleibt unveraendert: die App-eigenen @media print{:root{...}}-Reset-Bloecke in
+     style.css setzen fuer den Ausdruck eigene, von dieser Bildschirm-Palette unabhaengige,
+     neutrale Werte (vor der Uebernahme geprueft, siehe FARBPALETTE.md Abschnitt 4). */
+  --primary:      #2F7A3D; /* Warmes Grasgruen -- Ueberschriften, Primaer-Aktionen, Akzente */
+  --secondary:    #FBEFC6; /* Sanftes Butterblond -- Spalten-Hintergruende, funktionale Bloecke */
+  --background:   #FFFBF2; /* Warmes Creme -- App-Gesamthintergrund & Karten */
+  --border-color: #E8DBB8; /* Warmer Sandton -- Trennlinien & Rahmen */
+  --text-body:    #4A3F2E; /* Warmes Dunkelbraun -- Fliesstext */
+  --primary-dark: #23602E; /* Dunkles Waldgruen -- nur fuer Hover/aktive Zustaende (Kontrast) */
+  --radius:       0.5rem;  /* Abschnitt 4.4: globaler Soft-Edge-Radius -- unveraendert (Variante A) */
 }
 
 html,body{margin:0; padding:0}
