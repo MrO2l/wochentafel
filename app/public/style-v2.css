@@ -156,6 +156,15 @@ hr, .border, .border-top, .border-bottom, .border-start, .border-end{
 .app-nav .nav-btn:focus-visible{
   outline:2px solid var(--primary); outline-offset:2px;
 }
+/* AP7.2 (projects/wochenplaner-design-nacharbeiten/plan.md): "Konto" ist der einzige Eintrag in
+   .app-nav ohne data-view/eigene .app-view (oeffnet stattdessen den bestehenden Kontomenue-Dialog,
+   siehe app.js openMenu()) -- optisch als unterster, leicht abgesetzter Punkt hervorgehoben
+   (Standard-UX-Muster "Konto/Einstellungen unten"). "margin-top:auto" schiebt ihn in der
+   Spalten-Flexbox (Desktop) ans untere Ende, unabhaengig davon, wie viele Menuepunkte davor
+   stehen -- kein hartcodierter Abstand noetig. */
+.app-nav .nav-btn-account{
+  margin-top:auto; padding-top:.9rem; border-top:1px solid var(--border-color);
+}
 
 .app-main{ flex:1 1 auto; min-width:0; padding:1.5rem clamp(1rem,3vw,2.25rem) 3rem; }
 .app-view{ display:none }
@@ -175,6 +184,12 @@ hr, .border, .border-top, .border-bottom, .border-start, .border-end{
   .app-sidebar .brand{ display:none }
   .app-nav{ flex-direction:row; justify-content:space-around }
   .app-nav .nav-btn{ min-height:56px }
+  /* AP7.2: der Desktop-Abstandstrick (margin-top:auto/border-top, siehe .nav-btn-account oben)
+     ist fuer die Zeilen-Flexbox (Tab-Leiste) hier ohne vertikale Push-Wirkung -- "Konto" landet
+     als letztes Kind der Leiste ohnehin ganz rechts, dieselbe "letzte Position"-Logik wie auf
+     Desktop, nur horizontal statt vertikal. Push-Abstand/Trennlinie explizit zurueckgesetzt, damit
+     kein unbeabsichtigter vertikaler Versatz/keine falsch orientierte Randlinie entsteht. */
+  .app-nav .nav-btn-account{ margin-top:0; padding-top:.5rem; border-top:0 }
   .app-main{ padding-bottom:5.5rem } /* Platz fuer die fixierte untere Leiste */
 }
 

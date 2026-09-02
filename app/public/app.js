@@ -853,6 +853,12 @@ function setSection(section) {
   // auf den Hauptraster; ausserhalb der Wochenuebersicht blenden wir sie ueber diese body-Klasse
   // aus (Sichtbarkeitsregeln siehe style.css, nahe .palette-wrap/.only-day).
   document.body.classList.toggle('section-wochenuebersicht', section === 'wochenuebersicht');
+  // AP7.1: haelt die jeweils aktive Seite zusaetzlich als data-Attribut fest (statt nur als
+  // Boolean fuer "wochenuebersicht ja/nein") -- ermoeglicht body[data-section="rezepte"]-Selektoren
+  // in style.css fuer Kopfzeilen-Elemente, die auf MEHREREN, aber nicht allen vier Seiten sichtbar
+  // sein sollen (".week-only", siehe dort), ohne fuer jede Seite eine eigene boolesche Klasse
+  // einfuehren zu muessen.
+  document.body.dataset.section = section;
 }
 
 /* ---------------- Daten aus dem DOM zurueckschreiben ---------------- */

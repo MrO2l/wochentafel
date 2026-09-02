@@ -46,7 +46,7 @@
 <link rel="stylesheet" href="style-v2.css">
 <link rel="stylesheet" href="style.css">
 </head>
-<body class="section-wochenuebersicht">
+<body class="section-wochenuebersicht" data-section="wochenuebersicht">
 
 <!-- ================= AP3.2: linksseitiges Piktogramm-Menue + drei getrennte Ansichten
      (Wochenuebersicht / Einkaufen & Besorgungen / Essen & Kochen), uebernommen aus
@@ -99,6 +99,18 @@
         <i class="bi bi-journal-richtext"></i>
         <span>Rezept&shy;karten</span>
       </button>
+      <!-- AP7.2 (projects/wochenplaner-design-nacharbeiten/plan.md): "Konto" aus der oberen
+           Kopfzeile hierher verschoben -- Standard-UX-Muster (Konto/Einstellungen als unterster
+           Punkt der Hauptnavigation). Bewusst OHNE "data-view"/aria-current: dieser Button
+           schaltet keine .app-view um (setSection() ignoriert ihn folgerichtig, da sein
+           btn.dataset.view stets undefined bleibt), sondern oeffnet weiterhin denselben
+           Kontomenue-Dialog wie zuvor -- id="btnMenu" UNVERAENDERT beibehalten, damit die
+           bestehende Verdrahtung in boot() ($('#btnMenu').onclick = openMenu) ohne JS-Aenderung
+           weiterfunktioniert; nur das Markup zog um. -->
+      <button type="button" class="nav-btn nav-btn-account" id="btnMenu">
+        <i class="bi bi-person-circle"></i>
+        <span>Konto</span>
+      </button>
     </nav>
   </aside>
 
@@ -115,14 +127,37 @@
      ausschliesslich Nav-Links. -->
 <nav class="navbar toolbar" aria-label="Werkzeugleiste">
 <div class="container-fluid">
+  <!-- AP7.1 (projects/wochenplaner-design-nacharbeiten/plan.md): kontextsensitive Kopfzeile.
+       Bestandsaufnahme (siehe Aenderungsverlauf/Ruecklauf an ANORAK): Wochenuebersicht, Einkaufen
+       und Essen & Kochen zeigen alle DIESELBE geladene Wochendatenzeile (state.weekStart/
+       state.data, ein Datensatz pro (household_id, week_start) -- siehe loadWeek()/renderAll() in
+       app.js) -- Datums-Navigation/"Diese Woche"/Archiv/Status sind deshalb fuer alle DREI Seiten
+       gleichermassen sinnvoll (kein separates Essensplan-Archiv noetig, JOHNSONs Arbeitshypothese
+       bestaetigt), nur "Rezeptkarten" ist wochenunabhaengig (haushaltsweite Stammdaten in
+       state.recipes, eigener Ladepfad ueber loadRecipes()/GET /api/recipes, voellig unabhaengig
+       von state.weekStart). Neue Marker-Klasse ".week-only" (analog zum bereits bestehenden
+       ".cal-only"-Muster direkt darunter) blendet diese Gruppe nur auf "Rezeptkarten" aus, siehe
+       body[data-section]-Selektor in style.css. "Drucken" bekommt zusaetzlich ".cal-only": der
+       globale Button druckt technisch IMMER den Hauptraster (renderSheet()+window.print(), siehe
+       app.js) -- auf "Essen & Kochen" gibt es dafuer bereits einen eigenen, funktionierenden,
+       seiteneigenen Drucken-Button (#mpPrint, in #view-essen, unveraendert), auf "Einkaufen"
+       existiert bewusst kein Seiten-Druck (nur einzelne Tageslisten ueber #dlPrint im
+       Tagesliste-Dialog) und auf "Rezeptkarten" gibt es gar keine Druckfunktion -- der globale
+       Button war dort schlicht falsch verdrahtet (siehe Bug-Report/Screenshot). "Vorlage"/"+
+       Person"/"+ Zeile"/"Tagesansicht" bleiben unveraendert ueber das bestehende ".cal-only"
+       (Wochenuebersicht-only) geregelt -- diese Aktionen sind app.js zufolge zwar technisch nicht
+       auf alle Zeilentypen beschraenkt, ihr etabliertes, einzig vorgesehenes Bedienmuster
+       (Personenzeilen/Vorlage-Struktur, "+ Person"/"+ Zeile") gehoert aber eindeutig zum
+       Hauptraster, nicht zu Einkaufen/Essen & Kochen. "Konto" ist in die linke Navigation
+       umgezogen (AP7.2, siehe .app-sidebar oben). -->
   <div class="tb-row">
-    <button class="btn btn-primary btn-sm" id="btnPrint">Drucken</button>
-    <div class="sep hide-sm"></div>
-    <button class="btn btn-outline-secondary btn-sm" id="btnPrev" title="Woche zurück">&#9664;</button>
-    <input type="date" id="monday">
-    <button class="btn btn-outline-secondary btn-sm" id="btnNext" title="Woche vor">&#9654;</button>
-    <button class="btn btn-outline-secondary btn-sm hide-sm" id="btnToday">Diese Woche</button>
-    <select id="archive" class="hide-sm" title="Gespeicherte Wochen"><option value="">Archiv …</option></select>
+    <button class="btn btn-primary btn-sm cal-only" id="btnPrint">Drucken</button>
+    <div class="sep hide-sm cal-only"></div>
+    <button class="btn btn-outline-secondary btn-sm week-only" id="btnPrev" title="Woche zurück">&#9664;</button>
+    <input type="date" id="monday" class="week-only">
+    <button class="btn btn-outline-secondary btn-sm week-only" id="btnNext" title="Woche vor">&#9654;</button>
+    <button class="btn btn-outline-secondary btn-sm hide-sm week-only" id="btnToday">Diese Woche</button>
+    <select id="archive" class="hide-sm week-only" title="Gespeicherte Wochen"><option value="">Archiv …</option></select>
     <div class="sep hide-sm cal-only"></div>
     <button class="btn btn-outline-secondary btn-sm hide-sm cal-only" id="btnTemplateApply">Vorlage einfügen</button>
     <button class="btn btn-outline-secondary btn-sm hide-sm cal-only" id="btnTemplateSave">Als Vorlage sichern</button>
@@ -133,8 +168,7 @@
     <button class="btn btn-outline-secondary btn-sm cal-only" id="btnView">Tagesansicht</button>
     <button class="btn btn-outline-secondary btn-sm only-day" id="btnIcons">Symbole</button>
     <div class="grow"></div>
-    <span class="status" id="status">…</span>
-    <button class="btn btn-outline-secondary btn-sm small" id="btnMenu">Konto</button>
+    <span class="status week-only" id="status">…</span>
   </div>
   <div class="tb-row palette-wrap">
     <div class="palette" id="palette"></div>

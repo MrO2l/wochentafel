@@ -213,9 +213,11 @@ button,input,select{font:inherit}
 .toolbar .btn:hover{background:var(--secondary); color:var(--text-body)}
 .toolbar .btn-primary{background:var(--primary); border-color:var(--primary); color:#fff}
 .toolbar .btn-primary:hover{background:var(--primary-dark); border-color:var(--primary-dark); color:#fff}
-/* "Konto"-Button war schon vor der Migration kleiner als die uebrigen Werkzeugleisten-Buttons
-   (".legacy-btn.small") -- hier per zusaetzlicher, weiterhin so benannter Klasse beibehalten. */
-.toolbar .btn.small{padding:4px 8px; font-size:12px}
+/* AP7.2 (projects/wochenplaner-design-nacharbeiten/plan.md): ".toolbar .btn.small" galt
+   ausschliesslich dem "Konto"-Button (kleiner als die uebrigen Werkzeugleisten-Buttons) -- der ist
+   in die linke Navigation umgezogen und traegt dort keine .btn/.small-Klassen mehr (siehe
+   .nav-btn-account in style-v2.css), diese Regel traf danach also auf kein Element im Dokument
+   mehr zu. Ersatzlos entfernt statt als toter Code stehen gelassen. */
 .tb-label{font-size:12px; color:var(--muted)}
 .sep{width:1px; align-self:stretch; background:var(--border-color); margin:0 3px}
 .grow{flex:1}
@@ -671,8 +673,24 @@ body:not(.section-wochenuebersicht) #btnIcons{display:none !important}
    zur Piktogramm-Palette oben ausgeblendet. Statt jede ID einzeln aufzufuehren, tragen die
    betroffenen Elemente in index.html zusaetzlich die Klasse .cal-only -- Markup-Struktur/
    Flex-Layout von .tb-row bleibt dabei unveraendert. Drucken/Datumsnavigation/Archiv/Status/
-   Konto sind NICHT Teil von .cal-only und bleiben in allen drei Ansichten sichtbar. */
+   Konto sind NICHT Teil von .cal-only und bleiben in allen drei Ansichten sichtbar.
+   AP7.1-Nachtrag (Bug-Report mit Screenshot, projects/wochenplaner-design-nacharbeiten/plan.md):
+   dieser Kommentar ist seit AP2.2 (viertes Menuepunkt "Rezeptkarten") nicht mehr vollstaendig
+   zutreffend -- "Drucken" ist seitdem ebenfalls .cal-only (siehe unten), da der globale Button
+   technisch immer den Hauptraster druckt (nicht sinnvoll ausserhalb der Wochenuebersicht,
+   "Essen & Kochen" hat dafuer laengst einen eigenen, funktionierenden Drucken-Button #mpPrint).
+   Datumsnavigation/Archiv/Status bleiben weiterhin NICHT Teil von .cal-only (sie gelten
+   gleichermassen fuer Wochenuebersicht/Einkaufen/Essen & Kochen, nur nicht fuer Rezeptkarten,
+   siehe .week-only direkt darunter). */
 body:not(.section-wochenuebersicht) .cal-only{display:none !important}
+
+/* AP7.1: Datums-Navigation/"Diese Woche"/Archiv/Status sind an eine konkret geladene Woche
+   gebunden -- Wochenuebersicht, Einkaufen UND Essen & Kochen zeigen laut Bestandsaufnahme (siehe
+   Kommentar bei .tb-row in index.html) alle dieselbe Wochendatenzeile (state.weekStart/state.data
+   in app.js), nur "Rezeptkarten" ist wochenunabhaengig (haushaltsweite Stammdaten, state.recipes).
+   Analog zu .cal-only ueber eine Marker-Klasse plus body[data-section]-Selektor (gesetzt in
+   setSection(), app.js) statt jede ID einzeln aufzufuehren. */
+body[data-section="rezepte"] .week-only{display:none !important}
 
 @media (max-width:900px){
   .toolbar{padding:8px}
