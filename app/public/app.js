@@ -8,26 +8,77 @@ const DAYS_S = ['Mo','Di','Mi','Do','Fr','Sa','So'];
 // Matte Vierfarb-Palette, reihum den Personenzeilen zugeordnet (siehe :root-Variablen in style.css).
 const FAM_CLASSES = ['fam-a', 'fam-b', 'fam-c', 'fam-d'];
 
-const state = {
-  user: null,
-  weekStart: null,
-  data: null,
-  updatedAt: null,
-  dirty: false,
-  saving: false,
-  view: 'sheet',
-  day: 0,
-  // AP1.1 (projects/wochenplaner-design-nacharbeiten/plan.md): eigener, von "day" unabhaengiger
-  // Mobile-Tag fuer die jetzt permanente "Essen & Kochen"-Tabelle (siehe renderMealDayNav()) --
-  // eine gemeinsame Variable mit "day" wuerde die Tagesnavigation der Hauptraster-Tagesansicht
-  // ungewollt an die des Essensplans koppeln, obwohl beides unabhaengige Ansichten sind. Default
-  // wie beim analogen Hauptraster-Boot-Verhalten (siehe boot()) der heutige Wochentag.
-  mealDay: (new Date().getDay() + 6) % 7,
-  recipes: [] // AP2.2: haushaltsweite Rezeptkarten-Uebersicht, unabhaengig von der Wochenansicht
-};
+// AP3.1 (projects/wochenplaner-design-nacharbeiten/plan.md, "Architektur-Fundament: State-/
+// DOM-Entkopplung fuer Zwei-Wochen-Betrieb"): zwei feste, benannte Pane-Instanzen statt eines
+// einzelnen globalen State-Objekts, damit aktuelle und kommende Woche unabhaengig voneinander
+// gehalten, editiert, ge-debounced, gespeichert und bei 409-Konflikten re-rendered werden koennen.
+// BEWUSST genau zwei benannte Instanzen (panes.current/panes.next), KEINE generische Map/Array
+// nach weekStart -- es gibt nie mehr als diese zwei gleichzeitig editierbaren Wochen (siehe
+// Ruecklauf an ANORAK/JOHNSON, Frage 1). "root" ist das DOM-Wurzelelement der jeweiligen Pane
+// (gesetzt in boot(), siehe dort) und Basis fuer die pane-gescopte Abfragefunktion qs() unten.
+function createPane(name) {
+  return {
+    name,
+    weekStart: null,
+    data: null,
+    updatedAt: null,
+    dirty: false,
+    saving: false,
+    view: 'sheet',
+    day: 0,
+    // AP1.1: eigener, von "day" unabhaengiger Mobile-Tag fuer die "Essen & Kochen"-Tabelle (siehe
+    // renderMealDayNav()) -- nur bei panes.current tatsaechlich genutzt (Essensplan bleibt ausserhalb
+    // des AP3.1-Umbaus, siehe dortiger Kommentar), hier trotzdem Teil der Pane-Form (Plan-Vorgabe).
+    mealDay: (new Date().getDay() + 6) % 7,
+    root: null,
+    saveTimer: null,
+    // Palette-Fokus-Tracking (siehe insertIcon()) muss pane-bewusst sein, sonst landet ein per
+    // Piktogramm-Palette eingefuegtes Icon in der falschen Woche, wenn zuletzt in der jeweils
+    // anderen Pane getippt wurde.
+    lastCell: null,
+    lastRange: null,
+  };
+}
+const panes = { current: createPane('current'), next: createPane('next') };
+// Rueckwaertskompatibler Alias: der weit ueberwiegende Teil des bestehenden Codes (Essensplan,
+// Einkaufslisten, Tagesliste, Rezeptkarten, Fokusbloecke, Toolbar-Aktionen wie Vorlage/Export/
+// Zeile hinzufuegen) bleibt bewusst UNVERAENDERT und liest/schreibt weiterhin "state" -- das ist
+// ABSICHTLICH derselbe Objekt-Verweis wie panes.current, kein Duplikat. Nur die im Plan explizit
+// benannten "harter Kern"-Funktionen (renderHead/renderSheet/renderDay/syncFromDOM/markDirty/
+// setStatus/save/loadWeek/activeContainer/todayColumnIndex/applyTemplate/saveTemplate/exportJSON/
+// importJSON) wurden auf einen expliziten, optionalen "pane"-Parameter (Default: panes.current)
+// umgestellt; jeder bestehende, nicht angepasste Aufruf verhaelt sich dadurch exakt wie zuvor --
+// das ist die Grundlage fuer die im Plan geforderte Regressionsfreiheit.
+const state = panes.current;
+// "user"/"recipes" sind app-weite, nicht wochenbezogene Daten (kein Teil der Pane-Form oben) --
+// bleiben aus Grunden minimaler Diff-Flaeche auf demselben Objekt wie bisher (state === panes.
+// current), aber konzeptionell nicht pane-spezifisch.
+state.user = null;
+state.recipes = []; // AP2.2: haushaltsweite Rezeptkarten-Uebersicht, unabhaengig von der Wochenansicht
 
 /* ---------------- Hilfsfunktionen ---------------- */
-const $ = sel => document.querySelector(sel);
+const $ = sel => document.querySelector(sel); // app-weite Singletons (Palette, Legende, Dialoge, Toolbar-Chrome der aktuellen Woche)
+// AP3.1: pane-gescopte Variante fuer alles, was es jetzt zweimal im DOM gibt (Grid/Kopfzeilen-
+// Chrome je Pane) -- sucht INNERHALB der Pane-Wurzel (pane.root) statt im gesamten Dokument, damit
+// gleichlautende Marker-Klassen (".js-...") in beiden Panes nicht kollidieren.
+const qs = (pane, sel) => pane.root ? pane.root.querySelector(sel) : null;
+// AP3.1: bestimmt, welche Pane ein gegebenes DOM-Element "gehoert" -- fuer Ereignisse, die nicht
+// bereits ueber einen Funktionsabschluss (Closure) wissen, in welcher Pane sie ausgeloest wurden
+// (globaler "input"-Listener, Palette-Fokus-Tracking, Doppelklick-Icon-Entfernen). Elemente
+// innerhalb der geteilten mobilen Tagesansicht (#dayview) gehoeren der aktuell dort aktiven Pane
+// (siehe dayViewActivePane/switchDayViewPane() weiter unten).
+function paneForElement(el) {
+  if (panes.next.root && panes.next.root.contains(el)) return panes.next;
+  if ($('#dayview')?.contains(el)) return dayViewActivePane;
+  return panes.current;
+}
+// AP3.1: welche Pane zuletzt eine editierbare Zelle fokussiert hat -- bestimmt, wohin die
+// Piktogramm-Palette (insertIcon()) als naechstes einfuegt.
+let activeEditPane = panes.current;
+// AP3.1 (Frage 3, Mobile bleibt sequenziell): welche Pane die geteilte mobile Tagesansicht
+// (#dayview/#daynav/#dayCards) gerade befuellt -- es gibt bewusst KEIN zweites #dayview-Markup,
+// siehe switchDayViewPane() weiter unten.
+let dayViewActivePane = panes.current;
 const pad = n => String(n).padStart(2, '0');
 const isoOf = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseISO = s => new Date(s + 'T00:00:00');
@@ -42,9 +93,9 @@ function isoWeek(d) {
 const fmtShort = d => d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
 // Spaltenindex (0=Mo…6=So) des heutigen Tages, aber nur wenn die aktuell angezeigte Woche das
 // echte heutige Datum ueberhaupt enthaelt — sonst -1 (keine Hervorhebung in fremden Wochen).
-function todayColumnIndex() {
+function todayColumnIndex(pane = panes.current) {
   const t = new Date();
-  return isoOf(toMonday(t)) === state.weekStart ? (t.getDay() + 6) % 7 : -1;
+  return isoOf(toMonday(t)) === pane.weekStart ? (t.getDay() + 6) % 7 : -1;
 }
 
 async function api(method, url, body) {
@@ -148,17 +199,25 @@ function buildLegend() {
   });
 }
 
-let lastRange = null, lastCell = null;
+// AP3.1: "lastCell"/"lastRange" sind jetzt Teil der jeweiligen Pane (siehe createPane()) statt
+// globaler Variablen -- "activeEditPane" (oben, bei panes/qs definiert) merkt sich, welche Pane
+// diese Referenzen gerade traegt, damit die Piktogramm-Palette in die richtige Woche einfuegt.
 document.addEventListener('selectionchange', () => {
   const sel = document.getSelection();
   if (!sel.rangeCount) return;
   const node = sel.getRangeAt(0).startContainer;
   const cell = (node.nodeType === 1 ? node : node.parentElement)?.closest('.cell[contenteditable]');
-  if (cell) { lastRange = sel.getRangeAt(0).cloneRange(); lastCell = cell; }
+  if (cell) {
+    const pane = paneForElement(cell);
+    pane.lastRange = sel.getRangeAt(0).cloneRange();
+    pane.lastCell = cell;
+    activeEditPane = pane;
+  }
 });
 function insertIcon(id, label) {
-  if (!lastCell || !document.body.contains(lastCell)) { flash('Bitte zuerst in ein Feld tippen.'); return; }
-  if (document.activeElement !== lastCell) lastCell.focus();
+  const pane = activeEditPane;
+  if (!pane.lastCell || !document.body.contains(pane.lastCell)) { flash('Bitte zuerst in ein Feld tippen.'); return; }
+  if (document.activeElement !== pane.lastCell) pane.lastCell.focus();
   const frag = document.createDocumentFragment();
   frag.appendChild(iconSpan(id, label));
   // geschuetztes Leerzeichen, damit der Browser es am Zeilenende nicht verwirft;
@@ -166,7 +225,7 @@ function insertIcon(id, label) {
   const tail = document.createTextNode(label + String.fromCharCode(160));
   frag.appendChild(tail);
   let endNode = tail;
-  if (lastCell.classList.contains('autobreak')) {
+  if (pane.lastCell.classList.contains('autobreak')) {
     // Neue Listen-/Essensplan-Editierfelder (Tagesliste, Essensplan): nach dem Piktogramm
     // automatisch eine neue Zeile beginnen, damit der folgende Text nicht am Icon "klebt"
     // (Design-Feedback). Bewusst nur fuer diese neuen Elemente (Klasse "autobreak") — das
@@ -175,27 +234,33 @@ function insertIcon(id, label) {
     frag.appendChild(br);
     endNode = br;
   }
-  let r = lastRange;
-  if (!r || !lastCell.contains(r.startContainer)) { r = document.createRange(); r.selectNodeContents(lastCell); r.collapse(false); }
+  let r = pane.lastRange;
+  if (!r || !pane.lastCell.contains(r.startContainer)) { r = document.createRange(); r.selectNodeContents(pane.lastCell); r.collapse(false); }
   r.deleteContents(); r.insertNode(frag);
   const after = document.createRange(); after.setStartAfter(endNode); after.collapse(true);
   const sel = document.getSelection(); sel.removeAllRanges(); sel.addRange(after);
-  lastRange = after.cloneRange();
-  markDirty();
+  pane.lastRange = after.cloneRange();
+  markDirty(pane);
 }
 document.addEventListener('dblclick', e => {
   const ic = e.target.closest('.ic');
-  if (ic && ic.closest('.cell[contenteditable]')) { ic.remove(); markDirty(); }
+  if (ic && ic.closest('.cell[contenteditable]')) { const pane = paneForElement(ic); ic.remove(); markDirty(pane); }
 });
 
 /* ---------------- Darstellung: A4-Blatt ---------------- */
-function renderHead() {
-  const mon = parseISO(state.weekStart);
-  const headRow = $('#headRow');
+// AP3.1: "pane" (Default panes.current) bestimmt sowohl Datenquelle (pane.weekStart) als auch
+// DOM-Ziel (qs(pane, ...) statt globalem $()) -- fuer panes.current bleibt das Verhalten dank
+// pane.root === $('#sheet') unveraendert identisch zum bisherigen $('#headRow')/$('#kwLabel')/...
+// Das Datumsfeld (#monday) gibt es nur einmal (Werkzeugleiste, ausserhalb jeder Pane-Wurzel) --
+// "naechste Woche" hat keine eigene Datums-/Archiv-Navigation (immer pane.weekStart + 7 Tage,
+// siehe loadWeek()), deshalb wird es nur fuer panes.current gesetzt.
+function renderHead(pane = panes.current) {
+  const mon = parseISO(pane.weekStart);
+  const headRow = qs(pane, '.js-head-row');
   headRow.querySelectorAll('th:not(.corner)').forEach(th => th.remove());
-  const todayIdx = todayColumnIndex();
+  const todayIdx = todayColumnIndex(pane);
   DAYS.forEach((name, i) => {
-    const d = parseISO(state.weekStart); d.setDate(d.getDate() + i);
+    const d = parseISO(pane.weekStart); d.setDate(d.getDate() + i);
     const th = document.createElement('th');
     const classes = [];
     if (i > 4) classes.push('we');
@@ -212,12 +277,12 @@ function renderHead() {
     }
     headRow.appendChild(th);
   });
-  const sun = parseISO(state.weekStart); sun.setDate(sun.getDate() + 6);
-  $('#kwLabel').textContent = 'KW ' + isoWeek(mon);
-  $('#rangeLabel').textContent =
+  const sun = parseISO(pane.weekStart); sun.setDate(sun.getDate() + 6);
+  qs(pane, '.js-kw-label').textContent = 'KW ' + isoWeek(mon);
+  qs(pane, '.js-range-label').textContent =
     mon.toLocaleDateString('de-DE', { day: '2-digit', month: 'long' }) + ' – ' +
     sun.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' });
-  $('#monday').value = state.weekStart;
+  if (pane === panes.current) $('#monday').value = pane.weekStart;
 }
 
 function editableCell(tokens, attrs, cls) {
@@ -272,14 +337,18 @@ function buildAvatarChip(row) {
   return avatar;
 }
 
-function renderSheet() {
-  renderHead();
-  const body = $('#gridBody');
+// AP3.1: "pane" (Default panes.current) parametrisiert Datenquelle (pane.data) und DOM-Ziel
+// (qs(pane, ...)); fuer panes.next erbt die Tabelle dieselben generischen Zell-/Zeilen-/Avatar-
+// Regeln aus style.css (die meisten sind nicht auf "#grid" beschraenkt, siehe next-pane-grid-
+// Kommentar in index.html).
+function renderSheet(pane = panes.current) {
+  renderHead(pane);
+  const body = qs(pane, '.js-grid-body');
   body.textContent = '';
   let firstShared = true;
   let personIndex = 0;
-  const todayIdx = todayColumnIndex();
-  state.data.rows.forEach((row, ri) => {
+  const todayIdx = todayColumnIndex(pane);
+  pane.data.rows.forEach((row, ri) => {
     // Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19): Zeilen mit einer eigenen dedizierten
     // Ansicht im Linksmenue ("Essen & Kochen" = mode:'week', "Einkauf & Besorgungen" =
     // listMode:true) werden im Hauptraster nicht mehr dargestellt -- sie sind ausschliesslich
@@ -325,7 +394,7 @@ function renderSheet() {
 
     const del = document.createElement('span');
     del.className = 'rowtool'; del.title = 'Zeile entfernen'; del.textContent = '×';
-    del.onclick = () => { if (confirm('Diese Zeile entfernen?')) { syncFromDOM(); state.data.rows.splice(ri, 1); renderAll(); markDirty(); } };
+    del.onclick = () => { if (confirm('Diese Zeile entfernen?')) { syncFromDOM(pane); pane.data.rows.splice(ri, 1); renderAll(pane); markDirty(pane); } };
     td.appendChild(del);
     tr.appendChild(td);
 
@@ -344,46 +413,56 @@ function renderSheet() {
     body.appendChild(tr);
   });
 
-  const motto = $('[data-bind="motto"]');
-  motto.textContent = ''; motto.appendChild(tokensToFragment(state.data.motto));
-  const notes = $('.notes [data-bind="notes"]');
-  notes.textContent = ''; notes.appendChild(tokensToFragment(state.data.notes));
+  // Motto/Notizen sind ueber qs(pane, ...) gescopt, statt wie zuvor per globalem $() gesucht --
+  // beide Panes haben jetzt je ein eigenes [data-bind="motto"]/[data-bind="notes"]-Element
+  // (next-pane: siehe index.html). Defensiv mit "if (el)" abgesichert, falls eine Pane (z. B.
+  // ein zukuenftiges drittes Pane) diese Felder einmal nicht mitbringt.
+  const motto = qs(pane, '[data-bind="motto"]');
+  if (motto) { motto.textContent = ''; motto.appendChild(tokensToFragment(pane.data.motto)); }
+  const notes = qs(pane, '.notes [data-bind="notes"]');
+  if (notes) { notes.textContent = ''; notes.appendChild(tokensToFragment(pane.data.notes)); }
 }
 
-/* ---------------- Darstellung: Tagesansicht ---------------- */
-function renderDay() {
+/* ---------------- Darstellung: Tagesansicht ----------------
+   AP3.1 (Frage 3, Mobile bleibt sequenziell): renderDay() schreibt IMMER in dieselben, geteilten
+   #daynav/#dayCards-Elemente -- es gibt kein zweites #dayview-Markup. Welche Pane dort gerade
+   sichtbar ist, bestimmt "dayViewActivePane" (siehe switchDayViewPane()); ruft z. B. renderAll()
+   die jeweils NICHT sichtbare Pane auf (etwa nach einem 409-Konflikt im Hintergrund), ist das ein
+   sicherer No-Op, statt die gerade angezeigte andere Pane versehentlich zu ueberschreiben. */
+function renderDay(pane = panes.current) {
+  if (pane !== dayViewActivePane) return;
   const nav = $('#daynav');
   nav.textContent = '';
-  const todayIdx = todayColumnIndex();
+  const todayIdx = todayColumnIndex(pane);
   DAYS.forEach((name, i) => {
-    const d = parseISO(state.weekStart); d.setDate(d.getDate() + i);
+    const d = parseISO(pane.weekStart); d.setDate(d.getDate() + i);
     const b = document.createElement('button');
     b.type = 'button';
-    b.setAttribute('aria-current', String(i === state.day));
+    b.setAttribute('aria-current', String(i === pane.day));
     if (i === todayIdx) b.classList.add('today');
     b.innerHTML = '<span></span><small></small>';
     b.querySelector('span').textContent = DAYS_S[i];
     b.querySelector('small').textContent = fmtShort(d);
-    b.onclick = () => { syncFromDOM(); state.day = i; renderDay(); };
+    b.onclick = () => { syncFromDOM(pane); pane.day = i; renderDay(pane); };
     nav.appendChild(b);
   });
-  nav.children[state.day]?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  nav.children[pane.day]?.scrollIntoView({ inline: 'center', block: 'nearest' });
 
   const wrap = $('#dayCards');
   wrap.textContent = '';
-  const d = parseISO(state.weekStart); d.setDate(d.getDate() + state.day);
+  const d = parseISO(pane.weekStart); d.setDate(d.getDate() + pane.day);
 
   const card = document.createElement('div');
   card.className = 'daycard';
   const h = document.createElement('h3');
-  h.textContent = DAYS[state.day];
+  h.textContent = DAYS[pane.day];
   const sub = document.createElement('span');
   sub.textContent = d.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' });
   h.appendChild(sub);
   card.appendChild(h);
 
   let personIndex = 0;
-  state.data.rows.forEach((row, ri) => {
+  pane.data.rows.forEach((row, ri) => {
     // Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19): analog zu renderSheet() oben --
     // "Essen & Kochen"/"Einkauf & Besorgungen" haben eigene dedizierte Ansichten im
     // Linksmenue (bzw. der unteren Tab-Leiste auf schmalen Bildschirmen, wo diese
@@ -405,7 +484,7 @@ function renderDay() {
     if (row.role) { const s = document.createElement('small'); s.textContent = row.role; whoText.appendChild(s); }
     who.appendChild(whoText);
     line.appendChild(who);
-    line.appendChild(editableCell(row.cells[state.day], { 'data-cell': `${ri},${state.day}` }));
+    line.appendChild(editableCell(row.cells[pane.day], { 'data-cell': `${ri},${pane.day}` }));
     card.appendChild(line);
   });
   wrap.appendChild(card);
@@ -415,13 +494,35 @@ function renderDay() {
   const nh = document.createElement('h3'); nh.textContent = 'Notizen der Woche';
   notesCard.appendChild(nh);
   const nrow = document.createElement('div'); nrow.className = 'dayrow';
-  nrow.appendChild(editableCell(state.data.notes, { 'data-bind': 'notes' }));
+  nrow.appendChild(editableCell(pane.data.notes, { 'data-bind': 'notes' }));
   notesCard.appendChild(nrow);
   wrap.appendChild(notesCard);
 }
 
-function activeContainer() { return state.view === 'sheet' ? $('.stage') : $('#dayview'); }
-function renderAll() { renderSheet(); renderDay(); renderShoppingView(); renderMealPlanEntry(); renderFocusBlocks(); }
+// AP3.1: "current" behaelt ihren bestehenden Sheet-/Tagesansicht-Umschalter (pane.view,
+// unveraendertes AP1.1-Verhalten) -- ausser die geteilte Tagesansicht zeigt gerade "next" (dann
+// hat "current" aktuell keine sichtbare editierbare Flaeche, syncFromDOM() wird dafuer unten
+// defensiv zu einem No-Op statt zu crashen). "next" hat auf Desktop keinen eigenen Sheet-/
+// Tagesansicht-Umschalter (Ruecklauf an ANORAK/JOHNSON, Frage 3) -- ihre editierbare Flaeche ist
+// dort immer die eigene, kompakte Sheet-Karte (pane.root); ist sie stattdessen (auf Mobile) gerade
+// die in #dayview aktive Pane, gilt wie bei "current" das geteilte Markup.
+function activeContainer(pane = panes.current) {
+  if (pane === panes.next) return dayViewActivePane === panes.next ? $('#dayview') : pane.root;
+  if (dayViewActivePane === panes.next) return null;
+  return pane.view === 'sheet' ? $('#sheet') : $('#dayview');
+}
+// AP3.1: "pane" (Default panes.current) haelt renderAll() fuer bestehende Aufrufer (Einkaufen/
+// Essensplan/Fokusbloecke, alle weiterhin current-only, siehe deren Kommentare) exakt unveraendert.
+// Fuer panes.next werden bewusst NUR Sheet/Kopfzeilen-Chrome neu gezeichnet: Einkaufen/Essen &
+// Kochen/Fokusbloecke sind nicht Teil der im Plan festgelegten AP3.1-"harter Kern"-Funktionsliste
+// und zeigten auch vorher nie Daten der naechsten Woche (kein Funktionsverlust).
+function renderAll(pane = panes.current) {
+  if (pane === panes.current) {
+    renderSheet(pane); renderDay(pane); renderShoppingView(); renderMealPlanEntry(); renderFocusBlocks();
+  } else {
+    renderSheet(pane);
+  }
+}
 
 /* ---------------- AP3.3: Fokusbloecke "Wochenziele" / "Besonders diese Woche" /
    "Anrufen/Kontaktieren" (Datenmodell-Fokusbloecke-v2.md). Anders als die Tokenzellen im
@@ -856,24 +957,30 @@ function setSection(section) {
 }
 
 /* ---------------- Daten aus dem DOM zurueckschreiben ---------------- */
-function syncFromDOM() {
-  const root = activeContainer();
+// AP3.1: "pane" (Default panes.current) bestimmt sowohl die DOM-Quelle (activeContainer(pane))
+// als auch das Ziel-Datenobjekt (pane.data). Defensiv gegen "root === null": das passiert, wenn
+// diese Pane gerade (auf Mobile) keine sichtbare editierbare Flaeche hat, weil die geteilte
+// Tagesansicht momentan die jeweils andere Pane zeigt (siehe activeContainer()) -- ihr zuletzt
+// synchronisierter Stand bleibt in diesem Fall unveraendert gueltig, es gibt nichts nachzuholen.
+function syncFromDOM(pane = panes.current) {
+  const root = activeContainer(pane);
+  if (!root) return;
   root.querySelectorAll('[data-cell]').forEach(el => {
     const [ri, di] = el.getAttribute('data-cell').split(',').map(Number);
-    if (state.data.rows[ri]) state.data.rows[ri].cells[di] = cellToTokens(el);
+    if (pane.data.rows[ri]) pane.data.rows[ri].cells[di] = cellToTokens(el);
   });
   root.querySelectorAll('[data-label]').forEach(el => {
     const ri = Number(el.getAttribute('data-label'));
-    if (state.data.rows[ri]) state.data.rows[ri].label = el.textContent.trim().slice(0, 80);
+    if (pane.data.rows[ri]) pane.data.rows[ri].label = el.textContent.trim().slice(0, 80);
   });
   root.querySelectorAll('[data-role]').forEach(el => {
     const ri = Number(el.getAttribute('data-role'));
-    if (state.data.rows[ri]) state.data.rows[ri].role = el.textContent.trim().slice(0, 80);
+    if (pane.data.rows[ri]) pane.data.rows[ri].role = el.textContent.trim().slice(0, 80);
   });
   const motto = root.querySelector('[data-bind="motto"]');
-  if (motto) state.data.motto = cellToTokens(motto);
+  if (motto) pane.data.motto = cellToTokens(motto);
   const notes = root.querySelector('[data-bind="notes"]');
-  if (notes) state.data.notes = cellToTokens(notes);
+  if (notes) pane.data.notes = cellToTokens(notes);
   // AP1.2: Essensplan-Zellen sind seit dem Zell-Klick-Dialog nicht mehr contentEditable (siehe
   // buildMealCellDisplay()) -- es gibt daher kein "[data-mealcell]" mehr, ueber das hier aus dem
   // DOM zurueckgeschrieben werden muesste. Schreibzugriffe laufen jetzt ausschliesslich direkt auf
@@ -881,73 +988,109 @@ function syncFromDOM() {
   // jeweils gefolgt von markDirty() -- dieselbe Debounce-/Speicherkette wie ueberall sonst, nur
   // ohne den Umweg ueber DOM-Scraping. Frueher stand hier eine eigene ".mp-cell[data-mealcell]"-
   // Sync-Schleife (siehe Git-Historie vor AP1.2), die mit dem Wegfall der contentEditable-Zellen
-  // gegenstandslos geworden ist.
+  // gegenstandslos geworden ist. Essensplan bleibt current-only, siehe AP3.1-Scope-Kommentare.
 }
 
-/* ---------------- Speichern ---------------- */
-let saveTimer = null;
-function setStatus(text, cls) { const el = $('#status'); el.textContent = text; el.className = 'status ' + (cls || ''); }
-function markDirty() { state.dirty = true; setStatus('Nicht gespeichert', 'saving'); clearTimeout(saveTimer); saveTimer = setTimeout(save, 1000); }
+/* ---------------- Speichern ----------------
+   AP3.1: eigener Debounce-Timer/"saving"-Flag JE Pane (pane.saveTimer, siehe createPane()) statt
+   eines einzelnen globalen "saveTimer" -- ein Save von Woche A verzoegert/verschluckt dadurch nie
+   mehr den faelligen Save von Woche B, ein 409-Konflikt einer Pane rendert nur noch diese eine
+   Pane neu (renderAll(pane)), nicht mehr versehentlich unbeobachtete Eingaben der anderen. */
+// "pane" als drittes, optionales Argument (statt erstes) -- damit bleiben ALLE bestehenden
+// 2-Argument-Aufrufe (setStatus(text, cls)) im uebrigen, nicht am AP3.1-Umbau beteiligten Code
+// unveraendert und wirken weiterhin auf panes.current.
+function setStatus(text, cls, pane = panes.current) {
+  // "current" nutzt weiterhin den einzigen Werkzeugleisten-Status (#status, ausserhalb jeder
+  // Pane-Wurzel) -- "next" hat ihren eigenen, in ihrer Kopfzeile sichtbaren Status (Pflicht-
+  // bestandteil der AP3.1-Abnahme "Kopfzeilen-Chrome pro Pane eindeutig zuordenbar").
+  const el = pane === panes.current ? $('#status') : qs(pane, '.js-pane-status');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove('saving', 'saved', 'error');
+  if (cls) el.classList.add(cls);
+  // Mobile Wochen-Umschalter-Tabs (#paneSwitch) zeigen zusaetzlich eine Kurzfassung, damit der
+  // Status auch dann pane-eindeutig ablesbar bleibt, wenn die betroffene Pane gerade NICHT die im
+  // gemeinsamen #dayview sichtbare ist (siehe renderPaneSwitch() weiter unten in boot()).
+  if (pane.tabStatusEl) pane.tabStatusEl.textContent = text;
+}
+function markDirty(pane = panes.current) {
+  pane.dirty = true;
+  setStatus('Nicht gespeichert', 'saving', pane);
+  clearTimeout(pane.saveTimer);
+  pane.saveTimer = setTimeout(() => save(pane), 1000);
+}
 function flash(text) { const b = $('#banner'); b.textContent = text; b.classList.add('show'); setTimeout(() => b.classList.remove('show'), 5000); }
 
-async function save() {
-  clearTimeout(saveTimer);
-  if (state.saving || !state.data) return;
-  syncFromDOM();
-  state.saving = true;
-  setStatus('Speichert …', 'saving');
+async function save(pane = panes.current) {
+  clearTimeout(pane.saveTimer);
+  if (pane.saving || !pane.data) return;
+  syncFromDOM(pane);
+  pane.saving = true;
+  setStatus('Speichert …', 'saving', pane);
   try {
-    const res = await api('PUT', `/api/weeks/${state.weekStart}`, { data: state.data, baseUpdatedAt: state.updatedAt });
-    state.updatedAt = res.updatedAt;
-    state.dirty = false;
-    setStatus('Gespeichert ' + new Date(res.updatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }), 'saved');
-    refreshArchive();
+    const res = await api('PUT', `/api/weeks/${pane.weekStart}`, { data: pane.data, baseUpdatedAt: pane.updatedAt });
+    pane.updatedAt = res.updatedAt;
+    pane.dirty = false;
+    setStatus('Gespeichert ' + new Date(res.updatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }), 'saved', pane);
+    if (pane === panes.current) refreshArchive(); // Archivliste ist current-only relevant/sichtbar
   } catch (err) {
     if (err.status === 409) {
-      state.data = err.payload.data;
+      pane.data = err.payload.data;
       // Fokusbloecke (Datenmodell-Fokusbloecke-v2.md): siehe Kommentar in loadWeek() -- derselbe
       // Fallback fuer den Fall, dass die zwischenzeitlich vom anderen Geraet gespeicherte Woche
       // (noch) keine dieser Felder kennt.
-      state.data.goals = state.data.goals || [];
-      state.data.highlights = state.data.highlights || [];
-      state.data.calls = state.data.calls || [];
-      state.updatedAt = err.payload.updatedAt;
-      state.dirty = false;
-      renderAll();
-      setStatus('Neu geladen', 'saved');
-      flash('Diese Woche wurde zwischenzeitlich auf einem anderen Gerät geändert. Der aktuelle Stand vom Server ist jetzt zu sehen.');
+      pane.data.goals = pane.data.goals || [];
+      pane.data.highlights = pane.data.highlights || [];
+      pane.data.calls = pane.data.calls || [];
+      pane.updatedAt = err.payload.updatedAt;
+      pane.dirty = false;
+      renderAll(pane);
+      setStatus('Neu geladen', 'saved', pane);
+      flash((pane === panes.next ? 'Nächste Woche: ' : '') + 'Diese Woche wurde zwischenzeitlich auf einem anderen Gerät geändert. Der aktuelle Stand vom Server ist jetzt zu sehen.');
     } else {
-      setStatus('Nicht gespeichert', 'error');
-      flash('Speichern fehlgeschlagen: ' + err.message);
+      setStatus('Nicht gespeichert', 'error', pane);
+      flash((pane === panes.next ? 'Nächste Woche – ' : '') + 'Speichern fehlgeschlagen: ' + err.message);
     }
-  } finally { state.saving = false; }
+  } finally { pane.saving = false; }
 }
 
-/* ---------------- Woche laden ---------------- */
-async function loadWeek(iso) {
-  if (state.dirty) await save();
+/* ---------------- Woche laden ----------------
+   AP3.1: "pane" als zweites, optionales Argument (Default panes.current) -- bestehende
+   1-Argument-Aufrufe (Wochenwahl/Prev/Next/Heute/Archiv) laden dadurch unveraendert die aktuelle
+   Woche in panes.current. Am Ende (nur fuer panes.current) wird automatisch die "naechste Woche"
+   (pane.weekStart + 7 Tage) in panes.next nachgeladen -- "naechste Woche" hat keine eigene Datums-/
+   Archiv-Navigation, sie folgt immer der aktuellen (siehe Ruecklauf an ANORAK/JOHNSON, Frage 2).
+   Ist panes.next dabei noch dirty (unges. Aenderungen aus der bisherigen "naechsten Woche"), wird
+   sie durch den rekursiven loadWeek(..., panes.next)-Aufruf zuerst regulaer gespeichert (derselbe
+   "if (pane.dirty) await save(pane)"-Weg wie hier oben) -- keine verlorenen Eingaben. */
+async function loadWeek(iso, pane = panes.current) {
+  if (pane.dirty) await save(pane);
   const res = await api('GET', `/api/weeks/${iso}`);
-  state.weekStart = res.weekStart;
-  state.data = res.data;
+  pane.weekStart = res.weekStart;
+  pane.data = res.data;
   // Fokusbloecke (Datenmodell-Fokusbloecke-v2.md): sehr alte, vor diesem Feature gespeicherte
   // Wochen kennen diese drei Felder eventuell noch nicht -- analog zum bestehenden Fallback in
   // importJSON() ("d.goals || []" etc.) hier ebenfalls robust gegen fehlende Schluessel
   // absichern, damit renderFocusBlocks() nicht auf "undefined" trifft.
-  state.data.goals = state.data.goals || [];
-  state.data.highlights = state.data.highlights || [];
-  state.data.calls = state.data.calls || [];
-  state.updatedAt = res.updatedAt;
-  state.dirty = false;
-  renderAll();
+  pane.data.goals = pane.data.goals || [];
+  pane.data.highlights = pane.data.highlights || [];
+  pane.data.calls = pane.data.calls || [];
+  pane.updatedAt = res.updatedAt;
+  pane.dirty = false;
+  renderAll(pane);
   setStatus(res.exists
     ? 'Gespeichert ' + new Date(res.updatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
-    : (res.fromTemplate ? 'Neue Woche aus Vorlage' : 'Neue Woche'), res.exists ? 'saved' : '');
-  $('#archive').value = '';
-  // AP2 (projects/wochenplaner-design-nacharbeiten/plan.md): Read-only-Vorschau der FOLGENDEN
-  // Woche neu laden, sobald sich die geladene Woche aendert (Navigation/Archiv/heute-Button) --
-  // bewusst NACH renderAll() oben, damit die primaere Wochenansicht nicht auf den zusaetzlichen
-  // Request wartet.
-  await loadNextWeekPreview();
+    : (res.fromTemplate ? 'Neue Woche aus Vorlage' : 'Neue Woche'), res.exists ? 'saved' : '', pane);
+  if (pane === panes.current) {
+    $('#archive').value = '';
+    // AP2 (projects/wochenplaner-design-nacharbeiten/plan.md): Read-only-Vorschau der FOLGENDEN
+    // Woche im Essensplan neu laden, sobald sich die geladene Woche aendert -- bleibt unveraendert
+    // eigenstaendig neben panes.next bestehen (siehe dortiger Kommentar), bewusst NACH renderAll()
+    // oben, damit die primaere Wochenansicht nicht auf den zusaetzlichen Request wartet.
+    await loadNextWeekPreview();
+    // AP3.1: panes.next folgt automatisch der geladenen aktuellen Woche.
+    await loadWeek(addDays(pane.weekStart, 7), panes.next);
+  }
 }
 
 async function refreshArchive() {
@@ -968,23 +1111,28 @@ async function refreshArchive() {
   } catch { /* Archiv ist nicht kritisch */ }
 }
 
-/* ---------------- Vorlage ---------------- */
-async function applyTemplate() {
+/* ---------------- Vorlage ----------------
+   AP3.1: "pane" als optionales, trailing Argument (Default panes.current) -- Teil der im Plan
+   benannten "harter Kern"-Liste, bislang aber ausschliesslich ueber die bestehenden, unveraenderten
+   Werkzeugleisten-Buttons (#btnTemplateApply/#btnTemplateSave) fuer panes.current verdrahtet.
+   panes.next bekommt in AP3.1 bewusst keine eigene Vorlage-UI (kein Teil der Mindest-Abnahme,
+   an ANORAK/JOHNSON zurueckgemeldet). */
+async function applyTemplate(pane = panes.current) {
   const { template } = await api('GET', '/api/template');
   if (!template) { flash('Es ist noch keine Vorlage hinterlegt. Lege eine typische Woche an und sichere sie über „Als Vorlage sichern“.'); return; }
-  syncFromDOM();
+  syncFromDOM(pane);
   // Namen (kind+label) bereits vorhandener Zeilen merken: eine Vorlage mit weniger oder
   // anders sortierten Zeilen als die aktuelle Woche (z. B. weil vor "Als Vorlage sichern"
   // eine Zeile geloescht wurde) darf beim Auffuellen fehlender Positionen keine Zeile
   // duplizieren, die unter einem anderen Index schon existiert.
   const rowKey = r => (r.kind || '') + '|' + String(r.label || '').trim().toLowerCase();
-  const existingKeys = new Set(state.data.rows.map(rowKey));
+  const existingKeys = new Set(pane.data.rows.map(rowKey));
   template.rows.forEach((trow, i) => {
-    const row = state.data.rows[i];
+    const row = pane.data.rows[i];
     if (!row) {
       const key = rowKey(trow);
       if (trow.label && existingKeys.has(key)) return; // schon vorhanden, nicht doppelt einfuegen
-      state.data.rows[i] = structuredClone(trow);
+      pane.data.rows[i] = structuredClone(trow);
       existingKeys.add(key);
       return;
     }
@@ -1005,24 +1153,24 @@ async function applyTemplate() {
   });
   // Etwaige Luecken im Array (siehe mergeTemplate()-Kommentar in server.js fuer denselben
   // Mechanismus) sauber entfernen, bevor gerendert/gespeichert wird.
-  state.data.rows = state.data.rows.filter(Boolean);
-  renderAll();
-  markDirty();
+  pane.data.rows = pane.data.rows.filter(Boolean);
+  renderAll(pane);
+  markDirty(pane);
   flash('Vorlage eingefügt – vorhandene Einträge wurden nicht überschrieben.');
 }
-async function saveTemplate() {
-  syncFromDOM();
-  await api('PUT', '/api/template', { data: state.data });
+async function saveTemplate(pane = panes.current) {
+  syncFromDOM(pane);
+  await api('PUT', '/api/template', { data: pane.data });
   flash('Diese Woche ist jetzt die Vorlage für neue Wochen.');
 }
 
 /* ---------------- Import / Export ---------------- */
-function exportJSON() {
-  syncFromDOM();
-  const blob = new Blob([JSON.stringify({ version: 2, weekStart: state.weekStart, ...state.data }, null, 1)], { type: 'application/json' });
+function exportJSON(pane = panes.current) {
+  syncFromDOM(pane);
+  const blob = new Blob([JSON.stringify({ version: 2, weekStart: pane.weekStart, ...pane.data }, null, 1)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `wochenplan_${state.weekStart}.json`;
+  a.download = `wochenplan_${pane.weekStart}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
@@ -1048,13 +1196,13 @@ function htmlToTokens(html) {
   });
   return cellToTokens(root);
 }
-function importJSON(file) {
+function importJSON(file, pane = panes.current) {
   const r = new FileReader();
   r.onload = () => {
     try {
       const d = JSON.parse(r.result);
       if (d.version === 2 && Array.isArray(d.rows)) {
-        state.data = {
+        pane.data = {
           version: 2, motto: d.motto || [], notes: d.notes || [],
           // Fokusbloecke (Datenmodell-Fokusbloecke-v2.md): in aelteren Export-Dateien noch
           // nicht vorhanden, daher wie motto/notes mit leerem Array abgesichert.
@@ -1062,7 +1210,7 @@ function importJSON(file) {
           rows: d.rows
         };
       } else if (Array.isArray(d.rows)) {                       // Format der Einzeldatei-Version
-        state.data = {
+        pane.data = {
           version: 2,
           motto: htmlToTokens(d.motto),
           notes: htmlToTokens(d.notes),
@@ -1081,8 +1229,8 @@ function importJSON(file) {
           })
         };
       } else throw new Error('unbekannt');
-      renderAll();
-      markDirty();
+      renderAll(pane);
+      markDirty(pane);
       flash('Datei übernommen – die Woche wird gespeichert.');
     } catch { flash('Diese Datei konnte nicht gelesen werden.'); }
   };
@@ -2090,9 +2238,40 @@ function openMenu() {
 function setView(view) {
   if (state.data) syncFromDOM();
   state.view = view;
+  // AP3.1 (Frage 3): eine frisch aufgerufene Tagesansicht zeigt immer zuerst die aktuelle Woche --
+  // der Wochen-Umschalter-Tab (#paneSwitch) kann von dort aus weiterhin zur naechsten Woche
+  // wechseln (siehe switchDayViewPane()).
+  if (view === 'day') dayViewActivePane = panes.current;
   document.body.classList.toggle('view-day', view === 'day');
   $('#btnView').textContent = view === 'day' ? 'Wochenansicht' : 'Tagesansicht';
   if (state.data) renderAll();
+  renderPaneSwitch();
+}
+
+/* AP3.1 (Frage 3, Mobile bleibt sequenziell): Wochen-Umschalter-Tab oberhalb des bestehenden
+   Tages-Umschalters (#daynav) -- bestimmt, welche Pane die geteilte Tagesansicht (#dayview)
+   gerade befuellt. Es gibt bewusst KEIN zweites #dayview-Markup; die jeweils inaktive Pane bleibt
+   nur als JS-Objekt (Daten + Dirty-Zustand) im Speicher, geht beim Wechsel also nicht verloren. */
+function renderPaneSwitch() {
+  const wrap = $('#paneSwitch');
+  if (!wrap) return;
+  wrap.querySelectorAll('.pane-switch-btn').forEach(btn => {
+    const pane = btn.dataset.pane === 'next' ? panes.next : panes.current;
+    btn.setAttribute('aria-selected', String(pane === dayViewActivePane));
+    // Referenz merken, damit setStatus() diese Kurzfassung bei jeder Statusaenderung live
+    // mitfuehrt, auch waehrend diese Pane gerade NICHT die sichtbare ist (siehe dort).
+    pane.tabStatusEl = btn.querySelector('.pane-tab-status');
+  });
+}
+function switchDayViewPane(pane) {
+  if (pane === dayViewActivePane) return;
+  // Bearbeitungsstand der bisher sichtbaren Pane sichern, bevor ihr DOM-Inhalt gleich durch die
+  // andere Pane ersetzt wird -- ihr Dirty-/Debounce-Zustand bleibt danach unveraendert im Speicher
+  // erhalten (AP3.1-Abnahmekriterium "Dirty-Zustand geht beim Wechsel nicht verloren").
+  syncFromDOM(dayViewActivePane);
+  dayViewActivePane = pane;
+  renderDay(pane);
+  renderPaneSwitch();
 }
 
 async function boot() {
@@ -2100,13 +2279,22 @@ async function boot() {
   buildPalette();
   buildLegend();
 
+  // AP3.1: Pane-Wurzelelemente setzen, BEVOR irgendeine Render-/Load-Funktion qs(pane, ...)
+  // aufruft. panes.current.root ist "#sheet" (umschliesst Kopfzeilen-Chrome/Grid/Motto/Notizen der
+  // aktuellen Woche vollstaendig, siehe index.html) -- NICHT ".stage" (das waere jetzt auch das
+  // Elternelement von "#nextPane" und wuerde qs(panes.current, ...) faelschlich beide Panes
+  // durchsuchen lassen). panes.next.root ist die neue, eigenstaendige Kartenpane "#nextPane".
+  panes.current.root = $('#sheet');
+  panes.next.root = $('#nextPane');
+  renderPaneSwitch();
+
   const me = await api('GET', '/api/me');
   state.user = me.user;
   $('#householdName').textContent = me.user.householdName;
 
   if (window.matchMedia('(max-width: 900px)').matches) { setView('day'); state.day = (new Date().getDay() + 6) % 7; }
 
-  await loadWeek(isoOf(toMonday(new Date())));
+  await loadWeek(isoOf(toMonday(new Date()))); // laedt panes.current UND (am Ende) panes.next, siehe loadWeek()
   await refreshArchive();
   await loadRecipes(); // AP2.2: haushaltsweit, unabhaengig von der geladenen Woche
 
@@ -2115,8 +2303,15 @@ async function boot() {
 
   // AP1.2: "data-mealcell" ist mit dem Wegfall der contentEditable-Essensplan-Zellen entfallen
   // (siehe buildMealCellDisplay()/Kommentar in syncFromDOM()) -- nicht mehr Teil dieser Liste.
+  // AP3.1: markDirty() bekommt jetzt die zum bearbeiteten Element gehoerende Pane explizit
+  // mitgegeben (paneForElement()) -- ohne das wuerde jede Eingabe in "naechste Woche" faelschlich
+  // "aktuelle Woche" als dirty markieren (beide Grids teilen sich diesen einen Listener).
   document.addEventListener('input', e => {
-    if (e.target.closest?.('[data-cell],[data-label],[data-role],[data-bind]')) markDirty();
+    const el = e.target.closest?.('[data-cell],[data-label],[data-role],[data-bind]');
+    if (el) markDirty(paneForElement(el));
+  });
+  $('#paneSwitch')?.querySelectorAll('.pane-switch-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchDayViewPane(btn.dataset.pane === 'next' ? panes.next : panes.current));
   });
   $('#btnPrint').onclick = () => { syncFromDOM(); renderSheet(); window.print(); };
   $('#btnPrev').onclick = () => loadWeek(addDays(state.weekStart, -7));
@@ -2234,17 +2429,37 @@ async function boot() {
     document.body.classList.remove('printing-daylist');
     document.body.classList.remove('printing-mealplan');
   });
+  // AP3.1: deckt jetzt beide Panes ab -- ohne diese Ergaenzung wuerden ungesicherte Aenderungen an
+  // "naechste Woche" beim Schliessen des Tabs stillschweigend verloren gehen (panes.current war
+  // hier schon vor AP3.1 abgedeckt).
   window.addEventListener('beforeunload', e => {
-    if (!state.dirty) return;
-    syncFromDOM();
-    fetch(`/api/weeks/${state.weekStart}`, {
-      method: 'PUT', keepalive: true,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: state.data, baseUpdatedAt: state.updatedAt })
-    });
+    let willSave = false;
+    if (panes.current.dirty) {
+      syncFromDOM(panes.current);
+      fetch(`/api/weeks/${panes.current.weekStart}`, {
+        method: 'PUT', keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: panes.current.data, baseUpdatedAt: panes.current.updatedAt })
+      });
+      willSave = true;
+    }
+    if (panes.next.dirty) {
+      syncFromDOM(panes.next);
+      fetch(`/api/weeks/${panes.next.weekStart}`, {
+        method: 'PUT', keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: panes.next.data, baseUpdatedAt: panes.next.updatedAt })
+      });
+      willSave = true;
+    }
+    if (!willSave) return;
     e.preventDefault(); e.returnValue = '';
   });
-  document.addEventListener('visibilitychange', () => { if (document.hidden && state.dirty) save(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) return;
+    if (panes.current.dirty) save(panes.current);
+    if (panes.next.dirty) save(panes.next);
+  });
 }
 
 boot().catch(err => { console.error(err); setStatus('Fehler beim Laden', 'error'); });

@@ -283,8 +283,12 @@ th,td{border:.6pt solid var(--line-soft); vertical-align:top; padding:0}
    "#grid thead th"-Praefix, siehe dortiger Kommentar). Ein ID-Selektor hat eine hoehere
    Spezifitaet als die Klassenselektoren "td.lbl"/"thead th" etc. weiter unten und ueberschreibt
    deren border-style zuverlaessig, ohne dass diese Regeln selbst angefasst werden muessen. Im
-   Ausdruck zurueckgesetzt auf border-style:solid, siehe @media print unten. */
-#grid td, #grid th{border-style:dashed}
+   Ausdruck zurueckgesetzt auf border-style:solid, siehe @media print unten.
+   AP3.1 (Zwei-Wochen-Betrieb): ".next-pane-grid" (die neue, gleichzeitig editierbare "naechste
+   Woche"-Tabelle, siehe index.html) ergaenzt "#grid" hier und in den drei folgenden, gezielt
+   praefigierten Regeln -- dieselbe optische Behandlung wie das Hauptraster, ohne auf andere
+   generische Tabellen (.mp-table, Tagesliste) durchzuschlagen (unveraendertes Schutzprinzip). */
+#grid td, #grid th, .next-pane-grid td, .next-pane-grid th{border-style:dashed}
 thead th{border-color:var(--line); font-size:9pt; height:8mm; text-align:center; padding:1mm 0 0}
 thead th .dw{display:block; font-weight:700}
 thead th .dt{display:block; font-size:7pt; font-weight:400; color:var(--muted); margin-top:.3mm}
@@ -300,11 +304,11 @@ thead th.corner{font-size:8pt}
    eigene "#grid"-Regel. .head (Zeile oben) und die uebrigen, in der ersten Runde
    zurueckgestellten Bildschirm-Bereiche folgen inzwischen ebenfalls --accent/--accent-tint/
    --accent-ring, siehe :root-Kommentar oben. */
-#grid thead th{background:var(--secondary)}
-#grid thead th .dw{color:var(--primary); text-transform:uppercase; letter-spacing:.03em}
-#grid thead th .dt{color:var(--text-body)}
-#grid thead th.corner{background:var(--primary); color:#fff}
-#grid th.we{background:color-mix(in srgb, var(--secondary) 65%, var(--border-color))}
+#grid thead th, .next-pane-grid thead th{background:var(--secondary)}
+#grid thead th .dw, .next-pane-grid thead th .dw{color:var(--primary); text-transform:uppercase; letter-spacing:.03em}
+#grid thead th .dt, .next-pane-grid thead th .dt{color:var(--text-body)}
+#grid thead th.corner, .next-pane-grid thead th.corner{background:var(--primary); color:#fff}
+#grid th.we, .next-pane-grid th.we{background:color-mix(in srgb, var(--secondary) 65%, var(--border-color))}
 td.lbl{background:var(--tint); border-right:1pt solid var(--line); font-size:10pt; font-weight:700; padding:1.5mm 2mm; position:relative; overflow:hidden}
 td.lbl .cell{height:auto; padding:0; display:block}
 td.lbl .role{font-size:7pt; font-weight:400; color:#7d715c; margin-top:.5mm}
@@ -624,6 +628,40 @@ tr.mealrow td{height:78px}
 .dayview .ic svg{width:20px; height:20px}
 .dayview .ic{vertical-align:-4px; margin-right:4px}
 .dayview .notes-card .cell{min-height:60px}
+
+/* ---------------- AP3.1 (projects/wochenplaner-design-nacharbeiten/plan.md): "Naechste Woche"-
+   Pane (Desktop, gleichzeitig neben der aktuellen Woche editierbar) ---------------- */
+/* .stage enthielt bisher immer nur genau ein Kind (.sheet) -- flex-wrap sorgt dafuer, dass die neue
+   zweite Pane (#nextPane) auf schmaleren Desktop-Breiten unter statt neben das feste 281mm-Blatt
+   faellt, statt horizontal ueberzulaufen. */
+.stage{flex-wrap:wrap; align-items:flex-start; gap:16px}
+.next-pane-card{
+  flex:1 1 480px; max-width:900px; background:var(--background); border:1px solid var(--line-soft);
+  border-radius:var(--radius); box-shadow:0 4px 18px rgba(0,0,0,.14); padding:14px 16px 20px;
+  display:flex; flex-direction:column; gap:8px; margin:16px 0 40px;
+}
+.next-pane-head{display:flex; align-items:flex-start; justify-content:space-between; gap:10px}
+.next-pane-head h2{font-size:15pt; margin:0; font-weight:800; color:var(--accent)}
+.next-pane-sub{font-size:9pt; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap}
+.next-pane-card .status{min-width:0}
+.next-pane-card .grid-card{margin-top:2px}
+.next-pane-card .motto{border-bottom:1px dotted var(--line-soft); min-height:6mm; padding:0 2mm 1mm; font-size:9pt}
+.next-pane-card .notes{margin-top:4px}
+/* Auf Mobile uebernimmt der Wochen-Umschalter-Tab (#paneSwitch) im gemeinsamen #dayview die
+   Wahl zwischen den beiden Wochen -- body.view-day .stage{display:none} (siehe unten) blendet
+   diese Karte (als Kind von .stage) dabei ohnehin schon mit aus; diese Regel ist zusaetzliche
+   Absicherung, falls .stage aus irgendeinem Grund sichtbar bliebe. */
+@media (max-width:900px){ .next-pane-card{display:none} }
+@media print{ .next-pane-card{display:none !important} }
+
+/* ---------------- AP3.1: Wochen-Umschalter-Tab in der mobilen Tagesansicht (#paneSwitch) --
+   dasselbe Grundmuster wie .daynav button (Pillenform, aktiv = --accent-Flaeche), aber als volle
+   Zwei-Spalten-Reihe statt horizontal scrollender Tagesliste. */
+.pane-switch{display:flex; gap:6px; margin-bottom:10px}
+.pane-switch-btn{flex:1; padding:8px 6px; border:1px solid var(--line-soft); border-radius:9px; background:var(--surface); color:var(--ink); font-size:13px; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:2px; line-height:1.25}
+.pane-switch-btn[aria-selected=true]{background:var(--accent); border-color:var(--accent); color:#fff}
+.pane-tab-status{font-size:10.5px; font-weight:400; color:var(--muted)}
+.pane-switch-btn[aria-selected=true] .pane-tab-status{color:rgba(255,255,255,.75)}
 
 body.view-day .stage{display:none}
 body.view-day .dayview{display:block}
