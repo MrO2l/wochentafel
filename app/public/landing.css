@@ -1,0 +1,100 @@
+/*
+ * AP5 (projects/wochenplaner-design-nacharbeiten/plan.md): Bildschirm-CSS ausschliesslich fuer
+ * landing.html (statische Informationsseite vor dem Login). Bewusst eine EIGENE, schlanke Datei
+ * statt Erweiterung von style.css/style-v2.css -- diese Seite braucht keins der dortigen
+ * grid-/dialog-/mm-genauen Druckregeln, eine Vermischung wuerde beide Dateien unnoetig
+ * aufblaehen und Aenderungsrisiken fuer die eigentliche App erhoehen. Nutzt aber bewusst
+ * dieselben zentralen Palette-Variablen (--primary/--secondary/--background/--border-color/
+ * --text-body/--primary-dark/--radius) sowie die generischen .btn/.card-Basisklassen aus
+ * style-v2.css (dort verlinkt, siehe landing.html <head>) -- keine eigene, dritte Farbwelt.
+ * Kein Inline-<style>/keine Inline-style-Attribute (CSP: style-src 'self' ohne 'unsafe-inline',
+ * siehe server.js) -- exakt dasselbe Prinzip wie bei style.css/style-v2.css.
+ */
+
+body{ background:var(--background); color:var(--text-body) }
+a{ color:var(--primary) }
+.icon-sprite-holder{ display:none } /* haelt die <symbol>-Definitionen, analog .wp-sprite-holder in style.css */
+
+.ic{ width:1.4em; height:1.4em; display:inline-block; vertical-align:-.25em; color:currentColor }
+.ic-lg{ width:2.4rem; height:2.4rem }
+
+/* ---------------- Kopfbereich ---------------- */
+.landing-header{
+  position:sticky; top:0; z-index:20; background:var(--background);
+  border-bottom:1px solid var(--border-color); box-shadow:0 1px 6px rgba(74,63,46,.06);
+}
+.landing-header .container{
+  display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.75rem 1rem;
+}
+.landing-brand{ display:flex; align-items:center; gap:.6rem; font-weight:800; font-size:1.15rem; color:var(--primary) }
+.landing-brand .brand-mark{
+  width:40px; height:40px; border-radius:var(--radius); background:var(--primary); color:#fff;
+  display:flex; align-items:center; justify-content:center; flex:none;
+}
+.landing-brand .brand-mark .ic{ width:1.4rem; height:1.4rem; color:#fff }
+
+/* ---------------- Hero ---------------- */
+.landing-hero{ padding:3.5rem 1rem 3rem; text-align:center }
+.landing-hero h1{ font-weight:800; color:var(--primary); font-size:clamp(1.9rem,4vw,2.75rem); margin:0 0 .9rem }
+.landing-hero .lead{ font-size:1.1rem; color:var(--text-body); max-width:640px; margin:0 auto 1.6rem; opacity:.9 }
+.landing-hero-icons{
+  display:flex; justify-content:center; gap:1.1rem; margin:0 0 2rem; flex-wrap:wrap;
+}
+.landing-hero-icons .ic{
+  width:2.3rem; height:2.3rem; color:var(--primary); background:var(--secondary);
+  border-radius:50%; padding:.55rem; box-sizing:content-box;
+}
+
+/* ---------------- Feature-Kacheln ---------------- */
+.landing-section{ padding:2.5rem 1rem }
+.landing-section h2{ font-weight:800; color:var(--primary); text-align:center; margin:0 0 .4rem; font-size:1.6rem }
+.landing-section .section-lead{ text-align:center; color:var(--text-body); opacity:.85; max-width:620px; margin:0 auto 2rem }
+.feature-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:1.1rem; max-width:1120px; margin:0 auto }
+.feature-card{
+  background:var(--background); border:1px solid var(--border-color); border-radius:var(--radius);
+  box-shadow:0 .15rem .6rem rgba(74,63,46,.08); padding:1.4rem 1.2rem; text-align:center;
+}
+.feature-card .ic{
+  width:2.4rem; height:2.4rem; color:var(--primary); background:var(--secondary);
+  border-radius:50%; padding:.6rem; box-sizing:content-box; margin-bottom:.8rem;
+}
+/* "Drucken"-Kachel nutzt bewusst ein Bootstrap-Icon (bi-printer) statt eines icons.js-Piktogramms
+   -- es gibt dort kein Drucker-Symbol, Bootstrap Icons sind aber bereits Teil der bestehenden
+   App-Bildsprache (Sidebar-Navigation in index.html), kein neuer dritter Stil. Gleiche
+   Kreis-Badge-Optik wie bei den SVG-Piktogrammen oben, nur ueber font-size statt width/height
+   dimensioniert (Icon-Font statt SVG). */
+.feature-card i.bi{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:2.4rem; height:2.4rem; font-size:1.3rem; color:var(--primary); background:var(--secondary);
+  border-radius:50%; margin-bottom:.8rem;
+}
+.feature-card h3{ font-size:1.05rem; font-weight:700; margin:0 0 .4rem; color:var(--text-body) }
+.feature-card p{ font-size:.9rem; color:var(--text-body); opacity:.85; margin:0 }
+
+/* ---------------- Screenshot-Galerie ---------------- */
+.gallery-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:1.4rem; max-width:1120px; margin:0 auto }
+.gallery-card{
+  background:var(--background); border:1px solid var(--border-color); border-radius:var(--radius);
+  overflow:hidden; box-shadow:0 .2rem .7rem rgba(74,63,46,.1);
+}
+.gallery-card img{ display:block; width:100%; height:auto; background:var(--secondary) }
+.gallery-card figcaption{ padding:.7rem .9rem; font-size:.85rem; color:var(--text-body); font-weight:600 }
+
+/* ---------------- Abschluss-CTA ---------------- */
+.landing-cta{
+  background:var(--primary); color:#fff; text-align:center; padding:3rem 1rem; margin-top:1rem;
+}
+.landing-cta h2{ color:#fff; font-weight:800; font-size:1.6rem; margin:0 0 .6rem }
+.landing-cta p{ opacity:.92; max-width:520px; margin:0 auto 1.4rem }
+.landing-cta .btn-light-cta{
+  background:#fff; color:var(--primary); border:0; border-radius:var(--radius);
+  padding:.65rem 1.6rem; font-weight:700; font-size:1rem; display:inline-block;
+}
+.landing-cta .btn-light-cta:hover{ background:var(--secondary); color:var(--primary) }
+
+/* ---------------- Footer ---------------- */
+.landing-footer{
+  padding:1.4rem 1rem; text-align:center; font-size:.82rem; color:var(--text-body); opacity:.75;
+  border-top:1px solid var(--border-color);
+}
+.landing-footer a{ color:var(--text-body); text-decoration:underline }

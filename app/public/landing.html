@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Familien-Wochenplan — Der Wochenplan für die ganze Familie</title>
+<meta name="description" content="Ein gemeinsamer Wochenplan für die ganze Familie: Termine, Essensplan, Einkaufsliste und Rezepte an einem Ort — am Rechner ausfüllen, auf A4 ausdrucken, vom Handy nachschauen.">
+
+<!-- AP5 (projects/wochenplaner-design-nacharbeiten/plan.md): rein statische Landingpage, KEINE
+     Anwendungslogik -- deshalb bewusst kein einziges <script>-Tag auf dieser Seite (auch kein
+     Bootstrap-JS-Bundle, da keine interaktiven Bootstrap-Komponenten wie Tabs/Dropdowns genutzt
+     werden). Assets lokal vendored wie im Rest der App (index.html/login.html), keine CDN-Links --
+     die CSP der App (server.js: "script-src 'self'; style-src 'self'; ...", kein 'unsafe-inline')
+     wuerde externe Quellen ohnehin blockieren, ausserdem gilt dieselbe Vendoring-Konvention wie
+     ueberall sonst in dieser App. style-v2.css liefert die zentralen AP4-Palette-Variablen
+     (--primary/--secondary/--background/... , Commit ffdc77d) sowie generische .btn/.card-
+     Basisklassen -- landing.css (neu, nur fuer diese Seite) enthaelt ausschliesslich das
+     seitenspezifische Layout, keine eigene, dritte Farbwelt. -->
+<link rel="stylesheet" href="vendor/bootstrap/css/bootstrap.min.css">
+<link rel="stylesheet" href="vendor/bootstrap-icons/bootstrap-icons.css">
+<link rel="stylesheet" href="vendor/fonts/open-sans/open-sans.css">
+<link rel="stylesheet" href="style-v2.css">
+<link rel="stylesheet" href="landing.css">
+</head>
+<body>
+
+<!-- ================= Piktogramm-Sprite (rein statisches Inline-SVG, KEIN icons.js/JS-Import --
+     diese Seite laedt bewusst keine Skripte). Eine kleine, kuratierte Auswahl derselben
+     Handzeichnungsstil-Symbole, die die App selbst fuer Piktogramme in den Wochenplan-Zellen
+     nutzt (apps/wochenplaner/app/public/icons.js) -- Pfad-Daten 1:1 von dort uebernommen, damit
+     KEIN zweiter visueller Stil entsteht (JOHNSONs AP5-Empfehlung, siehe plan.md). Bewusst
+     NICHT die Cartoon-Illustrationen aus dem Generated_Image-Referenzbild (AP4-Entscheidung:
+     nur Farbpalette, keine Cartoon-Grafiken -- gilt konsistent auch fuer AP5). ================= -->
+<svg class="icon-sprite-holder" aria-hidden="true">
+  <symbol id="i-freunde" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.1"/><path d="M2.8 20c0-3.4 2.8-5.4 6.2-5.4s6.2 2 6.2 5.4"/><circle cx="17.6" cy="9" r="2.4"/><path d="M16.4 15c2.9.2 4.8 2 4.8 4.6"/></g></symbol>
+  <symbol id="i-termin" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="5" width="17.6" height="15.6" rx="2.2"/><path d="M3.2 9.8h17.6M8.2 3.2v3.6M15.8 3.2v3.6"/><path d="m8.8 15 2.2 2.2 4.2-4.2"/></g></symbol>
+  <symbol id="i-kochen" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5h16v4.2c0 2.6-2 4.6-4.6 4.6H8.6C6 19.3 4 17.3 4 14.7z"/><path d="M20 12h1.6M4 12H2.4"/><path d="M9 7.2c0-1 1-1.4 1-2.4M12.5 7.2c0-1 1-1.4 1-2.4M16 7.2c0-1 1-1.4 1-2.4"/></g></symbol>
+  <symbol id="i-einkauf" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5h2.4l2.6 11.2h10.3l2.2-8.2H6.3"/><circle cx="9" cy="19.4" r="1.5"/><circle cx="17" cy="19.4" r="1.5"/></g></symbol>
+  <symbol id="i-schule" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 22 8l-10 4.5L2 8z"/><path d="M6 10.2v5.4c0 1.7 2.7 3 6 3s6-1.3 6-3v-5.4"/></g></symbol>
+  <!-- "i-hausaufgaben" (aufgeschlagenes Buch, siehe icons.js) hier bewusst fuer "Rezeptkarten"
+       zweckentfremdet -- das App-interne Piktogramm heisst dort "Hausaufgaben", die Buchform
+       passt visuell aber ebenso gut fuer eine Rezeptsammlung; kein neues Symbol noetig. -->
+  <symbol id="i-buch" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10.5 5 8.5 4.3 5 4.3v13c3.5 0 5.5.7 7 2.2"/><path d="M12 6.5c1.5-1.5 3.5-2.2 7-2.2v13c-3.5 0-5.5.7-7 2.2z"/><path d="M12 6.5v13"/></g></symbol>
+</svg>
+
+<!-- ================= Kopfbereich: Marke + Login-Link (erste von zwei Pflicht-Login-
+     Verlinkungen). ================= -->
+<header class="landing-header">
+  <div class="container">
+    <div class="landing-brand">
+      <span class="brand-mark" aria-hidden="true"><svg class="ic"><use href="#i-termin"></use></svg></span>
+      Familien-Wochenplan
+    </div>
+    <a href="login.html" class="btn btn-primary btn-sm">Anmelden</a>
+  </div>
+</header>
+
+<!-- ================= Hero ================= -->
+<section class="landing-hero">
+  <div class="container">
+    <div class="landing-hero-icons" aria-hidden="true">
+      <svg class="ic"><use href="#i-freunde"></use></svg>
+      <svg class="ic"><use href="#i-termin"></use></svg>
+      <svg class="ic"><use href="#i-kochen"></use></svg>
+      <svg class="ic"><use href="#i-einkauf"></use></svg>
+      <svg class="ic"><use href="#i-schule"></use></svg>
+    </div>
+    <h1>Ein Wochenplan für die ganze Familie</h1>
+    <p class="lead">
+      Termine, Schule, Essensplan, Einkaufsliste und Rezepte an einem Ort — gemeinsam am Rechner
+      ausfüllen, auf A4 ausdrucken und ans Küchenbrett hängen, oder unterwegs vom Handy nachschauen.
+    </p>
+    <a href="login.html" class="btn btn-primary btn-lg">Jetzt anmelden</a>
+  </div>
+</section>
+
+<!-- ================= Feature-Kacheln (5, siehe plan.md Grobstruktur) ================= -->
+<section class="landing-section" aria-labelledby="features-h2">
+  <div class="container">
+    <h2 id="features-h2">Alles, was eine Woche planbar macht</h2>
+    <p class="section-lead">Ein gemeinsames Raster für jedes Familienmitglied — mit Piktogrammen
+      statt langer Texte, damit auch Kinder auf einen Blick verstehen, was ansteht.</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <svg class="ic" aria-hidden="true"><use href="#i-termin"></use></svg>
+        <h3>Wochenübersicht</h3>
+        <p>Eine Zeile pro Person, sieben Tage im Blick — Schule, Termine, Freizeit und Haushalt
+          übersichtlich per Piktogramm eingetragen.</p>
+      </div>
+      <div class="feature-card">
+        <svg class="ic" aria-hidden="true"><use href="#i-kochen"></use></svg>
+        <h3>Essen &amp; Kochen</h3>
+        <p>Frühstück, Mittag- und Abendessen für die ganze Woche planen — inklusive Vorschau auf
+          die kommende Woche.</p>
+      </div>
+      <div class="feature-card">
+        <svg class="ic" aria-hidden="true"><use href="#i-einkauf"></use></svg>
+        <h3>Einkaufen &amp; Besorgungen</h3>
+        <p>Eine Einkaufsliste pro Tag, zum Abhaken auf dem Handy oder zum Ausdrucken für den
+          nächsten Supermarktbesuch.</p>
+      </div>
+      <div class="feature-card">
+        <svg class="ic" aria-hidden="true"><use href="#i-buch"></use></svg>
+        <h3>Rezeptkarten</h3>
+        <p>Lieblingsrezepte mit Zutatenliste hinterlegen und direkt einem Tag im Essensplan
+          zuweisen — die Menge wird automatisch skaliert.</p>
+      </div>
+      <div class="feature-card">
+        <i class="bi bi-printer" aria-hidden="true"></i>
+        <h3>Zum Aufhängen drucken</h3>
+        <p>Ein Klick genügt: die Woche als sauberes, klassisches A4-Blatt für die Pinnwand oder
+          den Kühlschrank.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Screenshot-Galerie ================= -->
+<section class="landing-section" aria-labelledby="gallery-h2">
+  <div class="container">
+    <h2 id="gallery-h2">So sieht's in echt aus</h2>
+    <p class="section-lead">Screenshots aus der laufenden App — kein Mockup, sondern der
+      tatsächliche Wochenplaner.</p>
+    <div class="gallery-grid">
+      <figure class="gallery-card">
+        <img src="screenshots/wochenuebersicht.jpg" width="1568" height="782" loading="lazy"
+             alt="Wochenübersicht: Tabelle mit einer Zeile pro Familienmitglied und sieben Tagesspalten, gefüllt mit Terminen und Piktogrammen.">
+        <figcaption>Wochenübersicht — alle Termine auf einen Blick</figcaption>
+      </figure>
+      <figure class="gallery-card">
+        <img src="screenshots/essen-kochen.jpg" width="1568" height="782" loading="lazy"
+             alt="Essen & Kochen: Wochentabelle mit Frühstück, Mittag- und Abendessen für jeden Tag, darunter eine Vorschau der kommenden Woche.">
+        <figcaption>Essen &amp; Kochen — der Speiseplan der Woche</figcaption>
+      </figure>
+      <figure class="gallery-card">
+        <img src="screenshots/einkaufen.jpg" width="1568" height="782" loading="lazy"
+             alt="Einkaufen & Besorgungen: sieben Tageskacheln mit Einkaufslisten-Buttons und Anzahl der Einträge.">
+        <figcaption>Einkaufen &amp; Besorgungen — eine Liste pro Tag</figcaption>
+      </figure>
+      <figure class="gallery-card">
+        <img src="screenshots/rezeptkarten.jpg" width="1568" height="782" loading="lazy"
+             alt="Rezeptkarten: Kartenraster mit drei Beispielrezepten, jeweils mit Titel und Personenzahl.">
+        <figcaption>Rezeptkarten — Lieblingsrezepte griffbereit</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Abschluss-CTA (zweite Pflicht-Login-Verlinkung) ================= -->
+<section class="landing-cta">
+  <div class="container">
+    <h2>Bereit für die nächste Woche?</h2>
+    <p>Kostenlos für den eigenen Haushalt einrichten — Anmeldung dauert eine Minute.</p>
+    <a href="login.html" class="btn-light-cta">Jetzt anmelden</a>
+  </div>
+</section>
+
+<footer class="landing-footer">
+  <div class="container">
+    &copy; Familien-Wochenplan · <a href="login.html">Anmelden</a>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -2303,7 +2303,15 @@ app.get('/api/health', wrap(async (req, res) => {
   res.json({ status: 'ok' });
 }));
 
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h', index: 'index.html' }));
+// AP5 (projects/wochenplaner-design-nacharbeiten/plan.md): "/" liefert jetzt die neue, rein
+// statische Landingpage (landing.html) statt direkt der App (index.html) -- express.static()s
+// "index"-Option bestimmt, welche Datei bei einem Verzeichnis-Request (hier: der nackten Root)
+// ausgeliefert wird, das war zuvor rein zufaellig "index.html". Minimal-invasiv: nur dieser eine
+// Wert geaendert, keine neue Route/kein neues Framework noetig. index.html/login.html (sowie das
+// getrennte Admin-Subsystem admin.html/admin-login.html) bleiben unter ihren bisherigen,
+// expliziten Dateinamen unveraendert erreichbar -- geprueft (login.js/app.js/admin.js leiten
+// durchgaengig ueber explizite Dateinamen weiter, nichts im Code haengt an der nackten Root).
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h', index: 'landing.html' }));
 
 app.use((req, res) => res.status(404).json({ error: 'Nicht gefunden' }));
 app.use((err, req, res, next) => {
