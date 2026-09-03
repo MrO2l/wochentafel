@@ -137,22 +137,34 @@
        state.recipes, eigener Ladepfad ueber loadRecipes()/GET /api/recipes, voellig unabhaengig
        von state.weekStart). Neue Marker-Klasse ".week-only" (analog zum bereits bestehenden
        ".cal-only"-Muster direkt darunter) blendet diese Gruppe nur auf "Rezeptkarten" aus, siehe
-       body[data-section]-Selektor in style.css. "Drucken" bekommt zusaetzlich ".cal-only": der
-       globale Button druckt technisch IMMER den Hauptraster (renderSheet()+window.print(), siehe
-       app.js) -- auf "Essen & Kochen" gibt es dafuer bereits einen eigenen, funktionierenden,
-       seiteneigenen Drucken-Button (#mpPrint, in #view-essen, unveraendert), auf "Einkaufen"
-       existiert bewusst kein Seiten-Druck (nur einzelne Tageslisten ueber #dlPrint im
-       Tagesliste-Dialog) und auf "Rezeptkarten" gibt es gar keine Druckfunktion -- der globale
-       Button war dort schlicht falsch verdrahtet (siehe Bug-Report/Screenshot). "Vorlage"/"+
-       Person"/"+ Zeile"/"Tagesansicht" bleiben unveraendert ueber das bestehende ".cal-only"
-       (Wochenuebersicht-only) geregelt -- diese Aktionen sind app.js zufolge zwar technisch nicht
-       auf alle Zeilentypen beschraenkt, ihr etabliertes, einzig vorgesehenes Bedienmuster
-       (Personenzeilen/Vorlage-Struktur, "+ Person"/"+ Zeile") gehoert aber eindeutig zum
-       Hauptraster, nicht zu Einkaufen/Essen & Kochen. "Konto" ist in die linke Navigation
-       umgezogen (AP7.2, siehe .app-sidebar oben). -->
+       body[data-section]-Selektor in style.css.
+       AP7.1-Korrektur (Nutzer-Feedback nach Live-Test des ersten AP7.1-Standes): "Drucken" bleibt
+       bewusst AUF ALLEN Seiten an seiner gewohnten, prominenten Position sichtbar (Position/Optik
+       unveraendert, KEIN ".cal-only") -- der urspruengliche erste Anlauf hatte stattdessen den
+       globalen Button ausgeblendet und den kleinen, seiteneigenen Essensplan-Drucken-Button
+       (#mpPrint) sichtbar gelassen; genau umgekehrt zur Nutzererwartung. Stattdessen ist jetzt der
+       Klick-HANDLER von #btnPrint kontextsensitiv (siehe boot() in app.js): auf "Essen & Kochen"
+       druckt er ueber denselben body.printing-mealplan-Mechanismus, den zuvor #mpPrint exklusiv
+       nutzte (jetzt in den #btnPrint-Handler verlagert, gesteuert ueber body[data-section] aus
+       setSection()), auf allen anderen Seiten weiterhin den Hauptraster (unveraendertes
+       Ursprungsverhalten). #mpPrint selbst ist dadurch komplett redundant geworden und wurde aus
+       #view-essen entfernt (siehe dort) -- wieder genau ein sichtbarer Drucken-Button, nur jetzt an
+       der vom Nutzer erwarteten Position. "Vorlage"/"+ Person"/"+ Zeile"/"Tagesansicht" bleiben
+       unveraendert ueber das bestehende ".cal-only" (Wochenuebersicht-only) geregelt -- diese
+       Aktionen sind app.js zufolge zwar technisch nicht auf alle Zeilentypen beschraenkt, ihr
+       etabliertes, einzig vorgesehenes Bedienmuster (Personenzeilen/Vorlage-Struktur, "+ Person"/
+       "+ Zeile") gehoert aber eindeutig zum Hauptraster, nicht zu Einkaufen/Essen & Kochen.
+       "Einkaufen" hat weiterhin bewusst keinen Seiten-Druck (nur einzelne Tageslisten ueber
+       #dlPrint im Tagesliste-Dialog, unveraendert), "Rezeptkarten" weiterhin keine Druckfunktion --
+       fuer beide bleibt #btnPrint darum AUSGEBLENDET (neue Marker-Klasse ".print-page", analog
+       .cal-only/.week-only: sichtbar auf Wochenuebersicht+Essen & Kochen, ausgeblendet auf
+       Einkaufen+Rezeptkarten -- die einzigen zwei Seiten, die je ein Druckziel haben, siehe
+       body[data-section]-Selektor in style.css). Das war explizit NICHT Teil der Nutzer-Korrektur
+       (Ruecklauf ANORAK: "Einkaufen/Rezeptkarten bleiben wie in AP7.1"). "Konto" ist in die linke
+       Navigation umgezogen (AP7.2, siehe .app-sidebar oben). -->
   <div class="tb-row">
-    <button class="btn btn-primary btn-sm cal-only" id="btnPrint">Drucken</button>
-    <div class="sep hide-sm cal-only"></div>
+    <button class="btn btn-primary btn-sm print-page" id="btnPrint">Drucken</button>
+    <div class="sep hide-sm print-page"></div>
     <button class="btn btn-outline-secondary btn-sm week-only" id="btnPrev" title="Woche zurück">&#9664;</button>
     <input type="date" id="monday" class="week-only">
     <button class="btn btn-outline-secondary btn-sm week-only" id="btnNext" title="Woche vor">&#9654;</button>
@@ -318,9 +330,13 @@
      damit syncFromDOM() nicht dieselbe [mi,di]-Zelle zweimal im DOM vorfindet. Inhalt wird von
      renderMealPlanEntry()/renderMealPlanHead()/renderMealPlanBody()/renderMealDayNav() (app.js)
      befuellt, exakt wie zuvor bei jeder Datenaenderung ueber renderAll() neu gezeichnet -- nur der
-     Container hat sich geaendert (vorher <dialog id="mealplan">, jetzt direkt hier). Der
-     Druckknopf (#mpPrint) ist unveraendert verdrahtet (app.js), Druckpfad siehe @media print in
-     style.css (auf das #view-essen-Muster umgestellt, analog Hauptraster-Druck). ================= -->
+     Container hat sich geaendert (vorher <dialog id="mealplan">, jetzt direkt hier).
+     AP7.1-Korrektur (projects/wochenplaner-design-nacharbeiten/plan.md): der frueher hier
+     stehende, seiteneigene Druckknopf (#mpPrint) ist ersatzlos entfernt -- seine Drucklogik
+     (body.printing-mealplan + window.print()) lebt jetzt im kontextsensitiven Klick-Handler des
+     globalen #btnPrint (Werkzeugleiste, siehe dortiger Kommentar sowie boot() in app.js), der auf
+     dieser Seite automatisch den Essensplan statt des Hauptrasters druckt. Druckpfad selbst
+     (@media print in style.css) unveraendert. ================= -->
 <section id="view-essen" class="app-view" aria-labelledby="es-h1">
   <div class="view-header d-flex align-items-start justify-content-between flex-wrap gap-2">
     <div>
@@ -328,7 +344,6 @@
       <p class="view-lead">Essensplan der aktuellen Woche: vier Mahlzeiten über sieben Tage, eigenständig druckbar.</p>
       <div class="sub" id="mpSub"></div>
     </div>
-    <button type="button" class="btn btn-outline-secondary btn-sm" id="mpPrint" title="Nur den Essensplan drucken (A4 quer)">Drucken</button>
   </div>
   <div class="mealplan-toolbar" id="mealplanToolbar">
     <span class="mpt-label">Piktogramm einfügen:</span>
@@ -436,8 +451,9 @@
 
 <!-- ================= AP1.1: das bisherige #mealplan-<dialog>-Overlay ist entfallen -- die
      Essensplan-Tabelle (.mp-table/#mpHeadRow/#mpTableBody) sowie Werkzeugleiste
-     (#mealplanToolbar) und Druckknopf (#mpPrint) leben jetzt direkt/permanent in #view-essen
-     oben (siehe dortiger Kommentar). ================= -->
+     (#mealplanToolbar) leben jetzt direkt/permanent in #view-essen oben (siehe dortiger
+     Kommentar). AP7.1-Korrektur: der frueher hier ebenfalls erwaehnte seiteneigene Druckknopf
+     (#mpPrint) ist inzwischen entfallen, siehe Kommentar bei #view-essen. ================= -->
 
 <!-- ================= AP2.2: Anlegen-/Bearbeiten-Formular fuer eine Rezeptkarte. Natives
      <dialog> als Referenzmuster (wie #daylist/#mealplan, siehe Bootstrap-Migrationsplan), aber

@@ -676,9 +676,13 @@ body:not(.section-wochenuebersicht) #btnIcons{display:none !important}
    Konto sind NICHT Teil von .cal-only und bleiben in allen drei Ansichten sichtbar.
    AP7.1-Nachtrag (Bug-Report mit Screenshot, projects/wochenplaner-design-nacharbeiten/plan.md):
    dieser Kommentar ist seit AP2.2 (viertes Menuepunkt "Rezeptkarten") nicht mehr vollstaendig
-   zutreffend -- "Drucken" ist seitdem ebenfalls .cal-only (siehe unten), da der globale Button
-   technisch immer den Hauptraster druckt (nicht sinnvoll ausserhalb der Wochenuebersicht,
-   "Essen & Kochen" hat dafuer laengst einen eigenen, funktionierenden Drucken-Button #mpPrint).
+   zutreffend -- "Drucken" war zwischenzeitlich ebenfalls .cal-only (der globale Button druckte
+   technisch immer nur den Hauptraster, "Essen & Kochen" hatte dafuer einen eigenen, seiteneigenen
+   Drucken-Button #mpPrint). Nutzer-Feedback nach Live-Test dieses Standes: falsche Loesung,
+   genau umgekehrt zur Erwartung (siehe AP7.1-Korrektur-Kommentar bei .tb-row in index.html sowie
+   ".print-page" direkt darunter) -- "Drucken" ist seitdem NICHT mehr Teil von .cal-only, bleibt
+   auf allen vier Seiten an seiner Position, nur sein Klick-Handler ist jetzt kontextsensitiv
+   (siehe boot() in app.js), #mpPrint ist ersatzlos entfallen.
    Datumsnavigation/Archiv/Status bleiben weiterhin NICHT Teil von .cal-only (sie gelten
    gleichermassen fuer Wochenuebersicht/Einkaufen/Essen & Kochen, nur nicht fuer Rezeptkarten,
    siehe .week-only direkt darunter). */
@@ -691,6 +695,15 @@ body:not(.section-wochenuebersicht) .cal-only{display:none !important}
    Analog zu .cal-only ueber eine Marker-Klasse plus body[data-section]-Selektor (gesetzt in
    setSection(), app.js) statt jede ID einzeln aufzufuehren. */
 body[data-section="rezepte"] .week-only{display:none !important}
+
+/* AP7.1-Korrektur: "Drucken" (#btnPrint, Klasse ".print-page") hat je Seite ein sinnvolles
+   Druckziel nur auf Wochenuebersicht (Hauptraster) und Essen & Kochen (Essensplan, siehe
+   kontextsensitiver Klick-Handler in boot(), app.js) -- auf Einkaufen existiert bewusst kein
+   Seiten-Druck (nur einzelne Tageslisten ueber #dlPrint im Tagesliste-Dialog), auf Rezeptkarten
+   gibt es gar keine Druckfunktion. Analog zu .week-only/.cal-only ueber body[data-section]
+   ausgeblendet, statt den Button dort funktionslos anzuzeigen. */
+body[data-section="einkaufen"] .print-page,
+body[data-section="rezepte"] .print-page{display:none !important}
 
 @media (max-width:900px){
   .toolbar{padding:8px}
@@ -973,8 +986,11 @@ dialog.recipe-form::backdrop{background:rgba(20,26,32,.45)}
   body.printing-mealplan #view-essen{display:block !important}
   /* Ueberschrift/Lead-Text der Ansicht beim Druck ausgeblendet, gleiches Muster wie bereits bei
      ".composer,.mini-pal,.mealplan-toolbar" oben (unbedingt, jeder Druck) -- ".view-lead" gab es
-     im alten Dialogkopf nicht, "#mpSub" (KW/Datumsbereich) bleibt bewusst sichtbar wie zuvor. */
-  body.printing-mealplan .view-lead, body.printing-mealplan #mpPrint{display:none !important}
+     im alten Dialogkopf nicht, "#mpSub" (KW/Datumsbereich) bleibt bewusst sichtbar wie zuvor.
+     AP7.1-Korrektur: der frueher hier zusaetzlich ausgeblendete seiteneigene Druckknopf (#mpPrint)
+     ist ersatzlos entfallen (siehe Kommentar bei .tb-row in index.html) -- ohnehin bereits ueber
+     ".toolbar{display:none}" im allgemeinen @media print-Block oben abgedeckt gewesen. */
+  body.printing-mealplan .view-lead{display:none !important}
   /* Mobile-Tagesumschalter (siehe media-query weiter oben) blendet sonst Tagesspalten aus --
      gedruckt wird immer die volle Woche, unabhaengig vom zuletzt auf dem Handy gewaehlten Tag.
      !important noetig, um die (auf ein schmales Druck-Viewport theoretisch ebenfalls zutreffende)

@@ -2124,7 +2124,22 @@ async function boot() {
   document.addEventListener('input', e => {
     if (e.target.closest?.('[data-cell],[data-label],[data-role],[data-bind]')) markDirty();
   });
-  $('#btnPrint').onclick = () => { syncFromDOM(); renderSheet(); window.print(); };
+  // AP7.1-Korrektur (projects/wochenplaner-design-nacharbeiten/plan.md, Nutzer-Feedback nach
+  // Live-Test): der globale, prominente #btnPrint bleibt an seiner Position (siehe index.html,
+  // ".print-page"-Sichtbarkeit), druckt aber jetzt kontextsensitiv je nach aktuell sichtbarer
+  // Seite -- auf "Essen & Kochen" den Essensplan (derselbe body.printing-mealplan-Mechanismus,
+  // den zuvor der inzwischen entfernte, seiteneigene #mpPrint-Button exklusiv nutzte), sonst
+  // unveraendert den Hauptraster. document.body.dataset.section wird von setSection() bei jedem
+  // Ansichtswechsel aktuell gehalten (siehe dort), daher hier einfach direkt abgefragt.
+  $('#btnPrint').onclick = () => {
+    syncFromDOM();
+    if (document.body.dataset.section === 'essen') {
+      document.body.classList.add('printing-mealplan');
+    } else {
+      renderSheet();
+    }
+    window.print();
+  };
   $('#btnPrev').onclick = () => loadWeek(addDays(state.weekStart, -7));
   $('#btnNext').onclick = () => loadWeek(addDays(state.weekStart, 7));
   $('#btnToday').onclick = () => loadWeek(isoOf(toMonday(new Date())));
@@ -2158,7 +2173,9 @@ async function boot() {
   // sobald body.printing-daylist gesetzt ist) — keine Laufzeit-Style-Injektion noetig/erlaubt.
   $('#dlPrint').onclick = () => { syncFromDOM(); document.body.classList.add('printing-daylist'); window.print(); };
 
-  $('#mpPrint').onclick = () => { syncFromDOM(); document.body.classList.add('printing-mealplan'); window.print(); };
+  // AP7.1-Korrektur: #mpPrint (eigener Essensplan-Drucken-Button in #view-essen) ist entfallen --
+  // seine Drucklogik (syncFromDOM()+body.printing-mealplan+window.print()) lebt jetzt im
+  // kontextsensitiven #btnPrint-Handler oben, keine eigene Verdrahtung hier mehr noetig.
 
   // AP1.2: Zell-Klick-Dialog (#mealSlotDialog) -- ein Klick auf die 5 Optionen wird per
   // Event-Delegation auf dem Container abgefangen (die Buttons werden nicht dynamisch neu
