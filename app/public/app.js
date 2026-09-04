@@ -683,6 +683,13 @@ function renderRecipesView() {
     servings.textContent = `Für ${r.baseServings} ${r.baseServings === 1 ? 'Person' : 'Personen'}`;
     const actions = document.createElement('div');
     actions.className = 'recipe-card-actions';
+    // AP2.1 (projects/wochenplaner-rezeptkarten-drucken/plan.md): neuer Druck-Trigger je Karte --
+    // laedt bei Klick die Volldaten nach (openRecipePrint(), analog openRecipeForm() darunter, da
+    // die Karten-Summary bewusst keine instructions/ingredients enthaelt, siehe dortiger Kommentar).
+    const printBtn = document.createElement('button');
+    printBtn.type = 'button'; printBtn.className = 'btn btn-outline-secondary btn-sm';
+    printBtn.textContent = 'Drucken';
+    printBtn.addEventListener('click', () => openRecipePrint(r));
     const editBtn = document.createElement('button');
     editBtn.type = 'button'; editBtn.className = 'btn btn-outline-secondary btn-sm';
     editBtn.textContent = 'Bearbeiten';
@@ -691,7 +698,7 @@ function renderRecipesView() {
     delBtn.type = 'button'; delBtn.className = 'btn btn-outline-secondary btn-sm text-danger';
     delBtn.textContent = 'Löschen';
     delBtn.addEventListener('click', () => deleteRecipe(r.id, r.title));
-    actions.append(editBtn, delBtn);
+    actions.append(printBtn, editBtn, delBtn);
     body.append(h3, servings, actions);
     card.appendChild(body);
     col.appendChild(card);
@@ -788,6 +795,147 @@ async function openRecipeForm(recipeSummary) {
   }
 
   $('#recipeForm').showModal();
+}
+
+/* ---------------- AP2.1 (projects/wochenplaner-rezeptkarten-drucken/plan.md): Druck-Dialog
+   (#recipePrint) fuer eine einzelne Rezeptkarte -- eigenes, aus den Daten neu aufgebautes
+   Anzeige-Fragment, siehe Designentscheidung D2 im Plan (kein Wiederverwenden von #recipeForm). */
+function formatIngredientAmount(ing) {
+  if (typeof ing.amount !== 'number' || !Number.isFinite(ing.amount)) return ing.unit || '';
+  return ing.unit ? `${ing.amount} ${ing.unit}` : String(ing.amount);
+}
+
+// Baut den druckbaren Inhalt komplett neu aus den Rezeptdaten auf. Permanent als
+// <table><thead>/<tbody> strukturiert (nicht nur waehrend des Drucks umgeschaltet): der
+// <thead>-Titelzeilen-Kniff (D3 im Plan) ist der einzige HTML-Mechanismus, der sich beim
+// Drucken browseruebergreifend zuverlaessig auf jeder Folgeseite wiederholt, wenn die Tabelle
+// ueber eine Seitengrenze umbricht -- isoliert per Prototyp getestet (AP1.1, visuelle
+// Verifikation durch ANORAK steht noch aus), hier direkt auf das reale Markup angewendet (AP2.2).
+// Da dieselbe Tabelle auch
+// die Bildschirm-Vorschau im Dialog traegt, gibt es keine zwei separat zu pflegenden
+// Markup-Varianten.
+function buildRecipePrintContent(recipe) {
+  const body = $('#rpBody');
+  body.textContent = '';
+
+  const table = document.createElement('table');
+  table.className = 'recipe-print-table';
+
+  const thead = document.createElement('thead');
+  const titleRow = document.createElement('tr');
+  titleRow.className = 'recipe-print-title-row';
+  const titleCell = document.createElement('th');
+  const title = document.createElement('div');
+  title.className = 'recipe-print-title';
+  title.textContent = recipe.title;
+  const servings = document.createElement('div');
+  servings.className = 'recipe-print-servings';
+  servings.textContent = `Für ${recipe.baseServings} ${recipe.baseServings === 1 ? 'Person' : 'Personen'}`;
+  titleCell.append(title, servings);
+  titleRow.appendChild(titleCell);
+  thead.appendChild(titleRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  const row = document.createElement('tr');
+  const cell = document.createElement('td');
+
+  if (recipe.imagePath) {
+    // max-height/max-width in mm kommen aus .recipe-print-image (style.css, Risiko "grosses Bild
+    // sprengt Seitenumbruch-Berechnung" im Plan) -- hier nur die Bildquelle gesetzt.
+    const img = document.createElement('img');
+    img.className = 'recipe-print-image';
+    img.alt = '';
+    img.src = `/api/recipes/${recipe.id}/image?v=${encodeURIComponent(recipe.updatedAt)}`;
+    cell.appendChild(img);
+  }
+
+  const ingHeading = document.createElement('h3');
+  ingHeading.className = 'recipe-print-heading';
+  ingHeading.textContent = 'Zutaten';
+  cell.appendChild(ingHeading);
+
+  const list = document.createElement('ul');
+  list.className = 'recipe-print-ingredients';
+  if (recipe.ingredients.length) {
+    recipe.ingredients.forEach(ing => {
+      const li = document.createElement('li');
+      const amount = document.createElement('span');
+      amount.className = 'recipe-print-ing-amount';
+      amount.textContent = formatIngredientAmount(ing);
+      const name = document.createElement('span');
+      name.className = 'recipe-print-ing-name';
+      name.textContent = ing.name;
+      li.append(amount, name);
+      list.appendChild(li);
+    });
+  } else {
+    const li = document.createElement('li');
+    li.className = 'recipe-print-empty';
+    li.textContent = 'Keine Zutaten hinterlegt.';
+    list.appendChild(li);
+  }
+  cell.appendChild(list);
+
+  const instrHeading = document.createElement('h3');
+  instrHeading.className = 'recipe-print-heading';
+  instrHeading.textContent = 'Zubereitung';
+  cell.appendChild(instrHeading);
+
+  const instrWrap = document.createElement('div');
+  instrWrap.className = 'recipe-print-instructions';
+  // Ein Absatz pro (Gruppe von) Zeilenumbruch(en) -- gleiche Grundannahme wie die Freitext-
+  // Darstellung anderswo in der App (z. B. .msd-instructions{white-space:pre-line}), hier aber
+  // als echte <p>-Elemente, weil genau DAS die Voraussetzung fuer break-inside:avoid pro Absatz
+  // ist (D3 im Plan) -- ein einzelner vorformatierter Textblock liesse sich nicht absatzweise vor
+  // dem Durchschneiden schuetzen.
+  const paragraphs = (recipe.instructions || '').split(/\n+/).map(p => p.trim()).filter(Boolean);
+  if (paragraphs.length) {
+    paragraphs.forEach(text => {
+      const p = document.createElement('p');
+      p.textContent = text;
+      instrWrap.appendChild(p);
+    });
+  } else {
+    const p = document.createElement('p');
+    p.className = 'recipe-print-empty';
+    p.textContent = 'Keine Zubereitung hinterlegt.';
+    instrWrap.appendChild(p);
+  }
+  cell.appendChild(instrWrap);
+
+  row.appendChild(cell);
+  tbody.appendChild(row);
+  table.appendChild(tbody);
+  body.appendChild(table);
+}
+
+// recipeSummary: Eintrag aus state.recipes (nur Uebersichtsfelder) -- Volldaten
+// (instructions/ingredients) fehlen dort bewusst (siehe Kommentar bei openRecipeForm()) und
+// werden hier ueber denselben bestehenden Endpunkt (GET /api/recipes/:id) nachgeladen, mit
+// demselben Fehlerbehandlungsmuster (flash() statt stillem Fehlschlag bei Netzwerkfehlern).
+//
+// NACHTRAG (Nutzer-Test mit langem Testrezept, ID 8): #recipePrint war urspruenglich ein
+// natives <dialog> (showModal()/close()) -- die Druckvorschau zeigte dabei aber zuverlaessig nur
+// EINE Seite, der Rest des langen Rezepts fehlte komplett. Ursache (Nachtest bestaetigt, siehe
+// scratchpad/ap2.2-dialog-vs-flow-print-pagination-test.html): <dialog> rendert im Browser-
+// "Top Layer" (eigene Ebene ausserhalb des Dokumentflusses) -- solche Elemente werden beim
+// Drucken auf eine Seite begrenzt behandelt, unabhaengig von CSS wie max-height/overflow. Jetzt
+// stattdessen ein normales <div> im Dokumentfluss (Designentscheidung D2 im Plan nennt diese
+// Alternative explizit), nur ueber die Klasse "open" sichtbar geschaltet -- deshalb hier
+// classList.add() statt showModal(), und ein manuelles closeRecipePrint() statt des nativen
+// dialog.close() (ein <div> hat keine close()-Methode).
+async function openRecipePrint(recipeSummary) {
+  let recipe = null;
+  try { recipe = (await api('GET', `/api/recipes/${recipeSummary.id}`)).recipe; }
+  catch (err) { flash(err.message); return; }
+
+  buildRecipePrintContent(recipe);
+  $('#recipePrint').classList.add('open');
+}
+
+function closeRecipePrint() {
+  $('#recipePrint').classList.remove('open');
 }
 
 async function submitRecipeForm(e) {
@@ -2245,6 +2393,28 @@ async function boot() {
   // direkt auf das <dialog>-Element selbst bedeutet "ausserhalb der Karte geklickt").
   $('#recipeForm').addEventListener('click', e => { if (e.target.id === 'recipeForm') $('#recipeForm').close(); });
 
+  // AP2.1/AP2.2 (projects/wochenplaner-rezeptkarten-drucken/plan.md): Druck-"Dialog" fuer eine
+  // einzelne Rezeptkarte -- gleiches Bedienmuster wie #dlPrint (Tagesliste, siehe oben): der
+  // Vorschau-Container ist bereits mit dem gewaehlten Rezept befuellt (openRecipePrint()),
+  // "Drucken" setzt nur noch die Sichtbarkeits-Klasse und ruft window.print() (Layout kommt rein
+  // statisch aus @page recipe-print in style.css -- keine Laufzeit-Style-Injektion noetig/
+  // erlaubt, siehe CSP). #recipePrint ist seit dem Mehrseitendruck-Fix (Nutzer-Test mit
+  // Testrezept ID 8, siehe Kommentar bei openRecipePrint()) ein normales <div> statt eines
+  // <dialog> -- Schliessen laeuft daher ueber closeRecipePrint() (Klasse entfernen) statt der
+  // nativen dialog.close()-Methode, ESC-Taste ebenfalls manuell nachgebildet (kein natives
+  // <dialog>-ESC-Verhalten mehr vorhanden).
+  $('#rpPrintBtn').onclick = () => { document.body.classList.add('printing-recipe'); window.print(); };
+  $('#rpClose').onclick = closeRecipePrint;
+  // Backdrop-Klick schliesst -- #recipePrint selbst ist jetzt die volle Ueberlagerungsflaeche
+  // (siehe style.css), ein Treffer direkt darauf (statt auf ein Nachfahren-Element wie
+  // .recipe-print-card) bedeutet weiterhin "ausserhalb der Karte geklickt".
+  $('#recipePrint').addEventListener('click', e => { if (e.target.id === 'recipePrint') closeRecipePrint(); });
+  // ESC schliesst -- musste bei #daylist/#recipeForm nicht extra verdrahtet werden (natives
+  // <dialog>-Verhalten), fehlt hier aber, seit #recipePrint kein <dialog> mehr ist.
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && $('#recipePrint').classList.contains('open')) closeRecipePrint();
+  });
+
   // AP1.4: #recipeServingsDialog/submitRecipeServings()/handleRecipeDrop() (Drag&Drop-Zuweisung)
   // sind ersatzlos entfernt -- keine Verdrahtung mehr noetig.
   // AP1-Korrektur: #ingredientToListDialog/submitIngredientToList()/closeIngredientToListDialog()
@@ -2256,6 +2426,7 @@ async function boot() {
   window.addEventListener('afterprint', () => {
     document.body.classList.remove('printing-daylist');
     document.body.classList.remove('printing-mealplan');
+    document.body.classList.remove('printing-recipe');
   });
   window.addEventListener('beforeunload', e => {
     if (!state.dirty) return;

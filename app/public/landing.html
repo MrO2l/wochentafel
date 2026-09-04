@@ -105,7 +105,13 @@
         <p>Lieblingsrezepte mit Zutatenliste hinterlegen und direkt einem Tag im Essensplan
           zuweisen — die Menge wird automatisch skaliert.</p>
       </div>
-      <div class="feature-card">
+      <!-- Druckfeature bewusst als eigene, ueber alle 4 Spalten gespannte Karte gestaltet
+           (nicht gleich gross wie die 4 anderen): alle Kernfunktionen oben sind ZUSAETZLICH
+           druckbar, das Drucken ist daher als gemeinsame "Plattform" visualisiert, auf der die
+           4 Material-Elevation-Karten sichtbar ueberlappend zu liegen scheinen (Stapel-/
+           Ueberlapp-Effekt statt buendiger Andock-Kante, siehe .feature-card--print in
+           landing.css). -->
+      <div class="feature-card feature-card--print">
         <i class="bi bi-printer" aria-hidden="true"></i>
         <h3>Zum Aufhängen drucken</h3>
         <p>Ein Klick genügt: die Woche als sauberes, klassisches A4-Blatt für die Pinnwand oder
@@ -115,33 +121,79 @@
   </div>
 </section>
 
-<!-- ================= Screenshot-Galerie ================= -->
-<section class="landing-section" aria-labelledby="gallery-h2">
+<!-- ================= Screenshot-Sektion (Scrollytelling) =================
+     Ersetzt die bisherige kleine .gallery-grid-Kartenreihe: Screenshot ueber die volle Breite,
+     dazugehoerige Infotext-Karte liegt darueber und ueberlappt leicht den oberen Bildrand
+     (reines Layout-CSS, siehe landing.css). Beim Durchscrollen bleibt der Screenshot gepinnt
+     (position:sticky) und die Textkarte blendet per CSS Scroll-Driven Animation
+     (animation-timeline) ein und wieder aus -- kein JavaScript, bleibt damit AP5-konform (siehe
+     Kommentar im <head> oben, "rein statische Landingpage"). Reihenfolge identisch zu den
+     Feature-Kacheln oben. Ohne Browser-Support fuer Scroll-Driven Animations zeigt die
+     @supports-Absicherung in landing.css den fertigen Endzustand: Textkarte + Screenshot normal
+     gestapelt, voll sichtbar, ohne Sticky-Pinning und ohne Animation -- vollstaendig lesbar,
+     kein kaputtes Layout. -->
+<section class="landing-section scrolly" aria-labelledby="gallery-h2">
   <div class="container">
     <h2 id="gallery-h2">So sieht's in echt aus</h2>
     <p class="section-lead">Screenshots aus der laufenden App — kein Mockup, sondern die
       echte Wochentafel.</p>
-    <div class="gallery-grid">
-      <figure class="gallery-card">
-        <img src="screenshots/wochenuebersicht.jpg" width="1568" height="782" loading="lazy"
-             alt="Wochenübersicht: Tabelle mit einer Zeile pro Familienmitglied und sieben Tagesspalten, gefüllt mit Terminen und Piktogrammen.">
-        <figcaption>Wochenübersicht — alle Termine auf einen Blick</figcaption>
-      </figure>
-      <figure class="gallery-card">
-        <img src="screenshots/essen-kochen.jpg" width="1568" height="782" loading="lazy"
-             alt="Essen & Kochen: Wochentabelle mit Frühstück, Mittag- und Abendessen für jeden Tag, darunter eine Vorschau der kommenden Woche.">
-        <figcaption>Essen &amp; Kochen — der Speiseplan der Woche</figcaption>
-      </figure>
-      <figure class="gallery-card">
-        <img src="screenshots/einkaufen.jpg" width="1568" height="782" loading="lazy"
-             alt="Einkaufen & Besorgungen: sieben Tageskacheln mit Einkaufslisten-Buttons und Anzahl der Einträge.">
-        <figcaption>Einkaufen &amp; Besorgungen — eine Liste pro Tag</figcaption>
-      </figure>
-      <figure class="gallery-card">
-        <img src="screenshots/rezeptkarten.jpg" width="1568" height="782" loading="lazy"
-             alt="Rezeptkarten: Kartenraster mit drei Beispielrezepten, jeweils mit Titel und Personenzahl.">
-        <figcaption>Rezeptkarten — Lieblingsrezepte griffbereit</figcaption>
-      </figure>
+  </div>
+
+  <div class="scrolly-items">
+    <div class="scrolly-item">
+      <div class="scrolly-panel">
+        <div class="scrolly-text">
+          <h3>Wochenübersicht — alle Termine auf einen Blick</h3>
+          <p>Eine Zeile pro Person, sieben Tage im Blick. Schule, Termine, Freizeit und Haushalt
+            werden per Piktogramm eingetragen — kein Fließtext, den erst jemand vorlesen muss.</p>
+        </div>
+        <figure class="scrolly-figure">
+          <img src="screenshots/wochenuebersicht.jpg" width="1568" height="782" loading="lazy"
+               alt="Wochenübersicht: Tabelle mit einer Zeile pro Familienmitglied und sieben Tagesspalten, gefüllt mit Terminen und Piktogrammen.">
+        </figure>
+      </div>
+    </div>
+
+    <div class="scrolly-item">
+      <div class="scrolly-panel">
+        <div class="scrolly-text">
+          <h3>Essen &amp; Kochen — der Speiseplan der Woche</h3>
+          <p>Frühstück, Mittag- und Abendessen für die ganze Woche geplant, inklusive Vorschau
+            auf die kommende Woche — niemand steht ratlos vor dem Kühlschrank.</p>
+        </div>
+        <figure class="scrolly-figure">
+          <img src="screenshots/essen-kochen.jpg" width="1568" height="782" loading="lazy"
+               alt="Essen & Kochen: Wochentabelle mit Frühstück, Mittag- und Abendessen für jeden Tag, darunter eine Vorschau der kommenden Woche.">
+        </figure>
+      </div>
+    </div>
+
+    <div class="scrolly-item">
+      <div class="scrolly-panel">
+        <div class="scrolly-text">
+          <h3>Einkaufen &amp; Besorgungen — eine Liste pro Tag</h3>
+          <p>Eine Einkaufsliste pro Tag: zum Abhaken auf dem Handy im Supermarkt oder ausgedruckt
+            am Kühlschrank.</p>
+        </div>
+        <figure class="scrolly-figure">
+          <img src="screenshots/einkaufen.jpg" width="1568" height="782" loading="lazy"
+               alt="Einkaufen & Besorgungen: sieben Tageskacheln mit Einkaufslisten-Buttons und Anzahl der Einträge.">
+        </figure>
+      </div>
+    </div>
+
+    <div class="scrolly-item">
+      <div class="scrolly-panel">
+        <div class="scrolly-text">
+          <h3>Rezeptkarten — Lieblingsrezepte griffbereit</h3>
+          <p>Lieblingsrezepte mit Zutatenliste hinterlegt und direkt einem Tag im Essensplan
+            zugewiesen — die Menge wird automatisch für die Familiengröße skaliert.</p>
+        </div>
+        <figure class="scrolly-figure">
+          <img src="screenshots/rezeptkarten.jpg" width="1568" height="782" loading="lazy"
+               alt="Rezeptkarten: Kartenraster mit drei Beispielrezepten, jeweils mit Titel und Personenzahl.">
+        </figure>
+      </div>
     </div>
   </div>
 </section>

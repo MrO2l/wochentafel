@@ -49,10 +49,84 @@ a{ color:var(--primary) }
 .landing-section{ padding:2.5rem 1rem }
 .landing-section h2{ font-weight:800; color:var(--primary); text-align:center; margin:0 0 .4rem; font-size:1.6rem }
 .landing-section .section-lead{ text-align:center; color:var(--text-body); opacity:.85; max-width:620px; margin:0 auto 2rem }
-.feature-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:1.1rem; max-width:1120px; margin:0 auto }
+/* Explizite 4 Spalten (statt vorher auto-fit) -- wird fuer .feature-card--print unten gebraucht,
+   damit "grid-column:1/-1" zuverlässig ueber alle 4 Spalten spannt (bei auto-fit koennte sich
+   die Spaltenzahl je nach verfuegbarer Breite aendern, "1/-1" waere dann nicht mehr deterministisch
+   auf "alle 4"). Breakpoints wie an anderer Stelle in der App ueblich (siehe style.css/style-v2.css). */
+.feature-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:1.1rem; max-width:1120px; margin:0 auto }
+@media (max-width:767.98px){ .feature-grid{ grid-template-columns:repeat(2,1fr) } }
+@media (max-width:575.98px){ .feature-grid{ grid-template-columns:1fr } }
 .feature-card{
   background:var(--background); border:1px solid var(--border-color); border-radius:var(--radius);
   box-shadow:0 .15rem .6rem rgba(74,63,46,.08); padding:1.4rem 1.2rem; text-align:center;
+}
+/* Material-Card-Elevation-Look fuer die 4 oberen Feature-Karten (Vorbild: freefrontend.com
+   "Ionic Material Cards" -- nur die Schatten-/Hover-Aesthetik uebernommen, nicht das dortige
+   Karten-Layout). Zweischichtiger Schatten (naher + weit gestreuter Anteil) wirkt "schwebender"
+   als ein einzelner flacher Schatten; sanfte Federungs-Kurve (cubic-bezier) + leichter Lift +
+   Scale beim Hover, analog zur Referenz. position:relative + z-index sorgen dafuer, dass diese
+   4 Karten beim Ueberlappen (siehe margin-bottom unten) zuverlaessig VOR der Druck-Karte gemalt
+   werden. */
+.feature-grid .feature-card:not(.feature-card--print){
+  position:relative; z-index:2;
+  box-shadow:0 .6rem 1.8rem rgba(74,63,46,.18), 0 .15rem .4rem rgba(74,63,46,.12);
+  transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .25s ease;
+  /* Ueberlappungs-/Stapel-Effekt (ersetzt die vorherige buendige Andock-Kante): zieht die Karte
+     mit ihrem unteren Rand sichtbar auf die breite Druck-Karte darunter. -1.1rem davon gleicht
+     nur den regulaeren Grid-gap aus (buendig, kein Versatz); der Rest (-.65rem) ist der
+     tatsaechliche, sichtbare Ueberlappungs-Betrag -- zusammen mit .feature-card--print's eigenem
+     margin-top:-1.1rem (gleicht ebenfalls nur den Grid-gap aus) ergibt das einen kontrollierten
+     Gesamt-Ueberlapp von ca. 1.75rem (28px) in die Druck-Karte hinein. */
+  margin-bottom:-1.75rem;
+}
+.feature-grid .feature-card:not(.feature-card--print):hover{
+  transform:translateY(-4px) scale(1.03);
+  box-shadow:0 1rem 2.4rem rgba(74,63,46,.24), 0 .25rem .6rem rgba(74,63,46,.16);
+}
+/* Der Ueberlapp soll ausschliesslich zwischen der LETZTEN Kartenreihe und der Druck-Karte
+   entstehen, nicht zwischen den 4 Karten untereinander. Bei 4 Spalten (Desktop, Basisregel oben)
+   stehen ohnehin alle 4 in einer einzigen Reihe -- kein Sonderfall noetig. Bei den schmaleren
+   Breakpoints bilden sie aber mehrere eigene Zeilen (2+2 bzw. 1+1+1+1); ohne Einschraenkung
+   wuerde Karte 1/2 dort ungewollt auf Karte 3/4 ueberlappen (bzw. bei 1-spaltig kaskadierend
+   alle nacheinander). Deshalb wird der Versatz bei den jeweils NICHT-letzten Karten wieder auf 0
+   zurueckgesetzt -- uebrig bleibt der Ueberlapp nur zwischen der letzten Kartenreihe (3+4 bzw.
+   nur 4) und der Druck-Karte darunter. */
+@media (max-width:767.98px){
+  .feature-grid .feature-card:not(.feature-card--print):nth-child(-n+2){ margin-bottom:0 }
+}
+@media (max-width:575.98px){
+  .feature-grid .feature-card:not(.feature-card--print):nth-child(-n+3){ margin-bottom:0 }
+}
+/* Druck-Karte: spannt ueber alle 4 Spalten (bzw. bei schmaleren Breakpoints ueber alle
+   vorhandenen). margin-top:-1.1rem gleicht wie zuvor den Grid-gap zur Kartenreihe aus (siehe
+   Kommentar oben zum Gesamt-Ueberlapp); eigener z-index:1 haelt sie zuverlaessig HINTER den 4
+   ueberlappenden Karten. Deutlich vergroessertes padding-top (3.75rem) schafft oberhalb von
+   Icon/Ueberschrift/Text bewusst Leerraum fuer die hereinragenden Karten (~1.75rem Ueberlapp +
+   spuerbarer Sicherheitsabstand darunter) -- Icon/Text bleiben dadurch vollstaendig sichtbar und
+   unverdeckt. Volle Eckenrundung (keine Radius-/Border-Sonderregel mehr noetig, da keine
+   buendige Naht-Kante mehr existiert): die Druck-Karte wirkt jetzt als eigenstaendige "Plattform"
+   unter den schwebenden 4 Karten, nicht mehr als nahtlos angeschweisstes 5. Segment.
+   FIX (nach visueller Pruefung): .feature-card erbt background:var(--background) -- exakt
+   dieselbe Farbe wie body{background} (beides var(--background)). Nur Border + der sehr
+   schwache Standard-Schatten trennten die Druck-Karte optisch von der Seite, wodurch die
+   "Plattform" gar nicht als eigene Flaeche erkennbar war und der Ueberlapp wie ein Abstand statt
+   wie ein Stapel wirkte. Eigener Hintergrund var(--secondary) (Butterblond -- in style-v2.css:41
+   explizit als "Spalten-Hintergruende, funktionale Bloecke" dokumentiert, hier erstmals in
+   landing.css in dieser Rolle genutzt statt nur als kleine Icon-Badge-Flaeche) hebt die Karte
+   jetzt klar vom Seitenhintergrund ab. Kontrast-Check
+   var(--text-body) #4A3F2E auf var(--secondary) #FBEFC6: Kontrastverhaeltnis ~8.9:1, deutlich
+   ueber dem WCAG-AA-Minimum von 4.5:1 fuer Fliesstext. Zusaetzlich kraeftigerer, aber bewusst
+   einschichtiger und etwas weicherer Schatten als die 4 "schwebenden" Karten oben (die behalten
+   den zweischichtigen, schaerferen Elevation-Schatten) -- so bleibt erkennbar, dass die Druck-
+   Karte die ruhigere, tragende Basis ist und die 4 Karten die eigentlich "erhobenen" Elemente
+   bleiben. */
+.feature-card--print{
+  grid-column:1 / -1;
+  position:relative; z-index:1;
+  margin-top:-1.1rem;
+  padding:3.75rem 1.5rem 1.8rem;
+  background:var(--secondary);
+  box-shadow:0 .5rem 1.4rem rgba(74,63,46,.16);
 }
 .feature-card .ic{
   width:2.4rem; height:2.4rem; color:var(--primary); background:var(--secondary);
@@ -68,17 +142,166 @@ a{ color:var(--primary) }
   width:2.4rem; height:2.4rem; font-size:1.3rem; color:var(--primary); background:var(--secondary);
   border-radius:50%; margin-bottom:.8rem;
 }
+/* Icon-Badge der Druck-Karte: eigener Hintergrund var(--secondary) auf der Karte (siehe oben)
+   wuerde sonst mit dem normalerweise ebenfalls var(--secondary)-farbenen Icon-Kreis
+   verschmelzen -- deshalb hier auf var(--background) umgedreht (heller Kreis auf dem
+   Butterblond-Untergrund), Kontrast zum umgebenden Primaergruen des Icons bleibt unveraendert
+   gut lesbar, nur Vordergrund/Hintergrund der Badge-Farbe getauscht. Bewusst NACH den beiden
+   Basis-Regeln (.feature-card .ic / .feature-card i.bi) platziert: bei gleicher Selektor-
+   Spezifitaet (je 2 Klassen + 1 Element) entscheidet die Quellreihenfolge -- diese Regel muss
+   also nach den Basis-Regeln stehen, um sie zuverlaessig zu ueberschreiben. */
+.feature-card--print .ic, .feature-card--print i.bi{ background:var(--background) }
 .feature-card h3{ font-size:1.05rem; font-weight:700; margin:0 0 .4rem; color:var(--text-body) }
 .feature-card p{ font-size:.9rem; color:var(--text-body); opacity:.85; margin:0 }
+/* Bug-Fix (nach visueller Pruefung): .feature-card--print p{max-width:520px;margin:0 auto} stand
+   vorher VOR dieser Basisregel .feature-card p{margin:0}. Bei gleicher Selektor-Spezifitaet (je 1
+   Klasse + 1 Element) gewinnt die spaeter im Quellcode stehende Regel -- margin:0 hat das
+   zentrierende margin:0 auto also stillschweigend wieder auf margin:0 zurueckgesetzt (max-width
+   blieb wirksam, da hier kein Konflikt bestand, deshalb war der Text auf 520px begrenzt aber
+   linksbuendig statt zentriert). Exakt dasselbe Muster wie beim Icon-Badge-Fix oben -- jetzt
+   ebenso NACH der Basisregel platziert, damit die Ueberschreibung zuverlaessig greift. */
+.feature-card--print p{ max-width:520px; margin:0 auto }
 
-/* ---------------- Screenshot-Galerie ---------------- */
-.gallery-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:1.4rem; max-width:1120px; margin:0 auto }
-.gallery-card{
-  background:var(--background); border:1px solid var(--border-color); border-radius:var(--radius);
-  overflow:hidden; box-shadow:0 .2rem .7rem rgba(74,63,46,.1);
+/* ---------------- Screenshot-Sektion (Scrollytelling) ----------------
+ * Basisregeln unten gelten IMMER (auch ohne Scroll-Driven-Animation-Support) und zeigen bereits
+ * den fertigen Endzustand: Screenshot ueber die volle Breite (bis max-width:1120px), Textkarte
+ * darueber, die per negativem margin-bottom leicht auf das Bild ueberlappt -- das ist reine
+ * Layout-CSS (kein Scroll-Trick) und funktioniert daher in JEDEM Browser identisch, auch ohne
+ * das @supports-Enhancement weiter unten. Kein Grid-Spalten-Split mehr (frueher 3fr/2fr
+ * nebeneinander) -- damit entfaellt auch der zuvor gemeldete Bug ungleicher Spaltenbreiten bei
+ * vertauschten Items strukturell, es gibt keine zwei Spalten unterschiedlicher Breite mehr.
+ * Das @supports-Enhancement haengt nur noch das Sticky-Pinning des Screenshots + den Ein-/
+ * Ausblend-Effekt der Textkarte zusaetzlich an -- progressive enhancement, kein zweiter
+ * Layout-Zustand, den man separat pflegen muesste.
+ */
+:root{
+  /* Hoehe von .landing-header: 40px Brand-Mark + 2x.75rem vertikales Padding + 1px Border
+     (siehe Zeile 22-33) -- als Variable, damit der gepinnte Screenshot unten den Sticky-Header
+     nicht ueberdeckt. */
+  --header-h:64px;
 }
-.gallery-card img{ display:block; width:100%; height:auto; background:var(--secondary) }
-.gallery-card figcaption{ padding:.7rem .9rem; font-size:.85rem; color:var(--text-body); font-weight:600 }
+
+.scrolly-item{ padding:3rem 0 }
+/* Dezent unterschiedlicher Hintergrund je Screenshot-Abschnitt, damit der Wechsel beim
+   Durchscrollen als "neues Kapitel" wahrnehmbar ist. Erste Deklaration je Regel ist ein fester
+   Fallback-Ton fuer Browser ohne color-mix()-Unterstuetzung (CSS ignoriert die zweite,
+   ungueltige Deklaration dort einfach und behaelt den ersten Wert -- kein @supports noetig).
+   Die Textkarte hat weiterhin ihren eigenen, festen Hintergrund (var(--background), siehe
+   .scrolly-text unten) und ist von dieser Variation bewusst ausgenommen, damit ihr Kontrast/
+   ihre Lesbarkeit unveraendert bleibt -- nur die Flaeche AUSSERHALB des Panels variiert. */
+.scrolly-items > .scrolly-item:nth-child(1){
+  background:#FDF6E3; background:color-mix(in srgb, var(--secondary) 35%, var(--background));
+}
+.scrolly-items > .scrolly-item:nth-child(2){
+  background:#EEF2E4; background:color-mix(in srgb, var(--primary) 8%, var(--background));
+}
+.scrolly-items > .scrolly-item:nth-child(3){
+  background:#F5EDD8; background:color-mix(in srgb, var(--border-color) 45%, var(--background));
+}
+.scrolly-items > .scrolly-item:nth-child(4){
+  background:#FDF4D8; background:color-mix(in srgb, var(--secondary) 60%, var(--background));
+}
+/* max-width 1120px -> 1400px (+25%, Nutzerwunsch: Screenshots deutlich groesser). Sicherheits-
+   abstand zum Viewport-Rand bleibt ausreichend: die umgebende .landing-section traegt bereits
+   eigenes padding:0 1rem (landing.css Feature-Kacheln-Block), plus das padding:0 1rem hier --
+   zusammen 32px je Seite, bevor ueberhaupt der Bildinhalt beginnt. Bei 1280px Viewport-Breite
+   ist der Panel-Container ohnehin durch die Viewport-Breite selbst begrenzt (kein max-width-
+   Overflow moeglich, Block-Element faellt nie breiter als sein Elternelement aus); bei 1440px+
+   bleiben > 30px Rand auf jeder Seite bis zur echten Bildschirmkante. Kein horizontales
+   Scrollen in beiden Faellen. */
+.scrolly-panel{ max-width:1400px; margin:0 auto; padding:0 1rem }
+/* Textkarte: liegt in der HTML-Reihenfolge VOR dem Screenshot (visuell "ueber dem Screenshot"),
+   negativer margin-bottom zieht den nachfolgenden Screenshot ein Stueck nach oben unter die
+   Karte -- so ueberlappt die Karte mit ihrem unteren Rand leicht das obere Drittel des Bilds.
+   position:relative + z-index sorgen dafuer, dass die Karte (mit eigenem Hintergrund/Schatten,
+   nicht transparent) immer VOR dem Bild gemalt wird -- unabhaengig von der DOM-Reihenfolge waere
+   ein spaeteres Geschwister sonst obenauf; das explizite z-index macht die Malreihenfolge
+   verlaesslich, nicht zufaellig. Eigener Hintergrund/Schatten statt direktem Transparent-Overlay
+   auf dem Bild, damit der Text unabhaengig vom Bildinhalt immer ausreichend Kontrast hat. */
+/* Textkarte bewusst NICHT im selben Verhaeltnis mitskaliert wie der Screenshot (640px -> 680px,
+   nur +6% statt +25%): bei ~16px Schrift entspraechen 640px bereits einer guten Zeilenlaenge
+   (~70 Zeichen inkl. Padding-Abzug); +25% auf 800px waere mit ~90 Zeichen/Zeile klar ueber dem
+   fuer Lesbarkeit empfohlenen Bereich (~65-75 Zeichen). Die Karte bleibt als kleineres,
+   ueberlappendes Element bewusst schmaler als der jetzt deutlich breitere Screenshot darunter --
+   das ist bei diesem "Card-over-Image"-Muster so gewollt, nicht ungewollt zurueckgeblieben. */
+.scrolly-text{
+  position:relative; z-index:2;
+  background:var(--background); border:1px solid var(--border-color); border-radius:var(--radius);
+  box-shadow:0 .4rem 1.2rem rgba(74,63,46,.18);
+  max-width:680px; margin:0 auto -3rem; padding:1.3rem 1.6rem;
+}
+.scrolly-text h3{ color:var(--primary); font-weight:800; font-size:1.3rem; margin:0 0 .6rem }
+.scrolly-text p{ color:var(--text-body); opacity:.9; margin:0; font-size:1rem; line-height:1.5 }
+.scrolly-figure{
+  margin:0; border-radius:var(--radius); overflow:hidden; box-shadow:0 .2rem .7rem rgba(74,63,46,.1);
+}
+.scrolly-figure img{ display:block; width:100%; height:auto; background:var(--secondary) }
+
+/* Enhancement: der Screenshot bleibt beim Durchscrollen des Items gepinnt (position:sticky),
+   waehrend die ueberlappende Textkarte per Scroll-Driven Animation ein- und wieder ausblendet --
+   nur wenn der Browser das unterstuetzt (Chrome/Edge; Firefox/Safari seit ca. 2025). @supports
+   mit einer konkreten Wertpruefung (nicht nur Property-Name) scheitert in aelteren Browsern
+   zuverlaessig an der Syntaxpruefung, greift dort also gar nicht erst ein.
+   view-timeline-name auf dem hohen .scrolly-panel-Track (statt animation-timeline:view()
+   direkt an der kleinen Textkarte) spannt die Ein-/Ausblend-Phasen ueber die GESAMTE Scroll-
+   Strecke des Panels auf -- so bleibt die Karte laenger sichtbar, waehrend der Screenshot
+   gepinnt ist, statt nur waehrend der kurzen Zeit, in der die Karte selbst durchs Sichtfeld
+   laeuft.
+   WICHTIG (Fix nach visueller Pruefung): .scrolly-figure ist sticky *innerhalb von
+   .scrolly-panel* -- der sticky "Containing Block" ist also .scrolly-panel, NICHT
+   .scrolly-item. .scrolly-item hatte bisher zwar min-height:160dvh, aber nur MIN-HEIGHT, keine
+   explizite height -- und Kind-Elemente mit height:100% resolven per Spezifikation NICHT gegen
+   eine min-height des Elternelements (nur gegen eine explizit gesetzte height), sondern gegen
+   auto. .scrolly-panel hatte also in Wirklichkeit nur seine natuerliche Inhaltshoehe (Textkarte
+   + Bild, ca. 650-700px) statt der vollen Item-Spur -- der Screenshot loeste sich dadurch viel
+   frueher vom Pinning als gedacht, und der Rest der Spur scrollte als leere Flaeche vorbei (der
+   urspruenglich gemeldete Bug). Fix: min-height direkt auf .scrolly-panel selbst gesetzt (statt
+   auf .scrolly-item + height:100%-Weiterreichung) -- damit ist .scrolly-panel selbst das Element
+   mit expliziter Mindesthoehe UND der sticky-Containing-Block, keine Prozent-Vererbung mehr
+   noetig. .scrolly-item bekommt dadurch automatisch dieselbe Hoehe (Block-Elternelement waechst
+   mit seinem einzigen Kind), der Hintergrund-Farbwechsel weiter unten bleibt also weiterhin
+   ueber die volle Spur sichtbar. Zusaetzlich min-height von 160dvh auf 125dvh reduziert und die
+   Keyframe-Prozentsaetze gestrafft (kuerzeres Ein-/Ausblenden, laengere Lesezeit dazwischen),
+   damit der Uebergang zum naechsten Screenshot dichter am sichtbaren Inhalt liegt statt auf
+   Leerlaufstrecke zu warten. */
+/* Nachrechnung fuer die 25%-Vergroesserung des Screenshots (max-width 1120px -> 1400px):
+   Bildseitenverhaeltnis 1568:782 ~ 2:1, effektive Bildbreite bei voller Panelbreite (1400px -
+   2x1rem Padding) = 1368px -> Bildhoehe ~1368/2 = 684px (vorher bei 1120px Panel: ~543px).
+   Der sticky-Spielraum (wie lange das Bild tatsaechlich gepinnt sichtbar bleibt, bevor die
+   .scrolly-panel-Hoehe "aufgebraucht" ist) ergibt sich aus: Panel-Mindesthoehe minus
+   [Sticky-top-Offset (--header-h 64px + 1.5rem 24px = 88px) + Abstand vom Panel-Anfang bis zum
+   Bild (padding-top 1.5rem=24px + Textkarte ~150px hoch, davon 3rem/48px durch den negativen
+   margin-bottom wieder abgezogen, macht ~126px) + Bildhoehe 684px] = Panel-Mindesthoehe - 898px.
+   Bei den bisherigen 125dvh waere dieser Puffer bei einer typischen 800px hohen Anzeigeflaeche
+   nur noch 1000-898=102px (statt vorher, bei kleinerem Bild, ~226px) -- das wuerde den
+   Leerraum-Fix von oben durch die Vergroesserung wieder teilweise aufheben, besonders auf
+   niedrigeren Anzeigeflaechen (bei 700px Anzeigeflaeche waere der Puffer sogar NEGATIV, das Bild
+   koennte sich dann gar nicht mehr sinnvoll fixieren). Deshalb min-height von 125dvh auf 150dvh
+   angehoben: bei 700px Anzeigeflaeche ergibt das 1050-898=152px Puffer (wieder positiv,
+   ausreichend), bei 800px 1200-898=302px, bei 900px 1350-898=452px -- durchgehend ein
+   vergleichbarer oder groesserer Puffer als vor der Bildvergroesserung, ohne wieder auf die
+   urspruenglichen (zu langen) 160dvh zurueckzugehen. */
+@supports (animation-timeline: view()) {
+  .scrolly-item{ padding:0 }
+  .scrolly-panel{
+    min-height:150dvh; padding-top:1.5rem;
+    view-timeline-name:--scrolly-reveal; view-timeline-axis:block;
+  }
+  .scrolly-figure{ position:sticky; top:calc(var(--header-h) + 1.5rem) }
+  .scrolly-text{
+    opacity:0; transform:translateY(24px);
+    animation:scrolly-reveal linear both;
+    animation-timeline:--scrolly-reveal;
+    animation-range:cover 0% cover 100%;
+  }
+  @keyframes scrolly-reveal{
+    0%  { opacity:0; transform:translateY(24px) }
+    12% { opacity:1; transform:translateY(0) }
+    70% { opacity:1; transform:translateY(0) }
+    85% { opacity:0; transform:translateY(-24px) }
+    100%{ opacity:0; transform:translateY(-24px) }
+  }
+}
 
 /* ---------------- Abschluss-CTA ---------------- */
 .landing-cta{

@@ -463,7 +463,7 @@
      "Essen & Kochen" bewusst die neue Taupe-Palette nutzt. Buttons daher echte Bootstrap-
      ".btn"-Varianten statt ".legacy-btn". Kein Bootstrap-JS-Modal, showModal()/close() wie bei
      den uebrigen Overlays (app.js). ================= -->
-<dialog class="recipe-form" id="recipeForm" aria-labelledby="rfTitle">
+<dialog class="recipe-form recipe-editor" id="recipeForm" aria-labelledby="rfTitle">
   <div class="recipe-form-head modal-header">
     <h2 id="rfTitle" class="font-heading">Neues Rezept</h2>
     <div class="grow"></div>
@@ -506,6 +506,38 @@
     </form>
   </div>
 </dialog>
+
+<!-- ================= AP2.1/AP2.2 (projects/wochenplaner-rezeptkarten-drucken/plan.md, D2):
+     eigenstaendiger Druck-"Dialog" fuer EINE Rezeptkarte -- NICHT der Editor (#recipeForm) mit
+     seinen <input>/<textarea>-Feldern, sondern ein neues, aus den nachgeladenen Volldaten frisch
+     aufgebautes Anzeige-Fragment (siehe openRecipePrint()/buildRecipePrintContent() in app.js).
+     Body-Inhalt ist bewusst PERMANENT als <table><thead>/<tbody> strukturiert (nicht nur beim
+     Drucken umgeschaltet): der <thead>-Titelzeilen-Kniff (D3) ist der einzige HTML-Mechanismus,
+     der sich beim Drucken browseruebergreifend zuverlaessig auf jeder Folgeseite wiederholt, wenn
+     eine Tabelle ueber eine Seitengrenze umbricht. Isoliert per AP1.1-Prototyp getestet und von
+     ANORAK am Bildschirm bestaetigt -- der reale Mehrseitendruck des langen Testrezepts (ID 8)
+     zeigte danach aber trotzdem nur EINE Seite. Ursache (Nachtest bestaetigt, siehe
+     scratchpad/ap2.2-dialog-vs-flow-print-pagination-test.html): natives <dialog> rendert im
+     Browser-"Top Layer", einer eigenen Ebene ausserhalb des normalen Dokumentflusses -- Inhalte
+     darin werden beim Drucken auf eine Seite begrenzt behandelt und brechen NICHT auf Folgeseiten
+     um, unabhaengig von max-height/overflow-CSS. Deshalb jetzt bewusst KEIN <dialog>/showModal()
+     mehr (Designentscheidung D2 im Plan nennt genau diese Alternative), sondern ein normales,
+     im Dokumentfluss stehendes <div>, das nur ueber die Klasse "open" sichtbar geschaltet wird
+     (siehe style.css) -- ESC-/Backdrop-Schliessen sowie Sichtbarkeit werden dafuer in app.js
+     manuell nachgebildet (openRecipePrint()/closeRecipePrint()), da ein <div> anders als <dialog>
+     kein showModal()/close()/::backdrop/ESC-Verhalten von Haus aus mitbringt.
+     #rpBody bleibt zunaechst leer und wird bei jedem Oeffnen frisch befuellt (siehe app.js). ================= -->
+<div class="recipe-print" id="recipePrint" role="dialog" aria-modal="true" aria-labelledby="rpTitle">
+  <div class="recipe-print-card">
+    <div class="recipe-print-head modal-header">
+      <h2 id="rpTitle" class="font-heading">Rezept drucken</h2>
+      <div class="grow"></div>
+      <button type="button" class="btn btn-primary btn-sm" id="rpPrintBtn" title="Dieses Rezept drucken">Drucken</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm" id="rpClose" title="Schließen">Schließen</button>
+    </div>
+    <div class="recipe-print-body modal-body" id="rpBody"></div>
+  </div>
+</div>
 
 <!-- ================= AP1.4: #recipeServingsDialog (Personenzahl-Abfrage nach einem Drag&Drop-
      Drop, siehe Git-Historie) ist mit dem D&D-Rueckbau ersatzlos entfernt -- der einzige

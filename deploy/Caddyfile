@@ -23,3 +23,9 @@
 
 	reverse_proxy app:3000
 }
+
+# Alte Domain: dauerhafter Redirect auf die neue Primärdomain, damit
+# bestehende Lesezeichen/Links nicht brechen (Umstellung 2026-09-03).
+wochenplan.ollesch.cloud {
+	redir https://wochentafel.family{uri} permanent
+}

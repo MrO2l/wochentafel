@@ -3,6 +3,10 @@ secrets/
 .env
 .env-backups/
 
+# Nur fuer lokale Testlaeufe (exponiert den DB-Port zum Host) -- niemals
+# auf den Produktivserver uebernehmen. Siehe Kommentar in der Datei selbst.
+docker-compose.local-dev.yml
+
 # Node.js
 node_modules/
 npm-debug.log*
