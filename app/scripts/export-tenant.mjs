@@ -40,6 +40,29 @@
  * siehe ops/backup-tenant-offsite.sh (Host-Ebene, GPG) fuer den
  * vollstaendigen Backup-Ablauf inkl. Verschluesselung und Ablage. Details
  * siehe projects/wochenplaner-mandantenfaehigkeit/ap3.2-backup-konzept.md.
+ *
+ * NACHTRAG (AP3.2, projects/wochenplaner-termine-verschluesselung/plan.md,
+ * Migration 009_weeks_encryption.sql): Datenmodell fuer clientseitige
+ * Ende-zu-Ende-Verschluesselung von weeks.data. Zwei Aenderungen hier:
+ *   1. weeks: zusaetzlich data_ciphertext/data_nonce/key_version exportiert
+ *      (data bleibt bestehen, ist aber bei verschluesselten Wochen NULL --
+ *      atomarer Swap laut MORROWs Konzept, siehe weeks_plaintext_xor_
+ *      ciphertext-CHECK in der Migration). Alle vier Spalten werden 1:1
+ *      mitgenommen, unabhaengig vom Verschluesselungszustand der Zeile.
+ *   2. NEUE Tabelle household_key_wraps wird zusaetzlich exportiert (Wrap-
+ *      Daten des Haushalts-Schluessels je Nutzer/Zweck) -- OHNE diese Tabelle
+ *      waere ein verschluesselter Haushalt nach einem Tenant-Umzug fuer immer
+ *      unlesbar (die Ciphertext-Bytes in weeks waeren zwar korrekt kopiert,
+ *      aber ohne Wrap kein Weg mehr, an den Haushalts-Schluessel zu kommen --
+ *      der Schluessel selbst ist NIRGENDS serverseitig gespeichert, siehe
+ *      Migration Abschnitt 3).
+ * bytea-Spalten (data_ciphertext/data_nonce sowie die fuenf bytea-Spalten von
+ * household_key_wraps) werden als base64-Text in JSON kodiert (siehe
+ * b64() unten) -- ausschliesslich eine verlustfreie Byte-zu-Text-Kodierung
+ * fuer den JSON-Transport, KEINE Ver-/Entschluesselung. Dieses Skript
+ * entschluesselt an keiner Stelle etwas und kann es auch nicht: es verbindet
+ * ueber die Owner-/Migrator-Rolle ohne Kenntnis irgendeines Nutzerpassworts
+ * oder Wiederherstellungscodes.
  * ============================================================================ */
 
 import pg from 'pg';
@@ -69,7 +92,10 @@ Verwendung:
   node scripts/export-tenant.mjs --household-id <id> > export.json
 
 Schreibt ein JSON-Dokument mit allen Daten des angegebenen Haushalts
-(households/users/weeks/invites/recipes) nach STDOUT. Bilddateien zu
+(households/users/weeks/invites/recipes/household_key_wraps) nach STDOUT.
+weeks.data_ciphertext/data_nonce und die bytea-Spalten von
+household_key_wraps sind base64-kodiert (reine Transportkodierung, keine
+Ent-/Verschluesselung -- siehe Kommentar am Dateikopf). Bilddateien zu
 recipes.image_path sind NICHT enthalten (separates Volume-Backup, siehe
 Kommentar am Dateikopf). Fehler-/Statusmeldungen gehen
 nach STDERR, damit STDOUT ausschliesslich das reine Exportdokument enthaelt
@@ -78,6 +104,13 @@ nach STDERR, damit STDOUT ausschliesslich das reine Exportdokument enthaelt
 Voraussetzung: Umgebungsvariable DATABASE_URL (Owner-/Migrator-Rolle) muss
 gesetzt sein -- im Docker-Compose-Stack bereits der Fall.
 `);
+}
+
+// Reine Byte-zu-Text-Transportkodierung fuer bytea-Spalten (JSON kennt keinen
+// Binaertyp) -- node-postgres liefert bytea-Werte als Buffer, NULL bleibt NULL.
+// KEINE Kryptografie, siehe Kommentar am Dateikopf.
+function b64(buf) {
+  return buf == null ? null : Buffer.from(buf).toString('base64');
 }
 
 async function main() {
@@ -98,8 +131,15 @@ async function main() {
   const client = new pg.Client({ connectionString: DATABASE_URL });
   await client.connect();
   try {
+    // households.encryption_status (Migration 009) mitexportiert -- reines
+    // Statusfeld (plaintext/activating/active), keine bytea-Spalte, kein
+    // Envelope-Verstaendnis noetig. template_data wird UNVERAENDERT als JSON-
+    // Wert durchgereicht -- ob es ein Legacy-Klartext-Objekt oder ein
+    // Ciphertext-Envelope ({__enc:true, nonce, ciphertext, keyVersion}) ist,
+    // spielt fuer dieses Skript keine Rolle (siehe Migration Abschnitt 1b).
     const householdsRes = await client.query(
-      `SELECT id, name, template_data, created_at, migrated_from_instance, migrated_at
+      `SELECT id, name, template_data, encryption_status, created_at,
+              migrated_from_instance, migrated_at
          FROM households WHERE id = $1`, [householdId]);
     if (householdsRes.rowCount === 0) {
       console.error(`Fehler: Kein Haushalt mit id=${householdId} gefunden. Kein Export erzeugt.`);
@@ -110,9 +150,21 @@ async function main() {
       `SELECT id, household_id, email, name, password_hash, role, created_at
          FROM users WHERE household_id = $1 ORDER BY id`, [householdId]);
 
-    const weeksRes = await client.query(
-      `SELECT id, household_id, week_start, data, updated_at, updated_by
+    // weeks: data_ciphertext/data_nonce/key_version (Migration 009) zusaetzlich
+    // zur alten data-Spalte exportiert. Genau eine der beiden Seiten ist pro
+    // Zeile NULL (weeks_plaintext_xor_ciphertext-CHECK) -- dieses Skript
+    // unterscheidet nicht zwischen verschluesselten und Klartext-Wochen,
+    // sondern nimmt beide Spaltenpaare unveraendert mit, egal welche Seite
+    // gerade NULL ist.
+    const weeksRaw = await client.query(
+      `SELECT id, household_id, week_start, data, data_ciphertext, data_nonce,
+              key_version, updated_at, updated_by
          FROM weeks WHERE household_id = $1 ORDER BY week_start`, [householdId]);
+    const weeksRes = { rowCount: weeksRaw.rowCount, rows: weeksRaw.rows.map(w => ({
+      ...w,
+      data_ciphertext: b64(w.data_ciphertext),
+      data_nonce: b64(w.data_nonce),
+    })) };
 
     const invitesRes = await client.query(
       `SELECT code, household_id, created_by, created_at, expires_at, used_at, used_by
@@ -130,6 +182,27 @@ async function main() {
               image_path, created_at, updated_at, created_by, updated_by
          FROM recipes WHERE household_id = $1 ORDER BY id`, [householdId]);
 
+    // NEU (AP3.2, Migration 009_weeks_encryption.sql): household_key_wraps --
+    // die verpackten Kopien des Haushalts-Schluessels je Nutzer/Zweck
+    // (wrap_type password/recovery_code/pending). Ohne diese Tabelle waeren
+    // exportierte Ciphertext-Wochen nach einem Restore fuer immer unlesbar,
+    // siehe Kommentar am Dateikopf. Alle fuenf bytea-Spalten werden base64-
+    // kodiert (b64()) -- reine Transportkodierung, keine Kryptografie.
+    const keyWrapsRaw = await client.query(
+      `SELECT id, household_id, user_id, invite_code, wrap_type, key_version,
+              wrapped_key, wrap_nonce, kdf_salt, kdf_algo, kdf_time_cost,
+              kdf_memory_cost, kdf_parallelism, recovery_verifier_salt,
+              recovery_verifier_hash, created_at, updated_at, expires_at, revoked_at
+         FROM household_key_wraps WHERE household_id = $1 ORDER BY id`, [householdId]);
+    const keyWrapsRes = { rowCount: keyWrapsRaw.rowCount, rows: keyWrapsRaw.rows.map(w => ({
+      ...w,
+      wrapped_key: b64(w.wrapped_key),
+      wrap_nonce: b64(w.wrap_nonce),
+      kdf_salt: b64(w.kdf_salt),
+      recovery_verifier_salt: b64(w.recovery_verifier_salt),
+      recovery_verifier_hash: b64(w.recovery_verifier_hash),
+    })) };
+
     // Bewusst KEIN Zugriff auf/Export von "session" -- ephemerer
     // Sitzungsspeicher (connect-pg-simple), keine Kundendaten im fachlichen
     // Sinn, siehe ap1.1-datenmodell-migration.md ("Migrationsweg").
@@ -142,13 +215,15 @@ async function main() {
       weeks: weeksRes.rows,
       invites: invitesRes.rows,
       recipes: recipesRes.rows,
+      household_key_wraps: keyWrapsRes.rows,
     };
 
     process.stdout.write(JSON.stringify(doc));
     console.error(
       `Export ok: household_id=${householdId} ("${householdsRes.rows[0].name}"), ` +
       `${usersRes.rowCount} Nutzer, ${weeksRes.rowCount} Wochen, ${invitesRes.rowCount} Einladungen, ` +
-      `${recipesRes.rowCount} Rezepte.`);
+      `${recipesRes.rowCount} Rezepte, ${keyWrapsRes.rowCount} Schluessel-Wraps ` +
+      `(Haushalt-Verschluesselungsstatus: ${householdsRes.rows[0].encryption_status}).`);
   } finally {
     await client.end();
   }

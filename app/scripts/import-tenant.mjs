@@ -58,6 +58,27 @@
  *     userIdMap alt->neu uebersetzt. Weil recipes unabhaengig von weeks
  *     ist, gibt es keine Reihenfolgen-Kopplung zwischen beiden Tabellen
  *     beim Import.
+ *   - household_key_wraps.id: analog recipes.id immer frische id (bigserial-
+ *     Default, id-Spalte im INSERT ausgelassen) -- keine andere Tabelle
+ *     referenziert household_key_wraps.id.
+ *   - household_key_wraps.user_id: ueber dasselbe userIdMap alt->neu wie
+ *     weeks.updated_by/recipes.created_by uebersetzt. NULL bleibt NULL
+ *     (recovery_code-Wraps haben nie einen user_id).
+ *   - household_key_wraps.invite_code: FK auf invites(code) -- MUSS daher
+ *     NACH invites (Schritt 4) importiert werden. Wird der zugehoerige
+ *     Invite-Code wegen einer Code-Kollision uebersprungen (siehe Schritt 4),
+ *     kann der davon abhaengige pending-Wrap NICHT sinnvoll importiert
+ *     werden (er wuerde sonst auf einen fremden, bereits in der Ziel-DB
+ *     vorhandenen Invite eines ANDEREN Haushalts zeigen) -- anders als bei
+ *     uebersprungenen Invite-Codes selbst (unkritisch, siehe Schritt 4) ist
+ *     ein verlorener Wrap ein Verlust von Schluesselmaterial und wird daher
+ *     NICHT still uebersprungen, sondern bricht den gesamten Restore ab
+ *     (ROLLBACK, fail-closed).
+ *   - household_key_wraps.household_id: immer newHouseholdId (frischer
+ *     Haushalt) -- die Unique-Indizes aus Migration 009 (hoechstens ein
+ *     aktiver recovery_code-Wrap je Haushalt, hoechstens ein aktiver
+ *     password-Wrap je Nutzer) koennen daher nicht mit bereits vorhandenen
+ *     Zeilen in der Ziel-DB kollidieren.
  *
  * NACHTRAG (Rezeptkarten-Feature, urspruenglich am 2026-08-30 als Luecke
  * dokumentiert): recipes.image_path referenziert NUR einen Dateinamen, kein
@@ -88,6 +109,28 @@
  * export-tenant.mjs und ops/restore-tenant-from-offsite.sh (Host-Ebene,
  * GPG). Details siehe
  * projects/wochenplaner-mandantenfaehigkeit/ap3.2-backup-konzept.md.
+ *
+ * NACHTRAG (AP3.2, projects/wochenplaner-termine-verschluesselung/plan.md,
+ * Migration 009_weeks_encryption.sql):
+ *   - weeks: data_ciphertext/data_nonce/key_version werden zusaetzlich zur
+ *     alten data-Spalte 1:1 zurueckgeschrieben (base64 -> Buffer, siehe
+ *     unb64() unten). Welche der beiden Spaltenseiten NULL ist, entscheidet
+ *     ausschliesslich der Exportzustand der Quellzeile -- dieses Skript
+ *     interpretiert/veraendert das nicht.
+ *   - NEU: household_key_wraps wird als sechste fachliche Tabelle importiert,
+ *     analog zum bestehenden Muster fuer recipes (Schritt 5). Ohne diesen
+ *     Schritt wuerde ein Restore eines verschluesselten Haushalts dessen
+ *     Ciphertext-Wochen zwar korrekt kopieren, aber den Zugriffsweg auf den
+ *     Haushalts-Schluessel verlieren -- fauler faktischer Totalverlust trotz
+ *     technisch vollstaendiger Ciphertext-Kopie.
+ *   - households.encryption_status wird mitgenommen (reines Statusfeld).
+ *     households.template_data wird weiterhin UNVERAENDERT durchgereicht --
+ *     ob Klartext-Objekt oder Ciphertext-Envelope, spielt fuer dieses Skript
+ *     keine Rolle (kein Interpretieren, kein Aendern).
+ *   - Dieses Skript ent-/verschluesselt an KEINER Stelle etwas (kann es auch
+ *     nicht: Owner-/Migrator-Rolle, kein Zugriff auf Nutzerpasswort oder
+ *     Wiederherstellungscode). Alle bytea-Werte werden ausschliesslich als
+ *     Bytes bewegt (base64-Text <-> Buffer).
  * ============================================================================ */
 
 import pg from 'pg';
@@ -134,13 +177,26 @@ Optionen:
 Voraussetzung: Umgebungsvariable DATABASE_URL (Owner-/Migrator-Rolle) muss
 gesetzt sein -- im Docker-Compose-Stack bereits der Fall. Die Ziel-DB muss
 das Schema aus app/migrations/ bereits enthalten (households/users/weeks/
-invites/recipes-Tabellen vorhanden).
+invites/recipes/household_key_wraps-Tabellen vorhanden, inkl. Migration
+009_weeks_encryption.sql).
 
 Hinweis: recipes.image_path verweist nur auf einen Dateinamen. Die
 eigentliche Bilddatei wird von diesem Skript NICHT wiederhergestellt --
 separat ueber das Volume-Backup restaurieren (ops/restore-tenant-from-
 offsite.sh), sonst zeigt image_path nach dem Restore ins Leere.
+
+Hinweis: weeks.data_ciphertext/data_nonce und die bytea-Spalten von
+household_key_wraps werden 1:1 als Bytes wiederhergestellt (base64 -> Buffer)
+-- dieses Skript ent-/verschluesselt nichts. Verschluesselte Wochen bleiben
+nach dem Restore nur mit dem korrekten Passwort/Wiederherstellungscode des
+Haushalts entschluesselbar, exakt wie vor dem Export.
 `);
+}
+
+// Reine Byte-zu-Text-Transportkodierung (Gegenstueck zu b64() in
+// export-tenant.mjs) -- KEINE Kryptografie.
+function unb64(str) {
+  return str == null ? null : Buffer.from(str, 'base64');
 }
 
 // Gueltiger, unquotierter Postgres-Bezeichner: Buchstabe/Unterstrich am Anfang,
@@ -228,6 +284,9 @@ async function main() {
   const srcWeeks = doc.weeks || [];
   const srcInvites = doc.invites || [];
   const srcRecipes = doc.recipes || [];
+  // household_key_wraps fehlt in Exporten vor AP3.2 (aeltere v1-Dokumente
+  // ohne Verschluesselungsschema) -- Fallback auf leeres Array, kein Fehler.
+  const srcKeyWraps = doc.household_key_wraps || [];
 
   const client = new pg.Client({ connectionString: targetConnectionString });
   await client.connect();
@@ -265,19 +324,25 @@ async function main() {
     // 1. Haushalt anlegen. Owner-Rolle, keine RLS -> normales RETURNING
     //    funktioniert direkt (siehe Kommentar am Dateikopf).
     // ------------------------------------------------------------------
+    // encryption_status (Migration 009): faellt bei aelteren v1-Exporten ohne
+    // Verschluesselungsschema weg -- 'plaintext' entspricht dann exakt dem
+    // tatsaechlichen Zustand des Quell-Haushalts (Default-Wert der Spalte).
+    // template_data wird UNVERAENDERT durchgereicht (Klartext-Objekt ODER
+    // Ciphertext-Envelope, siehe Kommentar am Dateikopf) -- kein Interpretieren.
+    const encryptionStatus = srcHousehold.encryption_status || 'plaintext';
     let newHouseholdId;
     if (forcedHouseholdId !== null) {
       await client.query(
-        `INSERT INTO households (id, name, template_data, created_at, migrated_from_instance, migrated_at)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [forcedHouseholdId, srcHousehold.name, srcHousehold.template_data, srcHousehold.created_at,
-          srcHousehold.migrated_from_instance, srcHousehold.migrated_at]);
+        `INSERT INTO households (id, name, template_data, encryption_status, created_at, migrated_from_instance, migrated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [forcedHouseholdId, srcHousehold.name, srcHousehold.template_data, encryptionStatus,
+          srcHousehold.created_at, srcHousehold.migrated_from_instance, srcHousehold.migrated_at]);
       newHouseholdId = forcedHouseholdId;
     } else {
       const res = await client.query(
-        `INSERT INTO households (name, template_data, created_at, migrated_from_instance, migrated_at)
-         VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-        [srcHousehold.name, srcHousehold.template_data, srcHousehold.created_at,
+        `INSERT INTO households (name, template_data, encryption_status, created_at, migrated_from_instance, migrated_at)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+        [srcHousehold.name, srcHousehold.template_data, encryptionStatus, srcHousehold.created_at,
           srcHousehold.migrated_from_instance, srcHousehold.migrated_at]);
       newHouseholdId = res.rows[0].id;
     }
@@ -298,15 +363,21 @@ async function main() {
     // ------------------------------------------------------------------
     // 3. Wochen (weeks.id wird von keiner anderen Tabelle referenziert,
     //    daher kein eigenes Mapping fuer weeks.id noetig; UNIQUE(household_
-    //    id, week_start) kollisionsfrei, da newHouseholdId frisch/eindeutig)
+    //    id, week_start) kollisionsfrei, da newHouseholdId frisch/eindeutig).
+    //    data_ciphertext/data_nonce/key_version (Migration 009) werden 1:1
+    //    mitgeschrieben -- base64 -> Buffer via unb64(), sonst unveraendert.
+    //    Fehlen diese Felder im Quelldokument (aelterer v1-Export ohne
+    //    Verschluesselungsschema), sind sie schlicht NULL, data bleibt
+    //    gesetzt -- entspricht exakt weeks_plaintext_xor_ciphertext.
     // ------------------------------------------------------------------
     let weeksInserted = 0;
     for (const w of srcWeeks) {
       const updatedBy = w.updated_by != null ? (userIdMap.get(w.updated_by) ?? null) : null;
       await client.query(
-        `INSERT INTO weeks (household_id, week_start, data, updated_at, updated_by)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [newHouseholdId, w.week_start, w.data, w.updated_at, updatedBy]);
+        `INSERT INTO weeks (household_id, week_start, data, data_ciphertext, data_nonce, key_version, updated_at, updated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [newHouseholdId, w.week_start, w.data ?? null, unb64(w.data_ciphertext), unb64(w.data_nonce),
+          w.key_version ?? null, w.updated_at, updatedBy]);
       weeksInserted++;
     }
 
@@ -363,11 +434,50 @@ async function main() {
     }
 
     // ------------------------------------------------------------------
-    // 6. Validierung vor dem Commit (Zaehlvergleich Quelle/Ziel, analog
+    // 6. household_key_wraps (Migration 009, AP3.2). MUSS nach invites
+    //    (Schritt 4) und users (Schritt 2) laufen -- FK auf invites(code)
+    //    bzw. Mapping ueber userIdMap. id-Spalte bewusst ausgelassen
+    //    (bigserial-Default, siehe Kommentar am Dateikopf). Alle bytea-
+    //    Spalten via unb64() zurueck in Buffer gewandelt -- reine
+    //    Byteverschiebung, kein Kryptografie-Schritt.
+    //
+    //    Fail-closed bei invite_code-Kollision (siehe Kommentar am
+    //    Dateikopf): ein pending-Wrap, dessen Invite-Code in Schritt 4
+    //    uebersprungen wurde, wuerde sonst auf einen fremden Invite in der
+    //    Ziel-DB zeigen -- das ist ein Verlust von Schluesselmaterial, kein
+    //    unkritischer Einzelfall wie bei den Invites selbst, daher hier
+    //    KEIN stilles Ueberspringen, sondern Abbruch des gesamten Restores.
+    // ------------------------------------------------------------------
+    let keyWrapsInserted = 0;
+    for (const w of srcKeyWraps) {
+      if (w.invite_code != null && skippedInviteCodes.includes(w.invite_code)) {
+        throw new Error(
+          `household_key_wraps: Wrap fuer invite_code "${w.invite_code}" kann nicht importiert werden, ` +
+          'weil der zugehoerige Invite wegen einer Code-Kollision uebersprungen wurde (siehe Schritt 4). ' +
+          'Ohne diesen Wrap waere Schluesselmaterial verloren -- Restore abgebrochen (fail-closed).');
+      }
+      const userId = w.user_id != null ? (userIdMap.get(w.user_id) ?? null) : null;
+      await client.query(
+        `INSERT INTO household_key_wraps
+           (household_id, user_id, invite_code, wrap_type, key_version,
+            wrapped_key, wrap_nonce, kdf_salt, kdf_algo, kdf_time_cost,
+            kdf_memory_cost, kdf_parallelism, recovery_verifier_salt,
+            recovery_verifier_hash, created_at, updated_at, expires_at, revoked_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+        [newHouseholdId, userId, w.invite_code ?? null, w.wrap_type, w.key_version,
+          unb64(w.wrapped_key), unb64(w.wrap_nonce), unb64(w.kdf_salt), w.kdf_algo,
+          w.kdf_time_cost, w.kdf_memory_cost, w.kdf_parallelism,
+          unb64(w.recovery_verifier_salt), unb64(w.recovery_verifier_hash),
+          w.created_at, w.updated_at, w.expires_at ?? null, w.revoked_at ?? null]);
+      keyWrapsInserted++;
+    }
+
+    // ------------------------------------------------------------------
+    // 7. Validierung vor dem Commit (Zaehlvergleich Quelle/Ziel, analog
     //    ap1.1-konsolidierungs-vorlage.sql Abschnitt 5)
     // ------------------------------------------------------------------
     const ok = srcUsers.length === userIdMap.size && srcWeeks.length === weeksInserted
-      && srcRecipes.length === recipesInserted;
+      && srcRecipes.length === recipesInserted && srcKeyWraps.length === keyWrapsInserted;
 
     if (dryRun || !ok) {
       await client.query('ROLLBACK');
@@ -380,9 +490,9 @@ async function main() {
 
     console.error(
       `${dryRun ? '[dry-run] ' : ''}Restore ${ok ? 'ok' : 'FEHLGESCHLAGEN'}: neue household_id=${newHouseholdId} ` +
-      `("${srcHousehold.name}"), ${userIdMap.size}/${srcUsers.length} Nutzer, ` +
+      `("${srcHousehold.name}", encryption_status=${encryptionStatus}), ${userIdMap.size}/${srcUsers.length} Nutzer, ` +
       `${weeksInserted}/${srcWeeks.length} Wochen, ${invitesInserted}/${srcInvites.length} Einladungen, ` +
-      `${recipesInserted}/${srcRecipes.length} Rezepte.`);
+      `${recipesInserted}/${srcRecipes.length} Rezepte, ${keyWrapsInserted}/${srcKeyWraps.length} Schluessel-Wraps.`);
     if (srcRecipes.some(r => r.image_path)) {
       console.error('Hinweis: recipes.image_path wurde als Dateiname wiederhergestellt, ' +
         'die zugehoerigen Bilddateien selbst NICHT -- separat aus dem Volume-Backup restaurieren.');
