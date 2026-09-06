@@ -1261,23 +1261,67 @@ app.post('/api/auth/logout', (req, res) => {
 
 /* ------------------------------------------------------------------ *
  * Wiederherstellungscode-Abfrage (AP2.1, erweitert in AP2.6 -- Phase 1 des
- * Passwort-Reset-Flusses, ap1.2-datenmodell.md Abschnitt 7a)
+ * Passwort-Reset-Flusses, ap1.2-datenmodell.md Abschnitt 7a; gehaertet in
+ * AP4.2 nach ZANDORs Security-Review AP4.1)
  *
- * Dieser Endpunkt bleibt weiterhin rein LESEND und veraendert nie Sitzung,
- * Passwort oder Wraps -- er liefert die bereits AEAD-geschuetzten Wrap-Felder
- * des haushaltsweiten recovery_code-Wraps zu einer E-Mail-Adresse (analog zum
- * Login-Lookup, nur ohne password_hash) sowie -- rein zu Demonstrations-/
- * Testzwecken -- die Ciphertext-Bytes der zuletzt geaenderten Woche desselben
- * Haushalts. AP2.6-Ergaenzung: liefert jetzt zusaetzlich
- * recoveryVerifierSalt (unkritisch, siehe Migration 009 Kommentar) -- damit
- * kann der Client lokal denselben "verifier"-Wert reproduzieren, den Phase 2
- * (POST /api/auth/password-reset unten) prueft. recovery_verifier_hash bleibt
- * server-intern und wird HIER NICHT in die Antwort uebernommen (siehe dortiger
- * Kommentar) -- AP2.1s urspruenglich hier dokumentierte Einschraenkung ("kein
- * Passwort-Reset moeglich, da kein Verifier-Wert existiert") ist mit AP2.6
- * behoben, siehe POST /api/auth/password-reset weiter unten.
+ * Dieser Endpunkt bleibt rein LESEND und veraendert nie Sitzung, Passwort
+ * oder Wraps -- er liefert die bereits AEAD-geschuetzten Wrap-Felder des
+ * haushaltsweiten recovery_code-Wraps zu einer E-Mail-Adresse (analog zum
+ * Login-Lookup, nur ohne password_hash) sowie recoveryVerifierSalt (unkri-
+ * tisch, siehe Migration 009 Kommentar) -- damit kann der Client lokal
+ * denselben "verifier"-Wert reproduzieren, den Phase 2
+ * (POST /api/auth/password-reset unten) prueft. recovery_verifier_hash
+ * bleibt server-intern und wird HIER NICHT in die Antwort uebernommen.
+ *
+ * AP4.2, Fund 1 (HOCH, ZANDOR): das fruehere "sample"-Feld (Ciphertext-Bytes
+ * der zuletzt geaenderten Woche, nur fuer AP2.1s Testlauf gedacht) ist
+ * ersatzlos entfernt -- kein Client liest es (ZANDOR hat das per Grep
+ * verifiziert), es gab produktiv nur unnoetig echte Ciphertext-Daten preis.
+ *
+ * AP4.2, Fund 1 (Enumeration-Schutz): anders als /api/auth/password-reset
+ * kann dieser Endpunkt bei unbekannter E-Mail NICHT auf eine rein generische
+ * Fehlermeldung ausweichen -- er MUSS echte Wrap-Felder liefern, damit der
+ * Client ueberhaupt einen lokalen Entpackversuch starten kann. Loesung:
+ * strukturell IDENTISCHE Antwort (Statuscode 200, identische Feldnamen/
+ * -laengen) fuer "E-Mail unbekannt" wie fuer einen echten Treffer --
+ * bestehend aus zufaelligen Platzhalter-Bytes in plausibler Form. Ein
+ * Entpackversuch damit schlaegt beim Client lokal exakt so fehl wie bei
+ * einem falschen Code gegen eine echte E-Mail-Adresse (kein 404 mehr, das
+ * die Existenz eines Kontos verraten wuerde). Bewusst dokumentiertes
+ * Restrisiko (ZANDOR-Vorgabe: falls nicht 1:1 uebertragbar, kurz begruenden):
+ * die Antwort-ZEIT selbst ist nicht explizit angeglichen -- anders als beim
+ * bcrypt-Dummy-Vergleich bei Login/Passwort-Reset gibt es hier keine
+ * rechenintensive Operation (die eigentliche Argon2id-Berechnung passiert
+ * ohnehin ausschliesslich clientseitig); der Zeitunterschied zwischen
+ * "SQL-Funktion liefert 0 Zeilen" und "liefert 1 Zeile" ist im einstelligen
+ * Millisekundenbereich und wurde als vernachlaessigbares Restrisiko
+ * eingestuft, nicht zusaetzlich gehaertet.
  * ------------------------------------------------------------------ */
-app.post('/api/auth/recover', authLimiter, wrap(async (req, res) => {
+// AP4.2, Fund 1: dedizierter IP-Limiter statt des geteilten authLimiter-Budgets (30/15min,
+// geteilt mit Login/Registrierung) -- analog zu passwordResetLimiter oben, exakt dieselbe
+// Konfiguration (beide Endpunkte sind Teil desselben Wiederherstellungscode-Flusses).
+const recoverLimiter = rateLimiter({ windowMs: 15 * 60 * 1000, max: 10 });
+
+// Liefert strukturell dieselbe Form wie ein echter Treffer (siehe Antwort unten), aber mit
+// zufaelligen Bytes -- fuer den Enumeration-Schutz bei unbekannter E-Mail-Adresse, siehe
+// Dateikopf-Kommentar. kdfTimeCost/kdfMemoryCost/kdfParallelism sind bewusst dieselben, oeffent-
+// lich bekannten Konstanten wie WPCrypto.defaultKdfParams() (crypto.js) im Erfolgsfall verwendet
+// -- keine geheimen Werte, nur zur Formgleichheit der Antwort.
+function randomDummyRecoveryResponse() {
+  return {
+    keyVersion: 1,
+    wrappedKey: crypto.randomBytes(WRAPPED_HOUSEHOLD_KEY_BYTES).toString('base64'),
+    wrapNonce: crypto.randomBytes(XCHACHA20_NONCE_BYTES).toString('base64'),
+    kdfSalt: crypto.randomBytes(ARGON2ID_SALT_BYTES).toString('base64'),
+    kdfAlgo: 'argon2id',
+    kdfTimeCost: 2,          // == sodium.crypto_pwhash_OPSLIMIT_INTERACTIVE, siehe crypto.js
+    kdfMemoryCost: 67108864, // == sodium.crypto_pwhash_MEMLIMIT_INTERACTIVE (64 MiB), siehe crypto.js
+    kdfParallelism: 1,
+    recoveryVerifierSalt: crypto.randomBytes(ARGON2ID_SALT_BYTES).toString('base64')
+  };
+}
+
+app.post('/api/auth/recover', recoverLimiter, wrap(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const wait = throttle(`recover:${email}`);
   if (wait) return res.status(429).json({ error: `Zu viele Versuche. Bitte ${wait} Sekunden warten.` });
@@ -1286,33 +1330,11 @@ app.post('/api/auth/recover', authLimiter, wrap(async (req, res) => {
   const row = q.rows[0];
   if (!row) {
     noteFailure(`recover:${email}`);
-    return res.status(404).json({ error: 'Fuer diese E-Mail-Adresse ist kein Wiederherstellungscode hinterlegt' });
+    // Kein 404/kein sprechender Fehler mehr (Enumeration-Schutz, siehe Dateikopf-Kommentar) --
+    // strukturell identische 200-Antwort mit Platzhalter-Bytes statt echter Wrap-Daten.
+    return res.json(randomDummyRecoveryResponse());
   }
   clearFailures(`recover:${email}`);
-
-  // WICHTIG (beim Umsetzen/Docker-Testlauf entdeckt): weeks unterliegt RLS (003_rls_policies.sql)
-  // -- ein blanker appPool.query() OHNE vorher gesetzten Tenant-Kontext funktioniert deshalb NICHT
-  // zuverlaessig wie ein einfaches "liefert dann eben 0 Zeilen": auf einer wiederverwendeten
-  // Pool-Verbindung, auf der der GUC app.current_household_id bereits MINDESTENS EINMAL zuvor
-  // (in einer anderen Anfrage) transaktionslokal gesetzt wurde, liefert current_setting(...) nach
-  // COMMIT nicht mehr NULL, sondern einen LEEREN STRING (Postgres-Eigenheit bei erstmals in der
-  // Session gesetzten Custom-GUCs) -- ''::bigint wirft dann "invalid input syntax for type
-  // bigint", statt die RLS-Policy einfach 0 Zeilen liefern zu lassen. Live reproduziert. Fix:
-  // den Tenant-Kontext hier explizit setzen (household_id ist ja bereits bekannt, siehe row oben)
-  // -- exakt dasselbe etablierte Muster wie jeder andere Endpunkt in dieser Datei
-  // (withTenantClient()), statt RLS "zufaellig" mit einem impliziten NULL-Kontext zu umgehen.
-  const sample = await withTenantClient(row.household_id, async client => {
-    const sampleQ = await client.query(
-      `SELECT to_char(week_start,'YYYY-MM-DD') AS "weekStart", data_nonce, data_ciphertext
-         FROM weeks WHERE household_id=$1 AND data_ciphertext IS NOT NULL
-         ORDER BY updated_at DESC LIMIT 1`, [row.household_id]);
-    return sampleQ.rowCount ? sampleQ.rows[0] : null;
-  });
-  const sampleOut = sample ? {
-    weekStart: sample.weekStart,
-    nonce: sample.data_nonce.toString('base64'),
-    ciphertext: sample.data_ciphertext.toString('base64')
-  } : null;
 
   res.json({
     keyVersion: row.key_version,
@@ -1323,11 +1345,10 @@ app.post('/api/auth/recover', authLimiter, wrap(async (req, res) => {
     kdfTimeCost: row.kdf_time_cost,
     kdfMemoryCost: row.kdf_memory_cost,
     kdfParallelism: row.kdf_parallelism,
-    // AP2.6: recoveryVerifierSalt darf raus (unkritisch, wie kdfSalt) -- recovery_verifier_hash
+    // recoveryVerifierSalt darf raus (unkritisch, wie kdfSalt) -- recovery_verifier_hash
     // (row.recovery_verifier_hash) wird an dieser Stelle BEWUSST NICHT gelesen/uebernommen, siehe
     // Dateikopf-Kommentar und ap1.2-datenmodell.md Abschnitt 2.2a.
-    recoveryVerifierSalt: row.recovery_verifier_salt.toString('base64'),
-    sample: sampleOut
+    recoveryVerifierSalt: row.recovery_verifier_salt.toString('base64')
   });
 }));
 
@@ -2061,6 +2082,16 @@ app.post('/api/crypto/recovery-code', requireAuth, rejectForeignHouseholdId, wra
   try {
     await client.query('BEGIN');
     await setTenantContext(client, req.session.householdId);
+    // AP4.2 (ZANDOR-Review, Fund 2): Zeilensperre analog zum Bootstrap-Pendant
+    // (/api/crypto/bootstrap-existing sperrt die households-Zeile vor Revoke+Insert) -- ohne diese
+    // Sperre koennten zwei gleichzeitige Neu-Erzeugungen (z. B. zwei Tabs) beide den alten Wrap
+    // revoken und dann beide eine neue Zeile einfuegen wollen; die zweite INSERT wuerde an
+    // household_key_wraps_household_recovery_uidx (Migration 009, hoechstens eine aktive
+    // recovery_code-Zeile je Haushalt) mit einem rohen 23505 statt eines sauberen Fehlers
+    // scheitern. Mit der Sperre wartet die zweite Anfrage, bis die erste committet hat, und
+    // revoked dann einfach die (bereits neue) Zeile der ersten Anfrage, bevor sie ihre eigene
+    // einfuegt -- "letzte Anfrage gewinnt", kein Absturz, keine doppelte aktive Zeile moeglich.
+    await client.query('SELECT id FROM households WHERE id=$1 FOR UPDATE', [req.session.householdId]);
     // Alte Zeile revoken (nicht loeschen, Nachvollziehbarkeit) statt UPDATE -- ein alter Code soll
     // nach Neuerzeugung explizit ungueltig werden (anders als beim Passwort-Wrap, das per UPDATE
     // ueberschrieben wird, siehe ap1.2-datenmodell.md Abschnitt 7 letzter Absatz).

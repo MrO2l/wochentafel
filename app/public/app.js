@@ -408,9 +408,19 @@ async function runEncryptionSweep() {
       done++;
       renderProgress();
     } catch (err) {
-      // Abbruch mitten im Sweep: die bereits verschluesselten Wochen bleiben es (atomarer Swap je
-      // Woche, siehe Dateikopf-Kommentar) -- kein Rollback noetig oder gewuenscht. Der naechste
-      // Login setzt den Sweep automatisch dort fort, wo dieser Lauf aufgehoert hat.
+      // AP4.2 (ZANDOR-Review, Fund 3): ein 409 bedeutet "ein anderes Geraet/Tab hat diese Woche
+      // zwischen unserem GET und PUT bereits geaendert" (z. B. dort selbst verschluesselt oder ein
+      // regulaerer Bearbeitungs-Konflikt) -- ein haeufig erwartbarer, harmloser Fall beim Sweep,
+      // kein echter Fehler. Einfach mit der naechsten Woche weitermachen, statt den gesamten Sweep
+      // abzubrechen; taucht diese Woche noch als Klartext auf, greift sie der naechste Sweep-Lauf
+      // (bzw. der lazy Fallback beim naechsten Speichern) ohnehin wieder auf.
+      if (err.status === 409) {
+        console.warn('AP2.5-Sweep: Woche', iso, 'wurde zwischenzeitlich anderswo geaendert (409) -- weiter mit der naechsten Woche.');
+        continue;
+      }
+      // Echter Fehler: Abbruch mitten im Sweep. Die bereits verschluesselten Wochen bleiben es
+      // (atomarer Swap je Woche, siehe Dateikopf-Kommentar) -- kein Rollback noetig oder gewuenscht.
+      // Der naechste Login setzt den Sweep automatisch dort fort, wo dieser Lauf aufgehoert hat.
       panel.hidden = false;
       panel.className = 'alert alert-warning';
       panel.textContent = `Verschlüsselung der Altdaten unterbrochen (${done} von ${total} erledigt) – wird beim nächsten Anmelden fortgesetzt.`;
