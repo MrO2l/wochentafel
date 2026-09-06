@@ -156,12 +156,15 @@ hr, .border, .border-top, .border-bottom, .border-start, .border-end{
 .app-nav .nav-btn:focus-visible{
   outline:2px solid var(--primary); outline-offset:2px;
 }
-/* AP7.2 (projects/wochenplaner-design-nacharbeiten/plan.md): "Konto" ist der einzige Eintrag in
-   .app-nav ohne data-view/eigene .app-view (oeffnet stattdessen den bestehenden Kontomenue-Dialog,
-   siehe app.js openMenu()) -- optisch als unterster, leicht abgesetzter Punkt hervorgehoben
-   (Standard-UX-Muster "Konto/Einstellungen unten"). "margin-top:auto" schiebt ihn in der
-   Spalten-Flexbox (Desktop) ans untere Ende, unabhaengig davon, wie viele Menuepunkte davor
-   stehen -- kein hartcodierter Abstand noetig. */
+/* AP7.2 (projects/wochenplaner-design-nacharbeiten/plan.md): "Konto" ist optisch als unterster,
+   leicht abgesetzter Punkt hervorgehoben (Standard-UX-Muster "Konto/Einstellungen unten").
+   "margin-top:auto" schiebt ihn in der Spalten-Flexbox (Desktop) ans untere Ende, unabhaengig
+   davon, wie viele Menuepunkte davor stehen -- kein hartcodierter Abstand noetig.
+   AP2.2b-Korrektur (projects/wochenplaner-termine-verschluesselung/plan.md): urspruenglich der
+   einzige Eintrag ohne data-view/eigene .app-view (oeffnete stattdessen einen Kontomenue-Dialog,
+   app.js openMenu(), entfallen) -- hat jetzt wie die uebrigen vier Menuepunkte ein "data-view"
+   und eine echte .app-view (#view-konto, index.html); diese Klasse bleibt unveraendert nur fuer
+   die optische Absetzung zustaendig. */
 .app-nav .nav-btn-account{
   margin-top:auto; padding-top:.9rem; border-top:1px solid var(--border-color);
 }

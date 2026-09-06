@@ -101,13 +101,16 @@
       </button>
       <!-- AP7.2 (projects/wochenplaner-design-nacharbeiten/plan.md): "Konto" aus der oberen
            Kopfzeile hierher verschoben -- Standard-UX-Muster (Konto/Einstellungen als unterster
-           Punkt der Hauptnavigation). Bewusst OHNE "data-view"/aria-current: dieser Button
-           schaltet keine .app-view um (setSection() ignoriert ihn folgerichtig, da sein
-           btn.dataset.view stets undefined bleibt), sondern oeffnet weiterhin denselben
-           Kontomenue-Dialog wie zuvor -- id="btnMenu" UNVERAENDERT beibehalten, damit die
-           bestehende Verdrahtung in boot() ($('#btnMenu').onclick = openMenu) ohne JS-Aenderung
-           weiterfunktioniert; nur das Markup zog um. -->
-      <button type="button" class="nav-btn nav-btn-account" id="btnMenu">
+           Punkt der Hauptnavigation).
+           AP2.2b (projects/wochenplaner-termine-verschluesselung/plan.md, freigegebenes Mockup
+           mockups/konto-ansicht-mockup.html): "Konto" ist jetzt eine ECHTE .app-view
+           (#view-konto weiter unten) statt eines zur Laufzeit erzeugten <dialog
+           class="acct-dialog"> (openMenu(), entfallen) -- bekommt daher jetzt wie die anderen
+           vier Menuepunkte ein "data-view", damit die bestehende, generische Ansichtswechsel-
+           Verdrahtung (setSection(btn.dataset.view), siehe boot() in app.js) diesen Button
+           genauso behandelt. id="btnMenu" bleibt unveraendert (kein funktionaler Grund mehr,
+           aber unnoetige Umbenennung vermieden). -->
+      <button type="button" class="nav-btn nav-btn-account" id="btnMenu" data-view="konto">
         <i class="bi bi-person-circle"></i>
         <span>Konto</span>
       </button>
@@ -420,6 +423,85 @@
        AP1-Browsertest. ================= -->
 </section>
 
+<!-- ================= AP2.2b (projects/wochenplaner-termine-verschluesselung/plan.md): "Konto &
+     Einstellungen" als eigene Ansicht, ersetzt den bisherigen, zur Laufzeit erzeugten
+     <dialog class="acct-dialog"> (openMenu(), entfallen -- siehe Git-Historie). Gleiches
+     Strukturmuster wie die uebrigen vier Ansichten (.view-header/.view-lead). Alle fuenf
+     bisherigen Aktionen (Familienmitglied einladen/Export/Import/Vorlage loeschen/Abmelden) 1:1
+     uebernommen, nur die Verdrahtung sitzt jetzt in initAccountView() (app.js, einmalig aus
+     boot() aufgerufen) statt in der entfallenen openMenu(). Die beiden Kartenbloecke
+     "Passwort aendern"/"Wiederherstellungscode" sind bewusste, rein visuelle Platzhaelter fuer
+     AP2.6/AP2.3 desselben Plans (keine echte Funktion dahinter, Felder/Buttons deaktiviert,
+     siehe .acct-future-card/.acct-future-badge in style.css) -- Struktur/Optik 1:1 aus dem vom
+     Nutzer freigegebenen Mockup uebernommen:
+     projects/wochenplaner-termine-verschluesselung/mockups/konto-ansicht-mockup.html. ================= -->
+<section id="view-konto" class="app-view" aria-labelledby="ko-h1">
+  <div class="view-header">
+    <h1 id="ko-h1"><i class="bi bi-person-circle" aria-hidden="true"></i> Konto &amp; Einstellungen</h1>
+    <p class="view-lead">Haushalt, Zugangsdaten und Sicherheitsoptionen an einem Ort.</p>
+    <p class="acct-who" id="acctWho"></p>
+  </div>
+
+  <div class="card shadow-sm p-3 p-md-4 mb-4">
+    <h2 class="h6 fw-bold mb-3" style="color:var(--primary)">Haushalt &amp; Daten</h2>
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-2">
+      <div class="col"><button type="button" class="btn btn-outline-secondary w-100" id="acctInvite"><i class="bi bi-person-plus me-1" aria-hidden="true"></i> Familienmitglied einladen</button></div>
+      <div class="col"><button type="button" class="btn btn-outline-secondary w-100" id="acctExport"><i class="bi bi-download me-1" aria-hidden="true"></i> Diese Woche als Datei sichern</button></div>
+      <div class="col"><button type="button" class="btn btn-outline-secondary w-100" id="acctImport"><i class="bi bi-upload me-1" aria-hidden="true"></i> Datei einlesen</button></div>
+      <div class="col"><button type="button" class="btn btn-outline-secondary w-100" id="acctTemplateDel"><i class="bi bi-trash me-1" aria-hidden="true"></i> Vorlage löschen</button></div>
+      <div class="col"><button type="button" class="btn btn-outline-secondary w-100 text-danger" id="acctLogout"><i class="bi bi-box-arrow-right me-1" aria-hidden="true"></i> Abmelden</button></div>
+    </div>
+    <!-- Ausgabe-/Statusbereich fuer Rueckmeldungen nach einer Aktion (bisher .acct-out im
+         Dialog, siehe openMenu()-Kommentar oben) -- bleibt bis zur ersten Aktion verborgen. -->
+    <div class="acct-out" id="acctOut" role="status" hidden></div>
+  </div>
+
+  <!-- ================= Platzhalter fuer AP2.6 (Passwort-Aenderung inkl. Re-Wrap des Haushalts-
+       Schluessels, projects/wochenplaner-termine-verschluesselung/plan.md) -- bewusst rein
+       visuell/deaktiviert (kein Backend, keine JS-Verdrahtung), bis AP2.6 beauftragt wird. ================= -->
+  <div class="card acct-future-card shadow-sm p-3 p-md-4 mb-4">
+    <h2 class="h6 fw-bold mb-1" style="color:var(--primary-dark)">
+      <i class="bi bi-key me-1" aria-hidden="true"></i> Passwort ändern
+      <span class="acct-future-badge">In Vorbereitung</span>
+    </h2>
+    <p class="view-lead mb-3">Kommt mit der Termin-Verschlüsselung (AP2.6) — inklusive automatischem Re-Wrap des Haushalts-Schlüssels.</p>
+    <form novalidate>
+      <div class="mb-3">
+        <label class="form-label" for="pwCurrent">Aktuelles Passwort</label>
+        <input type="password" class="form-control" id="pwCurrent" disabled>
+      </div>
+      <div class="row g-3">
+        <div class="col-12 col-sm-6">
+          <label class="form-label" for="pwNew">Neues Passwort</label>
+          <input type="password" class="form-control" id="pwNew" disabled>
+        </div>
+        <div class="col-12 col-sm-6">
+          <label class="form-label" for="pwConfirm">Neues Passwort bestätigen</label>
+          <input type="password" class="form-control" id="pwConfirm" disabled>
+        </div>
+      </div>
+      <div class="mt-3">
+        <button type="button" class="btn btn-primary" disabled>Passwort ändern</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ================= Platzhalter fuer AP2.3 (Wiederherstellungscode, haushaltsweit gueltig,
+       projects/wochenplaner-termine-verschluesselung/plan.md) -- ebenfalls rein visuell/
+       deaktiviert, siehe Kommentar oben. ================= -->
+  <div class="card acct-future-card shadow-sm p-3 p-md-4">
+    <h2 class="h6 fw-bold mb-1" style="color:var(--primary-dark)">
+      <i class="bi bi-shield-lock me-1" aria-hidden="true"></i> Wiederherstellungscode
+      <span class="acct-future-badge">In Vorbereitung</span>
+    </h2>
+    <p class="view-lead mb-3">Kommt mit der Termin-Verschlüsselung (AP2.3) — ein Code pro Haushalt, unabhängig vom Passwort jedes Mitglieds nutzbar.</p>
+    <div class="d-flex gap-2 flex-wrap">
+      <button type="button" class="btn btn-outline-secondary" disabled><i class="bi bi-eye me-1" aria-hidden="true"></i> Code anzeigen</button>
+      <button type="button" class="btn btn-outline-secondary" disabled><i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i> Neuen Code erzeugen</button>
+    </div>
+  </div>
+</section>
+
   </main>
 </div>
 
@@ -428,8 +510,10 @@
      Funktions-Dopplung-Fix (Nutzer-Feedback 2026-08-19) ausschliesslich ueber die Ansicht
      "Einkaufen" im Linksmenue (nicht mehr zusaetzlich aus dem Hauptraster).
      AP2.1 (Bootstrap-Migrationsplan): natives <dialog> + showModal()/close() statt reinem
-     div-Overlay (".daylist-overlay"/"body.daylist-open", entfallen) -- analog zum bereits
-     bestehenden, vorbildlichen Kontomenue-Muster (app.js, openMenu()). Der Browser liefert
+     div-Overlay (".daylist-overlay"/"body.daylist-open", entfallen) -- analog zum damals
+     vorbildlichen Kontomenue-Muster (app.js, openMenu()) -- dessen <dialog> selbst ist seit
+     AP2.2b (projects/wochenplaner-termine-verschluesselung/plan.md, #view-konto) entfallen,
+     dieser Dialog hier bleibt davon unberuehrt. Der Browser liefert
      Backdrop (::backdrop, siehe style.css), Fokus-Falle und ESC-zum-Schliessen automatisch,
      ohne eigenes JS. ".daylist-head"/".daylist-body" behalten ihre gesamte bisherige Optik
      (unveraendert), bekommen zusaetzlich Bootstraps ".modal-header"/".modal-body" als rein

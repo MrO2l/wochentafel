@@ -97,14 +97,11 @@ button,input,select{font:inherit}
    inhaltlich nur noch "das ist eine grosse Ueberschrift", nicht mehr "das ist eine andere Schrift". */
 .font-heading{font-family:"Open Sans","Inter","Lato",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 
-/* ---------------- Kontomenue (dialog) ---------------- */
-.acct-dialog{border:0; border-radius:12px; padding:0; max-width:420px; width:92%; box-shadow:0 10px 40px rgba(0,0,0,.25)}
-.acct-dialog .acct-body{padding:20px 22px; font-size:14px; line-height:1.6}
-.acct-dialog h2{margin:0 0 2px; font-size:17px; color:var(--accent)}
-.acct-dialog .acct-who{margin:0 0 14px; color:var(--muted); font-size:13px}
-.acct-dialog .acct-actions{display:flex; flex-direction:column; gap:8px}
-.acct-dialog .acct-out{margin-top:12px; font-size:13px; color:var(--ok)}
-.acct-dialog .acct-foot{text-align:right; margin-top:16px}
+/* AP2.2b (projects/wochenplaner-termine-verschluesselung/plan.md): der vormalige, hier gestylte
+   ".acct-dialog" (dynamisch erzeugtes <dialog>, openMenu() in app.js, entfallen) ist mit dem Umbau
+   der Konto-Ansicht in eine echte .app-view ersatzlos entfernt -- die Nachfolge-Regeln (.acct-who/
+   .acct-out/.acct-future-card/.acct-future-badge) stehen jetzt bei den uebrigen .app-view-eigenen
+   Klassen weiter unten (siehe ".view-header"-Abschnitt). */
 
 /* ---------------- Anmeldeseite ---------------- */
 .auth-wrap{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px}
@@ -693,17 +690,22 @@ body:not(.section-wochenuebersicht) .cal-only{display:none !important}
    Kommentar bei .tb-row in index.html) alle dieselbe Wochendatenzeile (state.weekStart/state.data
    in app.js), nur "Rezeptkarten" ist wochenunabhaengig (haushaltsweite Stammdaten, state.recipes).
    Analog zu .cal-only ueber eine Marker-Klasse plus body[data-section]-Selektor (gesetzt in
-   setSection(), app.js) statt jede ID einzeln aufzufuehren. */
-body[data-section="rezepte"] .week-only{display:none !important}
+   setSection(), app.js) statt jede ID einzeln aufzufuehren.
+   AP2.2b-Ergaenzung: "Konto & Einstellungen" ist wie "Rezeptkarten" wochenunabhaengig (haushalts-
+   weite Kontodaten, kein state.weekStart-Bezug) -- daher hier ergaenzt. */
+body[data-section="rezepte"] .week-only,
+body[data-section="konto"] .week-only{display:none !important}
 
 /* AP7.1-Korrektur: "Drucken" (#btnPrint, Klasse ".print-page") hat je Seite ein sinnvolles
    Druckziel nur auf Wochenuebersicht (Hauptraster) und Essen & Kochen (Essensplan, siehe
    kontextsensitiver Klick-Handler in boot(), app.js) -- auf Einkaufen existiert bewusst kein
    Seiten-Druck (nur einzelne Tageslisten ueber #dlPrint im Tagesliste-Dialog), auf Rezeptkarten
    gibt es gar keine Druckfunktion. Analog zu .week-only/.cal-only ueber body[data-section]
-   ausgeblendet, statt den Button dort funktionslos anzuzeigen. */
+   ausgeblendet, statt den Button dort funktionslos anzuzeigen.
+   AP2.2b-Ergaenzung: "Konto & Einstellungen" hat ebenfalls keine Druckfunktion -- hier ergaenzt. */
 body[data-section="einkaufen"] .print-page,
-body[data-section="rezepte"] .print-page{display:none !important}
+body[data-section="rezepte"] .print-page,
+body[data-section="konto"] .print-page{display:none !important}
 
 @media (max-width:900px){
   .toolbar{padding:8px}
@@ -730,6 +732,33 @@ body[data-section="rezepte"] .print-page{display:none !important}
    (nicht an der globalen --text-body-Variable, die auch opak an vielen anderen Stellen verwendet
    wird) die Deckkraft angehoben, bis wieder klar ueber AA gemessen wird: 85% ergibt ca. 5,3:1. */
 .view-empty{color:var(--text-body); opacity:.85}
+
+/* ---------------- Konto & Einstellungen (AP2.2b, projects/wochenplaner-termine-verschluesselung/
+   plan.md) -- eigene .app-view, ersetzt den vormaligen ".acct-dialog" (siehe Kopfkommentar dieser
+   Datei bei dessen alter Position). Struktur/Optik 1:1 aus dem freigegebenen Mockup uebernommen
+   (projects/wochenplaner-termine-verschluesselung/mockups/konto-ansicht-mockup.html). ---------------- */
+.acct-who{color:var(--text-body); opacity:.8; margin:.1rem 0 0; font-size:.9rem}
+.acct-out{
+  border:1px dashed var(--border-color); border-radius:var(--radius);
+  padding:.6rem .8rem; font-size:.85rem; color:var(--text-body); margin-top:1rem;
+}
+/* Die beiden folgenden Kartenbloecke sind bewusste Platzhaelter fuer AP2.3 (Wiederherstellungscode)
+   und AP2.6 (Passwort-Aenderung) desselben Plans -- noch KEINE echte Funktion, siehe Formular-
+   Felder/Buttons mit "disabled" in index.html. Gestrichelter Rahmen + reduzierte Deckkraft der
+   Eingaben statt normaler Kartenoptik, damit auf den ersten Blick klar ist, dass hier noch nichts
+   aktiv ist -- analog zum bereits bestehenden ".wizard-ing-cb:disabled"-Muster weiter unten, hier
+   nur auf ganze Kartenbloecke ausgeweitet. */
+.acct-future-card{
+  border:1.5px dashed var(--border-color) !important;
+  background:color-mix(in srgb, var(--background) 92%, var(--secondary) 8%) !important;
+}
+.acct-future-card .form-control,
+.acct-future-card .btn{ opacity:.65 }
+.acct-future-badge{
+  display:inline-block; font-size:.68rem; font-weight:700; letter-spacing:.03em;
+  text-transform:uppercase; background:var(--secondary); color:var(--primary-dark);
+  border-radius:1rem; padding:.15rem .6rem; margin-left:.5rem; vertical-align:middle;
+}
 
 .shopping-row{margin-bottom:1.75rem}
 .shopping-row h2{font-size:1rem; font-weight:700; color:var(--primary); margin:0 0 .6rem}

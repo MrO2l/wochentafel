@@ -2197,47 +2197,35 @@ function clearIngredientListMarksFor(weekStart, dayIndex, slotIndex) {
   Array.from(addedToListMarks).forEach(key => { if (key.startsWith(prefix)) addedToListMarks.delete(key); });
 }
 
-/* ---------------- Kontomenue ---------------- */
-function openMenu() {
-  const dlg = document.createElement('dialog');
-  dlg.className = 'acct-dialog';
-  dlg.innerHTML = `
-    <div class="acct-body">
-      <h2>Konto</h2>
-      <p class="acct-who"></p>
-      <div class="acct-actions">
-        <button class="legacy-btn" data-act="invite">Familienmitglied einladen</button>
-        <button class="legacy-btn" data-act="export">Diese Woche als Datei sichern</button>
-        <button class="legacy-btn" data-act="import">Datei einlesen</button>
-        <button class="legacy-btn" data-act="template-del">Vorlage löschen</button>
-        <button class="legacy-btn" data-act="logout">Abmelden</button>
-      </div>
-      <div class="acct-out" data-out></div>
-      <div class="acct-foot"><button class="legacy-btn" data-act="close">Schließen</button></div>
-    </div>`;
-  dlg.querySelector('p').textContent = `${state.user.name} · ${state.user.email} · Haushalt „${state.user.householdName}“`;
-  const out = dlg.querySelector('[data-out]');
-  dlg.addEventListener('click', async e => {
-    const act = e.target.getAttribute?.('data-act');
-    if (!act) return;
-    if (act === 'close') dlg.close();
-    if (act === 'logout') { await api('POST', '/api/auth/logout'); location.href = 'login.html'; }
-    if (act === 'invite') {
-      const { code } = await api('POST', '/api/invites');
-      out.textContent = `Einladungscode: ${code} (14 Tage gültig)`;
-    }
-    if (act === 'export') { exportJSON(); out.textContent = 'Datei wurde heruntergeladen.'; }
-    if (act === 'import') {
-      const inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'application/json';
-      inp.onchange = () => { if (inp.files[0]) { importJSON(inp.files[0]); dlg.close(); } };
-      inp.click();
-    }
-    if (act === 'template-del') { await api('DELETE', '/api/template'); out.textContent = 'Vorlage gelöscht.'; }
-  });
-  document.body.appendChild(dlg);
-  dlg.showModal();
-  dlg.addEventListener('close', () => dlg.remove());
+/* ---------------- Konto-Ansicht (AP2.2b, projects/wochenplaner-termine-verschluesselung/plan.md) ----------------
+   Ersetzt die vormalige, zur Laufzeit erzeugte openMenu()-Funktion (<dialog class="acct-dialog">,
+   siehe Git-Historie) -- dieselben fuenf Aktionen/dieselbe Logik, nur jetzt gegen das statische
+   Markup der neuen Ansicht #view-konto (index.html) verdrahtet statt gegen ein dynamisch gebautes
+   <dialog>. Wird EINMALIG aus boot() aufgerufen (nicht bei jedem Ansichtswechsel wie setSection()),
+   da Name/E-Mail/Haushaltsname sich waehrend einer Sitzung nicht aendern (state.user, siehe boot()). */
+function initAccountView() {
+  $('#acctWho').textContent = `${state.user.name} · ${state.user.email} · Haushalt „${state.user.householdName}“`;
+  const out = $('#acctOut');
+  const showOut = msg => { out.textContent = msg; out.hidden = false; };
+  $('#acctInvite').onclick = async () => {
+    const { code } = await api('POST', '/api/invites');
+    showOut(`Einladungscode: ${code} (14 Tage gültig)`);
+  };
+  $('#acctExport').onclick = () => { exportJSON(); showOut('Datei wurde heruntergeladen.'); };
+  $('#acctImport').onclick = () => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'application/json';
+    inp.onchange = () => { if (inp.files[0]) importJSON(inp.files[0]); };
+    inp.click();
+  };
+  $('#acctTemplateDel').onclick = async () => {
+    await api('DELETE', '/api/template');
+    showOut('Vorlage gelöscht.');
+  };
+  $('#acctLogout').onclick = async () => {
+    await api('POST', '/api/auth/logout');
+    location.href = 'login.html';
+  };
 }
 
 /* ---------------- Start ---------------- */
@@ -2257,6 +2245,7 @@ async function boot() {
   const me = await api('GET', '/api/me');
   state.user = me.user;
   $('#householdName').textContent = me.user.householdName;
+  initAccountView(); // AP2.2b: einmalige Verdrahtung der neuen Konto-Ansicht, siehe dortiger Kommentar
 
   if (window.matchMedia('(max-width: 900px)').matches) { setView('day'); state.day = (new Date().getDay() + 6) % 7; }
 
@@ -2299,7 +2288,10 @@ async function boot() {
   $('#btnAddShared').onclick = () => { syncFromDOM(); state.data.rows.push({ kind: 'shared', label: 'Neue Zeile', role: '', cells: Array.from({ length: 7 }, () => []) }); renderAll(); markDirty(); };
   $('#btnView').onclick = () => setView(state.view === 'sheet' ? 'day' : 'sheet');
   $('#btnIcons').onclick = () => document.body.classList.toggle('palette-open');
-  $('#btnMenu').onclick = openMenu;
+  // AP2.2b: #btnMenu ("Konto") hat jetzt wie die uebrigen vier Menuepunkte ein "data-view"
+  // (index.html) und wird daher bereits ueber die generische Schleife direkt darunter bedient --
+  // kein eigener onclick-Handler mehr noetig (die frueher hier stehende Zuweisung an openMenu()
+  // ist mit deren Entfernen entfallen).
 
   document.querySelectorAll('.app-nav .nav-btn').forEach(btn => {
     btn.addEventListener('click', () => setSection(btn.dataset.view));
