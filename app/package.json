@@ -12,7 +12,8 @@
     "create-admin": "node scripts/create-admin.mjs",
     "export-tenant": "node scripts/export-tenant.mjs",
     "import-tenant": "node scripts/import-tenant.mjs",
-    "wipe-meal-freetext": "node scripts/wipe-meal-freetext.mjs"
+    "wipe-meal-freetext": "node scripts/wipe-meal-freetext.mjs",
+    "audit-encryption-status": "node scripts/audit-encryption-status.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
