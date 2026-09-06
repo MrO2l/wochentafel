@@ -542,6 +542,105 @@ function isMonday(iso) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Verschluesselungs-Envelope-Helfer (AP2.1, projects/wochenplaner-
+ * termine-verschluesselung/plan.md; Datenmodell: MORROW, ap1.2-datenmodell.md
+ * Abschnitt 6.1). Ciphertext/Nonce werden hier AUSSCHLIESSLICH als opake Bytes
+ * behandelt -- keine dieser Funktionen liest je den entschluesselten Inhalt,
+ * das waere ein Bruch des E2E-Ziels dieses Projekts. Geprueft wird nur Form/
+ * Groesse (Schutz vor offensichtlichem Missbrauch/Speicherverbrauch), nie der
+ * Inhalt selbst. pgcrypto oder eine sonstige serverseitige Ver-/Entschluesselung
+ * kommt an keiner Stelle dieser Datei zum Einsatz (ZANDORs AP1.1-Vorgabe).
+ * ------------------------------------------------------------------ */
+const XCHACHA20_NONCE_BYTES = 24; // ZANDORs AP1.1-Empfehlung: XChaCha20-Poly1305 statt AES-256-GCM
+const MAX_CIPHERTEXT_B64_LEN = 400000; // grosszuegige Obergrenze, vgl. express.json({limit:'512kb'}) unten
+
+function decodeBase64Field(value, expectedLength) {
+  if (typeof value !== 'string' || !value) return null;
+  if (value.length > MAX_CIPHERTEXT_B64_LEN) return null;
+  let buf;
+  try { buf = Buffer.from(value, 'base64'); } catch { return null; }
+  if (!buf.length) return null;
+  if (expectedLength != null && buf.length !== expectedLength) return null;
+  return buf;
+}
+
+// Liest {encrypted:true, keyVersion, nonce, ciphertext} aus einem Request-Body. Liefert entweder
+// {nonce, ciphertext, keyVersion} (Buffer/Zahl, formal geprueft) oder null bei ungueltiger Form --
+// der aufrufende Handler antwortet dann mit 400, ohne je zu versuchen, den Inhalt zu deuten.
+function parseEncryptedPayload(body) {
+  if (!body || body.encrypted !== true) return null;
+  const keyVersion = Number(body.keyVersion);
+  if (!Number.isInteger(keyVersion) || keyVersion < 1) return null;
+  const nonce = decodeBase64Field(body.nonce, XCHACHA20_NONCE_BYTES);
+  if (!nonce) return null;
+  const ciphertext = decodeBase64Field(body.ciphertext);
+  if (!ciphertext) return null;
+  return { nonce, ciphertext, keyVersion };
+}
+
+// households.template_data bleibt EINE jsonb-Spalte (fuer diese Tabelle liegt kein MORROW-Schema-
+// Entwurf mit eigenen Ciphertext-Spalten vor -- Migration 009 deckt nur weeks ab, siehe Ruecklauf
+// an ANORAK/MORROW im Abschlussbericht zu diesem Arbeitspaket). Eine verschluesselte Vorlage wird
+// deshalb als eigenes, klar erkennbares JSON-Envelope INNERHALB dieser bereits nullable jsonb-
+// Spalte abgelegt, statt wie bei weeks neue bytea-Spalten anzulegen -- "__enc:true" ist der
+// Diskriminator, den migrateLegacyWeek()/cleanWeek() (reine Klartext-Pfade) nie zu Gesicht
+// bekommen, weil GET/PUT /api/template unten vorher danach verzweigen.
+function isEncryptedTemplateEnvelope(value) {
+  return !!value && typeof value === 'object' && value.__enc === true;
+}
+function buildTemplateEnvelope(nonce, ciphertext, keyVersion) {
+  return { __enc: true, v: 1, keyVersion, nonce: nonce.toString('base64'), ciphertext: ciphertext.toString('base64') };
+}
+
+/* ------------------------------------------------------------------ *
+ * Verschluesselungs-Bootstrap bei der Registrierung (AP2.1) -- prueft
+ * ausschliesslich FORM/GROESSE der beiden Wraps (password/recovery_code),
+ * die der Client beim Anlegen eines NEUEN Haushalts mitschickt (siehe
+ * /api/auth/register unten). Der Server generiert/interpretiert keinen
+ * dieser Werte selbst -- er reicht sie nur an household_key_wraps durch
+ * (ap1.2-datenmodell.md Abschnitt 2.2/3). Nur fuer NEU angelegte Haushalte
+ * (kein Einladungscode) -- Bootstrap fuer Bestandsmitglieder eines bereits
+ * verschluesselten Haushalts ist AP2.3 und hier bewusst nicht gebaut.
+ * ------------------------------------------------------------------ */
+const ARGON2ID_SALT_BYTES = 16;         // libsodium crypto_pwhash_SALTBYTES
+const WRAPPED_HOUSEHOLD_KEY_BYTES = 48; // 32-Byte-Haushalts-Schluessel + 16-Byte-Poly1305-Tag
+
+function parseWrapPayload(w) {
+  if (!w || typeof w !== 'object') return null;
+  if (w.kdfAlgo !== 'argon2id') return null; // ZANDORs AP1.1-Vorgabe, keine anderen KDFs zulassen
+  const kdfTimeCost = Number(w.kdfTimeCost), kdfMemoryCost = Number(w.kdfMemoryCost), kdfParallelism = Number(w.kdfParallelism);
+  if (!Number.isInteger(kdfTimeCost) || kdfTimeCost < 1) return null;
+  if (!Number.isInteger(kdfMemoryCost) || kdfMemoryCost < 1) return null;
+  if (!Number.isInteger(kdfParallelism) || kdfParallelism < 1) return null;
+  const kdfSalt = decodeBase64Field(w.kdfSalt, ARGON2ID_SALT_BYTES);
+  if (!kdfSalt) return null;
+  const wrappedKey = decodeBase64Field(w.wrappedKey, WRAPPED_HOUSEHOLD_KEY_BYTES);
+  if (!wrappedKey) return null;
+  const wrapNonce = decodeBase64Field(w.wrapNonce, XCHACHA20_NONCE_BYTES);
+  if (!wrapNonce) return null;
+  return { kdfAlgo: 'argon2id', kdfTimeCost, kdfMemoryCost, kdfParallelism, kdfSalt, wrappedKey, wrapNonce };
+}
+
+function parseCryptoBootstrapPayload(body) {
+  const c = body && body.crypto;
+  if (!c || typeof c !== 'object') return null;
+  const passwordWrap = parseWrapPayload(c.passwordWrap);
+  const recoveryWrap = parseWrapPayload(c.recoveryWrap);
+  if (!passwordWrap || !recoveryWrap) return null;
+  return { passwordWrap, recoveryWrap };
+}
+
+async function insertKeyWrap(client, { householdId, userId, wrapType, wrap }) {
+  await client.query(
+    `INSERT INTO household_key_wraps
+       (household_id, user_id, wrap_type, key_version, wrapped_key, wrap_nonce,
+        kdf_salt, kdf_algo, kdf_time_cost, kdf_memory_cost, kdf_parallelism)
+     VALUES ($1,$2,$3,1,$4,$5,$6,$7,$8,$9,$10)`,
+    [householdId, userId, wrapType, wrap.wrappedKey, wrap.wrapNonce,
+     wrap.kdfSalt, wrap.kdfAlgo, wrap.kdfTimeCost, wrap.kdfMemoryCost, wrap.kdfParallelism]);
+}
+
+/* ------------------------------------------------------------------ *
  * App
  * ------------------------------------------------------------------ */
 const app = express();
@@ -562,8 +661,16 @@ app.use((req, res, next) => {
   // UI-Zustaende (u. a. das Checkbox-Haekchen in .form-check-input:checked) ueber
   // eingebettete data:image/svg+xml-URIs im CSS rendert -- ohne diese Ergaenzung wuerden
   // solche Grafiken lautlos von der CSP blockiert.
+  // 'wasm-unsafe-eval' (AP2.1, Termine-Verschluesselung): vendor/libsodium/libsodium.js
+  // instanziiert WebAssembly.instantiate() fuer die Argon2id-/XChaCha20-Poly1305-Implementierung
+  // (public/crypto.js). Deutlich enger als 'unsafe-eval' -- erlaubt AUSSCHLIESSLICH das
+  // Kompilieren/Instanziieren von WebAssembly-Modulen, keine String-zu-Code-Auswertung
+  // (eval()/new Function()) irgendeiner Art. Ohne dieses Schluesselwort blockieren moderne
+  // Browser WebAssembly.instantiate() unter einer 'script-src'-Policy ohne 'unsafe-eval';
+  // die vendorte Bibliothek faellt dann zwar automatisch auf ein reines JS-Backup-Modul zurueck
+  // (kein Absturz), aber spuerbar langsamer -- daher hier bewusst erlaubt.
   res.setHeader('Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; " +
     "font-src 'self'; connect-src 'self'; " +
     "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
   next();
@@ -1004,6 +1111,31 @@ app.post('/api/auth/register', authLimiter, wrap(async (req, res) => {
     // ap1.2-rls-konzept.md Abschnitt 5.
     await setTenantContext(client, householdId);
 
+    if (inviteCode) {
+      // AP2.1 (Termine-Verschluesselung): Beitritt zu einem Haushalt, der die Verschluesselung
+      // bereits aktiviert hat, braucht einen 'pending'-Wrap fuer das neue Mitglied (Bootstrap-
+      // /Aktivierungs-UX, AP2.3 -- separates, noch nicht beauftragtes Arbeitspaket). Ohne diesen
+      // Wrap koennte das neue Mitglied nach der Registrierung zwar einen Account haben, aber nie
+      // den Haushalts-Schluessel entpacken -- daher hier bewusst ein klarer Fehler statt eines
+      // stillen, spaeter schwer nachvollziehbaren Zugriffsproblems. Bewusst ERST HIER (nach
+      // setTenantContext() oben), nicht schon direkt nach dem Invite-Lookup: households
+      // unterliegt RLS (003_rls_policies.sql) -- ein Lesezugriff vor gesetztem Tenant-Kontext
+      // fuehrte beim Testen auf einer wiederverwendeten Pool-Verbindung zu einem harten Fehler
+      // statt eines einfachen "0 Zeilen" (current_setting() liefert nach einem bereits einmal in
+      // der Session gesetzten Custom-GUC beim Zuruecksetzen einen LEEREN STRING statt NULL,
+      // ''::bigint wirft "invalid input syntax" -- live reproduziert, siehe identischer Fund/Fix
+      // bei /api/auth/recover weiter unten).
+      const hCheck = await client.query('SELECT encryption_status FROM households WHERE id=$1', [householdId]);
+      if (hCheck.rows[0]?.encryption_status !== 'plaintext') {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          error: 'Dieser Haushalt hat die Termin-Verschluesselung bereits aktiviert. Der Beitritt ' +
+            'weiterer Mitglieder zu einem bereits verschluesselten Haushalt wird mit einem ' +
+            'spaeteren Update unterstuetzt.'
+        });
+      }
+    }
+
     const hash = await bcrypt.hash(password, 12);
     const role = inviteCode ? 'member' : 'owner';
     let user;
@@ -1017,8 +1149,32 @@ app.post('/api/auth/register', authLimiter, wrap(async (req, res) => {
       if (err.code === '23505') return res.status(409).json({ error: 'Diese E-Mail-Adresse ist bereits registriert' });
       throw err;
     }
+    let householdEncrypted = false; // fuer die Antwort unten -- true, wenn der Bootstrap gegriffen hat
     if (inviteCode) {
       await client.query('UPDATE invites SET used_at=now(), used_by=$1 WHERE code=$2', [user.rows[0].id, inviteCode]);
+    } else {
+      // Verschluesselungs-Bootstrap NUR fuer neu angelegte Haushalte (kein Einladungscode) --
+      // Bestandsmitglieder-Bootstrap eines bereits existierenden Haushalts ist AP2.3 (separates,
+      // noch nicht beauftragtes Arbeitspaket), siehe Kommentar im Einladungs-Zweig oben. Der
+      // Client generiert den Haushalts-Schluessel, beide Wraps UND den Wiederherstellungscode
+      // ausschliesslich lokal (public/crypto.js) -- crypto ist hier rein optional: fehlt das Feld
+      // (z. B. ein aelterer/abweichender Client), bleibt der Haushalt einfach 'plaintext'
+      // (Default, siehe Migration 009) und verhaelt sich exakt wie vor diesem Arbeitspaket.
+      const cryptoPayload = parseCryptoBootstrapPayload(req.body);
+      if (cryptoPayload) {
+        const newUserId = user.rows[0].id;
+        await insertKeyWrap(client, { householdId, userId: newUserId, wrapType: 'password', wrap: cryptoPayload.passwordWrap });
+        // recovery_code ist bewusst HAUSHALTSWEIT, nicht an user_id gebunden (Nutzerentscheidung
+        // 2026-09-06, siehe ap1.2-datenmodell.md Abschnitt 2.2/Migration 009 CHECK-Constraint
+        // household_key_wraps_subject_shape) -- user_id bleibt hier daher NULL.
+        await insertKeyWrap(client, { householdId, userId: null, wrapType: 'recovery_code', wrap: cryptoPayload.recoveryWrap });
+        // Einziges Mitglied dieses frischen Haushalts hat jetzt sofort einen echten password-Wrap
+        // -- der Uebergangszustand 'activating' (fuer Haushalte mit noch nicht durchgaengig
+        // gewrappten Bestandsmitgliedern, siehe ap1.2-datenmodell.md Abschnitt 2.5) ist hier nicht
+        // noetig, es gibt ja noch kein zweites Mitglied.
+        await client.query(`UPDATE households SET encryption_status='active' WHERE id=$1`, [householdId]);
+        householdEncrypted = true;
+      }
     }
     await client.query('COMMIT');
     // session.regenerate() VOR dem Setzen der Session-Werte, analog zum
@@ -1029,7 +1185,7 @@ app.post('/api/auth/register', authLimiter, wrap(async (req, res) => {
       if (err) return res.status(500).json({ error: 'Registrierung fehlgeschlagen' });
       req.session.userId = user.rows[0].id;
       req.session.householdId = householdId;
-      res.status(201).json({ user: user.rows[0] });
+      res.status(201).json({ user: user.rows[0], householdEncrypted });
     });
   } catch (err) {
     // Sicherheitsnetz gegen eine mit offener Transaktion an den Pool
@@ -1076,6 +1232,85 @@ app.post('/api/auth/login', authLimiter, wrap(async (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   req.session.destroy(() => { res.clearCookie('wochenplan.sid'); res.json({ ok: true }); });
 });
+
+/* ------------------------------------------------------------------ *
+ * Wiederherstellungscode-Abfrage (AP2.1, Test-/Nachweis-Baustein)
+ *
+ * WICHTIGE, BEWUSSTE EINSCHRAENKUNG (an ANORAK/ZANDOR zurueckgemeldet, siehe
+ * Abschlussbericht zu diesem Arbeitspaket): dieser Endpunkt ist rein LESEND
+ * und veraendert NIE Sitzung, Passwort oder Wraps. Er liefert lediglich die
+ * bereits AEAD-geschuetzten Wrap-Felder des haushaltsweiten recovery_code-
+ * Wraps zu einer E-Mail-Adresse (analog zum Login-Lookup, nur ohne
+ * password_hash, siehe auth_lookup_recovery_wrap() aus Migration 009) sowie
+ * -- rein zu Demonstrations-/Testzwecken -- die Ciphertext-Bytes der zuletzt
+ * geaenderten Woche desselben Haushalts, damit ein Client den entschluesselten
+ * Haushalts-Schluessel direkt an echten Daten verifizieren kann. Beides sind
+ * bereits AEAD-verschluesselte Bytes -- ein Aufrufer ohne den echten
+ * Wiederherstellungscode kann damit nichts anfangen (identisches Schutzniveau
+ * wie ein direkter DB-Zugriff, das bereits akzeptierte Bedrohungsmodell dieses
+ * Projekts).
+ *
+ * BEWUSST NICHT gebaut: ein Endpunkt, der nach erfolgreichem Entpacken (rein
+ * clientseitig, vom Server nicht ueberpruefbar) das Passwort zuruecksetzt und
+ * eine Sitzung eroeffnet. Der Server kann angesichts der echten Ende-zu-Ende-
+ * Architektur NIE verifizieren, ob ein Client den Haushalts-Schluessel
+ * tatsaechlich korrekt entpackt hat (das wuerde einen serverseitig
+ * ueberpruefbaren Verifier-Wert voraussetzen, den household_key_wraps aktuell
+ * nicht vorsieht) -- ein "Passwort automatisch zuruecksetzen"-Endpunkt ohne
+ * einen solchen Verifier waere ein Authentifizierungs-Bypass fuer jeden, der
+ * lediglich die E-Mail-Adresse eines Haushaltsmitglieds kennt. Diese Luecke im
+ * bestehenden Datenmodell wird als offener Punkt an MORROW/ANORAK/ZANDOR
+ * zurueckgemeldet statt hier eigenmaechtig geschlossen.
+ * ------------------------------------------------------------------ */
+app.post('/api/auth/recover', authLimiter, wrap(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const wait = throttle(`recover:${email}`);
+  if (wait) return res.status(429).json({ error: `Zu viele Versuche. Bitte ${wait} Sekunden warten.` });
+
+  const q = await appPool.query('SELECT * FROM auth_lookup_recovery_wrap($1)', [email]);
+  const row = q.rows[0];
+  if (!row) {
+    noteFailure(`recover:${email}`);
+    return res.status(404).json({ error: 'Fuer diese E-Mail-Adresse ist kein Wiederherstellungscode hinterlegt' });
+  }
+  clearFailures(`recover:${email}`);
+
+  // WICHTIG (beim Umsetzen/Docker-Testlauf entdeckt): weeks unterliegt RLS (003_rls_policies.sql)
+  // -- ein blanker appPool.query() OHNE vorher gesetzten Tenant-Kontext funktioniert deshalb NICHT
+  // zuverlaessig wie ein einfaches "liefert dann eben 0 Zeilen": auf einer wiederverwendeten
+  // Pool-Verbindung, auf der der GUC app.current_household_id bereits MINDESTENS EINMAL zuvor
+  // (in einer anderen Anfrage) transaktionslokal gesetzt wurde, liefert current_setting(...) nach
+  // COMMIT nicht mehr NULL, sondern einen LEEREN STRING (Postgres-Eigenheit bei erstmals in der
+  // Session gesetzten Custom-GUCs) -- ''::bigint wirft dann "invalid input syntax for type
+  // bigint", statt die RLS-Policy einfach 0 Zeilen liefern zu lassen. Live reproduziert. Fix:
+  // den Tenant-Kontext hier explizit setzen (household_id ist ja bereits bekannt, siehe row oben)
+  // -- exakt dasselbe etablierte Muster wie jeder andere Endpunkt in dieser Datei
+  // (withTenantClient()), statt RLS "zufaellig" mit einem impliziten NULL-Kontext zu umgehen.
+  const sample = await withTenantClient(row.household_id, async client => {
+    const sampleQ = await client.query(
+      `SELECT to_char(week_start,'YYYY-MM-DD') AS "weekStart", data_nonce, data_ciphertext
+         FROM weeks WHERE household_id=$1 AND data_ciphertext IS NOT NULL
+         ORDER BY updated_at DESC LIMIT 1`, [row.household_id]);
+    return sampleQ.rowCount ? sampleQ.rows[0] : null;
+  });
+  const sampleOut = sample ? {
+    weekStart: sample.weekStart,
+    nonce: sample.data_nonce.toString('base64'),
+    ciphertext: sample.data_ciphertext.toString('base64')
+  } : null;
+
+  res.json({
+    keyVersion: row.key_version,
+    wrappedKey: row.wrapped_key.toString('base64'),
+    wrapNonce: row.wrap_nonce.toString('base64'),
+    kdfSalt: row.kdf_salt.toString('base64'),
+    kdfAlgo: row.kdf_algo,
+    kdfTimeCost: row.kdf_time_cost,
+    kdfMemoryCost: row.kdf_memory_cost,
+    kdfParallelism: row.kdf_parallelism,
+    sample: sampleOut
+  });
+}));
 
 /* ------------------------------------------------------------------ *
  * Admin-Authentifizierung (AP2.1, Wochenplaner-Admin-Bereich)
@@ -1413,11 +1648,40 @@ app.delete('/api/admin/households/:id', requireAdminAuth, requireAdminCsrf, wrap
 
 app.get('/api/me', wrap(async (req, res) => {
   if (!req.session.userId) return res.status(401).json({ error: 'Nicht angemeldet' });
+  // AP2.1: LEFT JOIN auf den eigenen aktiven password-Wrap (falls vorhanden) + households.
+  // encryption_status -- der Client (app.js/boot()) braucht das bei JEDEM Seitenaufruf, um zu
+  // wissen, ob/wie er das Passwort erneut abfragen und den Haushalts-Schluessel lokal entpacken
+  // muss (login.html und index.html sind zwei getrennte Dokumente/JS-Kontexte -- der Schluessel
+  // darf laut Risikotabelle des Plans NIE ausserhalb des JS-Arbeitsspeichers der jeweils
+  // LAUFENDEN Seite liegen, kann also nicht einfach von login.html "mitgenommen" werden, siehe
+  // Kommentar in boot()/unlockHousehold() in app.js).
   const q = await withTenantClient(req.session.householdId, client => client.query(
-    `SELECT u.id, u.name, u.email, u.role, u.household_id AS "householdId", h.name AS "householdName"
-       FROM users u JOIN households h ON h.id=u.household_id WHERE u.id=$1`, [req.session.userId]));
+    `SELECT u.id, u.name, u.email, u.role, u.household_id AS "householdId", h.name AS "householdName",
+            h.encryption_status AS "encryptionStatus",
+            w.key_version AS "wrapKeyVersion", w.wrapped_key AS "wrapWrappedKey", w.wrap_nonce AS "wrapNonce",
+            w.kdf_salt AS "wrapKdfSalt", w.kdf_algo AS "wrapKdfAlgo", w.kdf_time_cost AS "wrapKdfTimeCost",
+            w.kdf_memory_cost AS "wrapKdfMemoryCost", w.kdf_parallelism AS "wrapKdfParallelism"
+       FROM users u
+       JOIN households h ON h.id = u.household_id
+       LEFT JOIN household_key_wraps w
+              ON w.user_id = u.id AND w.wrap_type = 'password' AND w.revoked_at IS NULL
+      WHERE u.id=$1`, [req.session.userId]));
   if (!q.rowCount) return req.session.destroy(() => res.status(401).json({ error: 'Nicht angemeldet' }));
-  res.json({ user: q.rows[0] });
+  const row = q.rows[0];
+  const user = { id: row.id, name: row.name, email: row.email, role: row.role,
+                 householdId: row.householdId, householdName: row.householdName };
+  const crypto = {
+    encryptionStatus: row.encryptionStatus,
+    keyVersion: row.wrapKeyVersion,
+    wrappedKey: row.wrapWrappedKey ? row.wrapWrappedKey.toString('base64') : null,
+    wrapNonce: row.wrapNonce ? row.wrapNonce.toString('base64') : null,
+    kdfSalt: row.wrapKdfSalt ? row.wrapKdfSalt.toString('base64') : null,
+    kdfAlgo: row.wrapKdfAlgo || null,
+    kdfTimeCost: row.wrapKdfTimeCost,
+    kdfMemoryCost: row.wrapKdfMemoryCost,
+    kdfParallelism: row.wrapKdfParallelism
+  };
+  res.json({ user, crypto });
 }));
 
 app.post('/api/invites', requireAuth, inviteLimiter, rejectForeignHouseholdId, wrap(async (req, res) => {
@@ -1446,17 +1710,46 @@ app.get('/api/weeks/:monday', requireAuth, rejectForeignHouseholdId, wrap(async 
   if (!isMonday(monday)) return res.status(400).json({ error: 'Datum muss ein Montag im Format JJJJ-MM-TT sein' });
   const result = await withTenantClient(req.session.householdId, async (client) => {
     const q = await client.query(
-      `SELECT data, updated_at AS "updatedAt" FROM weeks WHERE household_id=$1 AND week_start=$2`,
+      `SELECT data, data_ciphertext, data_nonce, key_version, updated_at AS "updatedAt"
+         FROM weeks WHERE household_id=$1 AND week_start=$2`,
       [req.session.householdId, monday]);
     if (q.rowCount) {
-      return { weekStart: monday, exists: true, data: migrateLegacyWeek(q.rows[0].data), updatedAt: q.rows[0].updatedAt };
+      const row = q.rows[0];
+      // AP2.1 (ap1.2-datenmodell.md Abschnitt 2.1/6.1): data_ciphertext IS NOT NULL <=> diese
+      // Zeile ist bereits clientseitig verschluesselt (der XOR-CHECK aus Migration 009 garantiert
+      // serverseitig, dass niemals beide/keine der beiden Formen gleichzeitig vorliegen). Der
+      // Server liefert in diesem Fall NUR die opaken Bytes weiter (Base64 fuer den JSON-Transport)
+      // -- migrateLegacyWeek()/cleanWeek() (Klartext-Normalisierung) kommen hier nie zum Einsatz.
+      if (row.data_ciphertext) {
+        return { weekStart: monday, exists: true, encrypted: true, keyVersion: row.key_version,
+                 nonce: row.data_nonce.toString('base64'), ciphertext: row.data_ciphertext.toString('base64'),
+                 updatedAt: row.updatedAt };
+      }
+      return { weekStart: monday, exists: true, encrypted: false, data: migrateLegacyWeek(row.data), updatedAt: row.updatedAt };
     }
-    const t = await client.query('SELECT template_data FROM households WHERE id=$1', [req.session.householdId]);
-    const template = t.rows[0]?.template_data ? migrateLegacyWeek(t.rows[0].template_data) : null;
+    const h = await client.query(
+      'SELECT encryption_status, template_data FROM households WHERE id=$1', [req.session.householdId]);
+    const encryptionStatus = h.rows[0]?.encryption_status || 'plaintext';
+    const templateRaw = h.rows[0]?.template_data || null;
+    // Ist der Haushalt bereits aktiv verschluesselt ODER die Vorlage selbst schon verschluesselt,
+    // kann der Server sie NICHT lesen/in eine neue Woche mergen (kein Klartextzugriff moeglich,
+    // das ist ja gerade der Zweck der Uebung). Bewusste, an ANORAK zurueckgemeldete Vereinfachung
+    // fuer AP2.1 (vollstaendiges clientseitiges Vorlagen-Merge ist AP2.2, ap1.2-datenmodell.md
+    // Abschnitt 6.3 sinngemaess): eine neue Woche startet in diesem Fall serverseitig als
+    // unbestueckter Standardaufbau; "mustEncryptOnSave" sagt dem Client, dass er beim ERSTEN
+    // Speichern dieser Woche bereits den verschluesselten Envelope statt Klartext senden muss
+    // (siehe PUT unten) -- unabhaengig davon, ob eine Vorlage existiert.
+    if (encryptionStatus === 'active' || isEncryptedTemplateEnvelope(templateRaw)) {
+      return { weekStart: monday, exists: false, encrypted: false, mustEncryptOnSave: true,
+               fromTemplate: false, templateEncrypted: isEncryptedTemplateEnvelope(templateRaw),
+               data: defaultWeek(), updatedAt: null };
+    }
+    const template = templateRaw ? migrateLegacyWeek(templateRaw) : null;
     // Neue Woche: die Vorlage wird vollstaendig uebernommen (Namen inklusive),
     // fehlende Zeilen ergaenzt der Standardaufbau.
     const fresh = template ? mergeTemplate(structuredClone(template), defaultWeek()) : defaultWeek();
-    return { weekStart: monday, exists: false, fromTemplate: !!template, data: fresh, updatedAt: null };
+    return { weekStart: monday, exists: false, encrypted: false, mustEncryptOnSave: false,
+             fromTemplate: !!template, data: fresh, updatedAt: null };
   });
   res.json(result);
 }));
@@ -1464,9 +1757,19 @@ app.get('/api/weeks/:monday', requireAuth, rejectForeignHouseholdId, wrap(async 
 app.put('/api/weeks/:monday', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
   const monday = req.params.monday;
   if (!isMonday(monday)) return res.status(400).json({ error: 'Datum muss ein Montag im Format JJJJ-MM-TT sein' });
-  let data;
-  try { data = cleanWeek(req.body.data); }
-  catch { return res.status(400).json({ error: 'Wochendaten haben ein unerwartetes Format' }); }
+
+  // AP2.1: entweder ein Ciphertext-Envelope ({encrypted:true, keyVersion, nonce, ciphertext} --
+  // Haushalt hat die Verschluesselung aktiviert) ODER klassische Klartextdaten, NIE beides.
+  // cleanWeek()/cleanRow()/... (serverseitige Normalisierung) laufen ausschliesslich im
+  // Klartext-Zweig -- bei Ciphertext gibt es inhaltlich nichts zu pruefen/normalisieren, der
+  // Server sieht nur opake, vom Client bereits AEAD-verschluesselte Bytes (ap1.2-datenmodell.md
+  // Abschnitt 6.1). parseEncryptedPayload() prueft ausschliesslich Form/Groesse.
+  const encPayload = parseEncryptedPayload(req.body);
+  let plainData = null;
+  if (!encPayload) {
+    try { plainData = cleanWeek(req.body.data); }
+    catch { return res.status(400).json({ error: 'Wochendaten haben ein unerwartetes Format' }); }
+  }
 
   const base = req.body.baseUpdatedAt ? new Date(req.body.baseUpdatedAt) : null;
   const client = await appPool.connect();
@@ -1503,21 +1806,44 @@ app.put('/api/weeks/:monday', requireAuth, rejectForeignHouseholdId, wrap(async 
         await client.query('BEGIN');
         await setTenantContext(client, req.session.householdId);
         const fresh = await client.query(
-          'SELECT data, updated_at AS "updatedAt" FROM weeks WHERE household_id=$1 AND week_start=$2',
+          `SELECT data, data_ciphertext, data_nonce, key_version, updated_at AS "updatedAt"
+             FROM weeks WHERE household_id=$1 AND week_start=$2`,
           [req.session.householdId, monday]);
         await client.query('COMMIT');
+        const freshRow = fresh.rows[0];
+        // AP2.1: Konflikt-Antwort spiegelt dieselbe encrypted-Unterscheidung wie GET oben --
+        // sonst wuerde der Client bei einem Konflikt versehentlich ein Ciphertext-Objekt als
+        // Klartext behandeln (oder umgekehrt).
+        const conflictBody = freshRow.data_ciphertext
+          ? { encrypted: true, keyVersion: freshRow.key_version,
+              nonce: freshRow.data_nonce.toString('base64'), ciphertext: freshRow.data_ciphertext.toString('base64') }
+          : { encrypted: false, data: migrateLegacyWeek(freshRow.data) };
         return res.status(409).json({
           error: 'Diese Woche wurde zwischenzeitlich auf einem anderen Geraet geaendert',
-          data: migrateLegacyWeek(fresh.rows[0].data), updatedAt: fresh.rows[0].updatedAt });
+          ...conflictBody, updatedAt: freshRow.updatedAt });
       }
     }
-    const saved = await client.query(
-      `INSERT INTO weeks(household_id, week_start, data, updated_by)
-       VALUES ($1,$2,$3,$4)
-       ON CONFLICT (household_id, week_start)
-       DO UPDATE SET data=EXCLUDED.data, updated_by=EXCLUDED.updated_by, updated_at=now()
-       RETURNING updated_at AS "updatedAt"`,
-      [req.session.householdId, monday, data, req.session.userId]);
+    // Zwei getrennte UPSERT-Formen statt einer gemeinsamen mit bedingten Spalten: die XOR-CHECK-
+    // Constraint (weeks_plaintext_xor_ciphertext, Migration 009) verlangt in JEDEM Fall einen
+    // vollstaendigen, eindeutigen Zustand -- beide Zweige setzen deshalb explizit ALLE fuenf
+    // betroffenen Spalten (auch die jeweils "andere" Gruppe auf NULL), nie nur eine Teilmenge.
+    const saved = encPayload
+      ? await client.query(
+          `INSERT INTO weeks(household_id, week_start, data, data_ciphertext, data_nonce, key_version, updated_by)
+           VALUES ($1,$2,NULL,$3,$4,$5,$6)
+           ON CONFLICT (household_id, week_start)
+           DO UPDATE SET data=NULL, data_ciphertext=EXCLUDED.data_ciphertext, data_nonce=EXCLUDED.data_nonce,
+                         key_version=EXCLUDED.key_version, updated_by=EXCLUDED.updated_by, updated_at=now()
+           RETURNING updated_at AS "updatedAt"`,
+          [req.session.householdId, monday, encPayload.ciphertext, encPayload.nonce, encPayload.keyVersion, req.session.userId])
+      : await client.query(
+          `INSERT INTO weeks(household_id, week_start, data, data_ciphertext, data_nonce, key_version, updated_by)
+           VALUES ($1,$2,$3,NULL,NULL,NULL,$4)
+           ON CONFLICT (household_id, week_start)
+           DO UPDATE SET data=EXCLUDED.data, data_ciphertext=NULL, data_nonce=NULL, key_version=NULL,
+                         updated_by=EXCLUDED.updated_by, updated_at=now()
+           RETURNING updated_at AS "updatedAt"`,
+          [req.session.householdId, monday, plainData, req.session.userId]);
     await client.query('COMMIT');
     res.json({ ok: true, updatedAt: saved.rows[0].updatedAt });
   } catch (err) {
@@ -1543,16 +1869,27 @@ app.delete('/api/weeks/:monday', requireAuth, rejectForeignHouseholdId, wrap(asy
 app.get('/api/template', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
   const q = await withTenantClient(req.session.householdId, client => client.query(
     'SELECT template_data FROM households WHERE id=$1', [req.session.householdId]));
-  const template = q.rows[0]?.template_data || null;
-  res.json({ template: template ? migrateLegacyWeek(template) : null });
+  const raw = q.rows[0]?.template_data || null;
+  // AP2.1: template_data bleibt EINE jsonb-Spalte (siehe Kommentar bei isEncryptedTemplateEnvelope()
+  // oben) -- eine verschluesselte Vorlage traegt den Diskriminator "__enc:true" und liefert dann
+  // NUR den Ciphertext-Envelope, exakt wie GET /api/weeks/:monday fuer eine verschluesselte Woche.
+  if (isEncryptedTemplateEnvelope(raw)) {
+    return res.json({ template: null, encrypted: true, keyVersion: raw.keyVersion, nonce: raw.nonce, ciphertext: raw.ciphertext });
+  }
+  res.json({ template: raw ? migrateLegacyWeek(raw) : null, encrypted: false });
 }));
 
 app.put('/api/template', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
-  let data;
-  try { data = cleanWeek(req.body.data); }
-  catch { return res.status(400).json({ error: 'Vorlage hat ein unerwartetes Format' }); }
+  const encPayload = parseEncryptedPayload(req.body);
+  let stored;
+  if (encPayload) {
+    stored = buildTemplateEnvelope(encPayload.nonce, encPayload.ciphertext, encPayload.keyVersion);
+  } else {
+    try { stored = cleanWeek(req.body.data); }
+    catch { return res.status(400).json({ error: 'Vorlage hat ein unerwartetes Format' }); }
+  }
   await withTenantClient(req.session.householdId, client => client.query(
-    'UPDATE households SET template_data=$1 WHERE id=$2', [data, req.session.householdId]));
+    'UPDATE households SET template_data=$1 WHERE id=$2', [stored, req.session.householdId]));
   res.json({ ok: true });
 }));
 
@@ -1954,6 +2291,22 @@ app.post('/api/weeks/:monday/assign-recipe', requireAuth, rejectForeignHousehold
   }
 
   const result = await withTenantClient(req.session.householdId, async client => {
+    // AP2.1-Guard (ap1.2-datenmodell.md Abschnitt 6.3, dort als Datenfluss-Konsequenz benannt,
+    // Umsetzung selbst ist AP2.2): dieser gezielte Schreibpfad liest+schreibt weeks.data direkt
+    // serverseitig -- fuer einen bereits verschluesselten Haushalt (oder eine bereits
+    // verschluesselte Zielwoche) kann der Server das nicht mehr (er sieht nur Ciphertext). Statt
+    // eines Absturzes (cleanWeek(null) o.ae.) hier ein klarer, sprechender Fehler; der volle
+    // Lese-Aendern-Schreiben-Zyklus fuer verschluesselte Haushalte folgt mit AP2.2.
+    const encCheck = await client.query(
+      `SELECT h.encryption_status AS "encryptionStatus",
+              (SELECT data_ciphertext IS NOT NULL FROM weeks
+                WHERE household_id=h.id AND week_start=$2) AS "weekEncrypted"
+         FROM households h WHERE h.id=$1`,
+      [req.session.householdId, targetWeekStart]);
+    if (encCheck.rows[0]?.encryptionStatus === 'active' || encCheck.rows[0]?.weekEncrypted) {
+      return { error: 'encrypted_household' };
+    }
+
     // RLS schraenkt ohnehin auf den eigenen Haushalt ein -- die explizite
     // household_id-Bedingung im WHERE ist identisches Defense-in-Depth-Muster
     // wie bei den uebrigen /api/recipes/:id-Routen oben.
@@ -2022,6 +2375,11 @@ app.post('/api/weeks/:monday/assign-recipe', requireAuth, rejectForeignHousehold
     return { ok: true, token, data, updatedAt: saved.rows[0].updatedAt };
   });
 
+  if (result.error === 'encrypted_household') {
+    return res.status(409).json({ error: 'Diese Funktion ist fuer Haushalte mit aktivierter Termin-Verschluesselung ' +
+      'noch nicht verfuegbar (folgt mit einem spaeteren Update). Bitte die Zuweisung stattdessen ueber die normale ' +
+      'Wochenansicht bearbeiten.' });
+  }
   if (result.error === 'recipe_not_found') return res.status(404).json({ error: 'Rezept nicht gefunden' });
   if (result.error === 'meal_row_missing') return res.status(409).json({ error: '"Essen & Kochen"-Zeile in dieser Woche nicht gefunden' });
 
@@ -2072,6 +2430,17 @@ app.post('/api/weeks/:monday/set-meal-cell', requireAuth, rejectForeignHousehold
   const tokens = cleanTokens(req.body?.tokens); // kein allowRecipe, siehe Kommentar oben
 
   const result = await withTenantClient(req.session.householdId, async client => {
+    // AP2.1-Guard, siehe identischer Kommentar bei assign-recipe oben.
+    const encCheck = await client.query(
+      `SELECT h.encryption_status AS "encryptionStatus",
+              (SELECT data_ciphertext IS NOT NULL FROM weeks
+                WHERE household_id=h.id AND week_start=$2) AS "weekEncrypted"
+         FROM households h WHERE h.id=$1`,
+      [req.session.householdId, targetWeekStart]);
+    if (encCheck.rows[0]?.encryptionStatus === 'active' || encCheck.rows[0]?.weekEncrypted) {
+      return { error: 'encrypted_household' };
+    }
+
     const weekQ = await client.query(
       `SELECT data FROM weeks WHERE household_id=$1 AND week_start=$2 FOR UPDATE`,
       [req.session.householdId, targetWeekStart]);
@@ -2106,6 +2475,11 @@ app.post('/api/weeks/:monday/set-meal-cell', requireAuth, rejectForeignHousehold
     return { ok: true, data, updatedAt: saved.rows[0].updatedAt };
   });
 
+  if (result.error === 'encrypted_household') {
+    return res.status(409).json({ error: 'Diese Funktion ist fuer Haushalte mit aktivierter Termin-Verschluesselung ' +
+      'noch nicht verfuegbar (folgt mit einem spaeteren Update). Bitte die Zelle stattdessen ueber die normale ' +
+      'Wochenansicht bearbeiten.' });
+  }
   if (result.error === 'meal_row_missing') return res.status(409).json({ error: '"Essen & Kochen"-Zeile in dieser Woche nicht gefunden' });
 
   res.json({
@@ -2220,6 +2594,21 @@ app.post('/api/weeks/:monday/add-ingredient-to-list', requireAuth, rejectForeign
   }
 
   const result = await withTenantClient(req.session.householdId, async client => {
+    // AP2.1-Guard, siehe identischer Kommentar bei assign-recipe oben -- hier auf Quell- UND
+    // Zielwoche geprueft, da beide serverseitig gelesen/geschrieben werden.
+    const encCheck = await client.query(
+      `SELECT h.encryption_status AS "encryptionStatus",
+              (SELECT data_ciphertext IS NOT NULL FROM weeks
+                WHERE household_id=h.id AND week_start=$2) AS "sourceEncrypted",
+              (SELECT data_ciphertext IS NOT NULL FROM weeks
+                WHERE household_id=h.id AND week_start=$3) AS "targetEncrypted"
+         FROM households h WHERE h.id=$1`,
+      [req.session.householdId, monday, targetWeekStart]);
+    const encRow = encCheck.rows[0];
+    if (encRow?.encryptionStatus === 'active' || encRow?.sourceEncrypted || encRow?.targetEncrypted) {
+      return { error: 'encrypted_household' };
+    }
+
     // Anders als assign-recipe kein Vorlagen-Fallback fuer die QUELL-Woche (monday): die hier
     // referenzierte Zutat kann nur existieren, wenn zuvor bereits eine Rezept-Zuweisung
     // stattgefunden hat -- und assign-recipe legt die weeks-Zeile dabei immer per UPSERT an.
@@ -2282,6 +2671,11 @@ app.post('/api/weeks/:monday/add-ingredient-to-list', requireAuth, rejectForeign
     return { ok: true, item, data: targetData, updatedAt: saved.rows[0].updatedAt };
   });
 
+  if (result.error === 'encrypted_household') {
+    return res.status(409).json({ error: 'Diese Funktion ist fuer Haushalte mit aktivierter Termin-Verschluesselung ' +
+      'noch nicht verfuegbar (folgt mit einem spaeteren Update). Bitte den Eintrag stattdessen ueber die normale ' +
+      'Wochenansicht bearbeiten.' });
+  }
   if (result.error === 'week_not_found') return res.status(404).json({ error: 'Woche nicht gefunden -- eine Zutat kann nur aus einer bereits bestehenden Rezept-Zuweisung uebernommen werden' });
   if (result.error === 'meal_row_missing') return res.status(409).json({ error: '"Essen & Kochen"-Zeile in dieser Woche nicht gefunden' });
   if (result.error === 'list_row_missing') return res.status(409).json({ error: '"Einkauf & Besorgungen"-Zeile in der Zielwoche nicht gefunden' });

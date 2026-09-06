@@ -23,7 +23,16 @@ const state = {
   // ungewollt an die des Essensplans koppeln, obwohl beides unabhaengige Ansichten sind. Default
   // wie beim analogen Hauptraster-Boot-Verhalten (siehe boot()) der heutige Wochentag.
   mealDay: (new Date().getDay() + 6) % 7,
-  recipes: [] // AP2.2: haushaltsweite Rezeptkarten-Uebersicht, unabhaengig von der Wochenansicht
+  recipes: [], // AP2.2: haushaltsweite Rezeptkarten-Uebersicht, unabhaengig von der Wochenansicht
+  // AP2.1 (projects/wochenplaner-termine-verschluesselung/plan.md): reine Metadaten aus /api/me
+  // (encryptionStatus, keyVersion, Wrap-Felder) -- NIEMALS der Haushalts-Schluessel selbst. Der
+  // Schluessel liegt ausschliesslich modul-lokal in crypto.js (WPCrypto.getHouseholdKey()), damit
+  // er nicht versehentlich ueber state (z.B. in einer kuenftigen Debug-Ausgabe) exponiert wird.
+  crypto: null,
+  // true, sobald die aktuell geladene Woche beim naechsten Speichern verschluesselt werden muss
+  // (siehe loadWeek()/buildWeekSaveBody()) -- unabhaengig davon, ob die Zeile GERADE als Ciphertext
+  // geliefert wurde oder noch gar nicht existiert (mustEncryptOnSave-Flag der GET-Antwort).
+  weekEncrypted: false
 };
 
 /* ---------------- Hilfsfunktionen ---------------- */
@@ -69,6 +78,73 @@ async function apiForm(method, url, formData) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(json.error || 'Fehler'); e.status = res.status; e.payload = json; throw e; }
   return json;
+}
+
+/* ---------------- AP2.1: Ende-zu-Ende-Verschluesselung ----------------
+ * Leitet aus dem (erneut abgefragten, siehe promptUnlock()) Passwort denselben Wrap-Schluessel wie
+ * beim Setup ab und entpackt damit den Haushalts-Schluessel -- wirft bei falschem Passwort
+ * automatisch (AEAD-Authentifizierung schlaegt fehl, siehe crypto.js/unwrapKey()). Der entpackte
+ * Schluessel wird NUR in WPCrypto (modul-lokale Variable in crypto.js) gehalten, nie in `state`
+ * und nie in einer Web-Storage-API (Risikotabelle des Plans).
+ */
+async function unlockHousehold(password) {
+  const c = state.crypto;
+  const kdfParams = { algo: c.kdfAlgo, opslimit: c.kdfTimeCost, memlimit: c.kdfMemoryCost, parallelism: c.kdfParallelism };
+  const wrapKeyBytes = await WPCrypto.deriveWrapKey(password, WPCrypto.fromB64(c.kdfSalt), kdfParams);
+  const householdKey = await WPCrypto.unwrapKey(
+    WPCrypto.fromB64(c.wrappedKey), WPCrypto.fromB64(c.wrapNonce), wrapKeyBytes);
+  WPCrypto.setHouseholdKey(householdKey);
+}
+
+// Zeigt den "Entsperren"-Dialog (index.html) und loest das zurueckgegebene Promise erst auf,
+// nachdem unlockHousehold() tatsaechlich erfolgreich war -- boot() wartet darauf, bevor irgendeine
+// Woche geladen wird (siehe dort).
+function promptUnlock() {
+  return new Promise(resolve => {
+    const dlg = $('#unlockDialog');
+    const form = $('#unlockForm');
+    const pwInput = $('#unlockPassword');
+    const errEl = $('#unlockError');
+    errEl.hidden = true;
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      try {
+        await unlockHousehold(pwInput.value);
+        dlg.close();
+        resolve();
+      } catch {
+        errEl.textContent = 'Falsches Passwort – bitte erneut versuchen.';
+        errEl.hidden = false;
+        pwInput.value = '';
+        pwInput.focus();
+      }
+    };
+    dlg.showModal();
+    pwInput.focus();
+  });
+}
+
+// Wandelt eine GET-/409-Konflikt-Antwort von /api/weeks(/:monday) einheitlich in Klartext um --
+// entschluesselt bei encrypted:true lokal mit dem bereits entsperrten Haushalts-Schluessel.
+// mustEncryptOnSave sagt, ob diese Woche beim naechsten Speichern verschluesselt werden muss
+// (entweder weil sie es schon ist, oder weil der Haushalt seit dem Laden aktiv verschluesselt --
+// siehe server.js GET-Handler, Abschnitt "mustEncryptOnSave").
+async function decodeWeekResponse(res) {
+  if (res.encrypted) {
+    const data = await WPCrypto.decryptJSON(WPCrypto.getHouseholdKey(), res.nonce, res.ciphertext);
+    return { data, mustEncryptOnSave: true };
+  }
+  return { data: res.data, mustEncryptOnSave: !!res.mustEncryptOnSave };
+}
+
+// Baut den PUT-Body fuer /api/weeks/:monday -- verschluesselt lokal, wenn state.weekEncrypted
+// gesetzt ist (siehe loadWeek()), sonst unveraendertes Klartext-Verhalten wie vor AP2.1.
+async function buildWeekSaveBody(data, baseUpdatedAt) {
+  if (state.weekEncrypted) {
+    const { nonce, ciphertext } = await WPCrypto.encryptJSON(WPCrypto.getHouseholdKey(), data);
+    return { encrypted: true, keyVersion: state.crypto?.keyVersion || 1, nonce, ciphertext, baseUpdatedAt };
+  }
+  return { data, baseUpdatedAt };
 }
 
 /* ---------------- Tokens <-> DOM ---------------- */
@@ -1051,14 +1127,17 @@ async function save() {
   state.saving = true;
   setStatus('Speichert …', 'saving');
   try {
-    const res = await api('PUT', `/api/weeks/${state.weekStart}`, { data: state.data, baseUpdatedAt: state.updatedAt });
+    const body = await buildWeekSaveBody(state.data, state.updatedAt);
+    const res = await api('PUT', `/api/weeks/${state.weekStart}`, body);
     state.updatedAt = res.updatedAt;
     state.dirty = false;
     setStatus('Gespeichert ' + new Date(res.updatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }), 'saved');
     refreshArchive();
   } catch (err) {
     if (err.status === 409) {
-      state.data = err.payload.data;
+      const decoded = await decodeWeekResponse(err.payload);
+      state.data = decoded.data;
+      state.weekEncrypted = decoded.mustEncryptOnSave;
       // Fokusbloecke (Datenmodell-Fokusbloecke-v2.md): siehe Kommentar in loadWeek() -- derselbe
       // Fallback fuer den Fall, dass die zwischenzeitlich vom anderen Geraet gespeicherte Woche
       // (noch) keine dieser Felder kennt.
@@ -1082,7 +1161,11 @@ async function loadWeek(iso) {
   if (state.dirty) await save();
   const res = await api('GET', `/api/weeks/${iso}`);
   state.weekStart = res.weekStart;
-  state.data = res.data;
+  // AP2.1: entschluesselt bei Bedarf lokal (res.encrypted) und merkt sich, ob diese Woche beim
+  // naechsten Speichern verschluesselt werden muss (siehe decodeWeekResponse()/save()).
+  const decoded = await decodeWeekResponse(res);
+  state.data = decoded.data;
+  state.weekEncrypted = decoded.mustEncryptOnSave;
   // Fokusbloecke (Datenmodell-Fokusbloecke-v2.md): sehr alte, vor diesem Feature gespeicherte
   // Wochen kennen diese drei Felder eventuell noch nicht -- analog zum bestehenden Fallback in
   // importJSON() ("d.goals || []" etc.) hier ebenfalls robust gegen fehlende Schluessel
@@ -1124,7 +1207,13 @@ async function refreshArchive() {
 
 /* ---------------- Vorlage ---------------- */
 async function applyTemplate() {
-  const { template } = await api('GET', '/api/template');
+  const tRes = await api('GET', '/api/template');
+  // AP2.1: households.template_data traegt bei einem verschluesselten Haushalt denselben
+  // Ciphertext-Envelope wie eine verschluesselte Woche (server.js, isEncryptedTemplateEnvelope())
+  // -- lokal entschluesseln, statt (wie bislang) direkt "template" aus der Antwort zu lesen.
+  const template = tRes.encrypted
+    ? await WPCrypto.decryptJSON(WPCrypto.getHouseholdKey(), tRes.nonce, tRes.ciphertext)
+    : tRes.template;
   if (!template) { flash('Es ist noch keine Vorlage hinterlegt. Lege eine typische Woche an und sichere sie über „Als Vorlage sichern“.'); return; }
   syncFromDOM();
   // Namen (kind+label) bereits vorhandener Zeilen merken: eine Vorlage mit weniger oder
@@ -1166,7 +1255,15 @@ async function applyTemplate() {
 }
 async function saveTemplate() {
   syncFromDOM();
-  await api('PUT', '/api/template', { data: state.data });
+  // AP2.1: dieselbe Verschluesselungsentscheidung wie fuer die gerade geladene Woche
+  // (state.weekEncrypted, siehe loadWeek()/buildWeekSaveBody()) -- eine Vorlage ist inhaltlich
+  // nichts anderes als eine Wochen-Schablone und unterliegt denselben Regeln.
+  if (state.weekEncrypted) {
+    const { nonce, ciphertext } = await WPCrypto.encryptJSON(WPCrypto.getHouseholdKey(), state.data);
+    await api('PUT', '/api/template', { encrypted: true, keyVersion: state.crypto?.keyVersion || 1, nonce, ciphertext });
+  } else {
+    await api('PUT', '/api/template', { data: state.data });
+  }
   flash('Diese Woche ist jetzt die Vorlage für neue Wochen.');
 }
 
@@ -1558,7 +1655,11 @@ async function loadNextWeekPreview() {
   nextWeekStart = addDays(state.weekStart, 7);
   try {
     const res = await api('GET', `/api/weeks/${nextWeekStart}`);
-    nextWeekMeal = res.data.rows.find(r => r && r.kind === 'shared' && r.mode === 'week') || null;
+    // AP2.1: dieselbe lokale Entschluesselung wie loadWeek() -- mustEncryptOnSave wird hier
+    // ignoriert (reine Vorschau, kein eigener save()-Zyklus fuer diese zweite Woche, siehe
+    // Kommentar oben bei nextWeekStart/nextWeekMeal).
+    const decoded = await decodeWeekResponse(res);
+    nextWeekMeal = decoded.data.rows.find(r => r && r.kind === 'shared' && r.mode === 'week') || null;
   } catch (err) {
     nextWeekMeal = null;
     flash('Vorschau der nächsten Woche konnte nicht geladen werden: ' + err.message);
@@ -2224,6 +2325,11 @@ function initAccountView() {
   };
   $('#acctLogout').onclick = async () => {
     await api('POST', '/api/auth/logout');
+    // AP2.1: Haushalts-Schluessel aktiv aus dem Speicher entfernen, statt nur auf das Verschwinden
+    // des JS-Kontexts beim Navigieren zu vertrauen -- selbst wenn ein Navigations-/Reload-Fehler
+    // das Verlassen der Seite verzoegert, bleibt der Schluessel damit nicht laenger als noetig
+    // im Speicher.
+    WPCrypto.clearHouseholdKey();
     location.href = 'login.html';
   };
 }
@@ -2244,8 +2350,19 @@ async function boot() {
 
   const me = await api('GET', '/api/me');
   state.user = me.user;
+  state.crypto = me.crypto;
   $('#householdName').textContent = me.user.householdName;
   initAccountView(); // AP2.2b: einmalige Verdrahtung der neuen Konto-Ansicht, siehe dortiger Kommentar
+
+  // AP2.1: index.html ist ein eigenes Dokument/JS-Kontext gegenueber login.html -- der Haushalts-
+  // Schluessel kann daher nicht "mitgebracht" werden (siehe Kommentar bei #unlockDialog,
+  // index.html). Ist der Haushalt bereits aktiv verschluesselt, MUSS das Passwort hier erneut
+  // abgefragt werden, bevor irgendeine Woche geladen wird -- ohne Schluessel liesse sich weder
+  // eine bestehende verschluesselte Woche entschluesseln noch eine neue korrekt verschluesselt
+  // speichern.
+  if (state.crypto?.encryptionStatus === 'active') {
+    await promptUnlock();
+  }
 
   if (window.matchMedia('(max-width: 900px)').matches) { setView('day'); state.day = (new Date().getDay() + 6) % 7; }
 

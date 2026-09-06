@@ -734,6 +734,36 @@
   </div>
 </dialog>
 
+<!-- ================= AP2.1 (projects/wochenplaner-termine-verschluesselung/plan.md): "Entsperren"-
+     Dialog -- login.html und index.html sind zwei getrennte Dokumente/JS-Kontexte; der Haushalts-
+     Schluessel darf laut Risikotabelle des Plans NIE ausserhalb des JS-Arbeitsspeichers der jeweils
+     LAUFENDEN Seite liegen (kein localStorage/sessionStorage), kann also nicht einfach von
+     login.html "mitgenommen" werden. Deshalb fragt index.html bei einem bereits verschluesselten
+     Haushalt (encryption_status='active', siehe /api/me) das Passwort HIER erneut ab und leitet den
+     Wrap-Schluessel/entpackt den Haushalts-Schluessel lokal -- analoges, etabliertes UX-Muster wie
+     der "Tresor entsperren"-Schritt bekannter Passwort-Manager-Web-Apps nach bereits bestehender
+     Sitzung. Natives <dialog>, kein Abbrechen moeglich (siehe app.js: kein close()-Aufruf ausser
+     bei Erfolg) -- ohne den Schluessel kann keine Wochenansicht sinnvoll dargestellt werden. -->
+<dialog class="daylist" id="unlockDialog" aria-labelledby="unlockTitle">
+  <div class="daylist-head modal-header">
+    <div>
+      <h2 id="unlockTitle" class="font-heading">Termine entsperren</h2>
+      <div class="sub">Eure Termine sind Ende-zu-Ende-verschlüsselt. Bitte Passwort erneut eingeben.</div>
+    </div>
+  </div>
+  <div class="daylist-body modal-body">
+    <form id="unlockForm">
+      <label class="form-label" for="unlockPassword">Passwort</label>
+      <input type="password" class="form-control" id="unlockPassword" autocomplete="current-password" required>
+      <div class="recipe-form-error" id="unlockError" role="alert" hidden></div>
+      <button class="legacy-btn primary" type="submit" style="margin-top:0.75em;">Entsperren</button>
+    </form>
+  </div>
+</dialog>
+
+<script src="vendor/libsodium/libsodium.js"></script>
+<script src="vendor/libsodium/libsodium-wrappers.js"></script>
+<script src="crypto.js"></script>
 <script src="icons.js"></script>
 <script src="app.js"></script>
 </body>
