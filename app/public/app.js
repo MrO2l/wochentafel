@@ -98,7 +98,9 @@ async function unlockHousehold(password) {
 
 // Zeigt den "Entsperren"-Dialog (index.html) und loest das zurueckgegebene Promise erst auf,
 // nachdem unlockHousehold() tatsaechlich erfolgreich war -- boot() wartet darauf, bevor irgendeine
-// Woche geladen wird (siehe dort).
+// Woche geladen wird (siehe dort). ESC/Backdrop-Abbruch bewusst blockiert (siehe Kommentar bei
+// showRecoveryCodeOnce() in login.js, identisches Muster): ohne Schluessel liesse sich keine
+// Woche sinnvoll darstellen, ein abgebrochener Dialog wuerde die App in einem toten Zustand lassen.
 function promptUnlock() {
   return new Promise(resolve => {
     const dlg = $('#unlockDialog');
@@ -106,10 +108,13 @@ function promptUnlock() {
     const pwInput = $('#unlockPassword');
     const errEl = $('#unlockError');
     errEl.hidden = true;
+    const onCancel = ev => ev.preventDefault();
+    dlg.addEventListener('cancel', onCancel);
     form.onsubmit = async ev => {
       ev.preventDefault();
       try {
         await unlockHousehold(pwInput.value);
+        dlg.removeEventListener('cancel', onCancel);
         dlg.close();
         resolve();
       } catch {
@@ -122,6 +127,294 @@ function promptUnlock() {
     dlg.showModal();
     pwInput.focus();
   });
+}
+
+/* ---------------- AP2.3: Bootstrap-/Aktivierungs-UX fuer Bestandshaushalte ----------------
+ * Zwei Faelle, siehe boot()-Verzweigung weiter unten:
+ *  - promptBootstrapExisting(): der Haushalt ist noch komplett 'plaintext' -- das gerade
+ *    einloggende Mitglied erzeugt den Haushalts-Schluessel neu (identisches Vorgehen wie bei
+ *    einer Neuregistrierung, AP2.1, nur eben nachtraeglich fuer einen Bestandshaushalt).
+ *  - promptActivatePending(): der Haushalt wurde bereits von einem ANDEREN Mitglied aktiviert
+ *    (encryption_status 'activating'/'active'), dieses Konto hat aber noch keinen eigenen
+ *    password-Wrap, sondern nur einen 'pending'-Wrap (siehe /api/me, crypto.pendingWrap).
+ */
+
+// Baut ein Wrap-Objekt in der vom Server erwarteten Form (server.js, parseWrapPayload()) --
+// gemeinsamer Baustein fuer den eigenen password-Wrap, den haushaltsweiten recovery_code-Wrap
+// und beliebig viele pending-Wraps fuer andere Mitglieder.
+function buildWrapPayload(wrappedKey, nonce, salt, kdfParams) {
+  return {
+    wrappedKey: WPCrypto.toB64(wrappedKey), wrapNonce: WPCrypto.toB64(nonce),
+    kdfSalt: WPCrypto.toB64(salt), kdfAlgo: kdfParams.algo,
+    kdfTimeCost: kdfParams.opslimit, kdfMemoryCost: kdfParams.memlimit, kdfParallelism: kdfParams.parallelism
+  };
+}
+
+// Bootstrap-Fluss fuer einen Bestandshaushalt (encryption_status noch 'plaintext', siehe
+// state.crypto in boot()). Erzeugt den Haushalts-Schluessel + eigenen password-Wrap + haushalts-
+// weiten recovery_code-Wrap sowie fuer JEDES ANDERE Mitglied einen 'pending'-Wrap mit einem
+// frischen, NUR hier im Browser existierenden Aktivierungsgeheimnis (nie an den Server
+// uebertragen, ap1.2-datenmodell.md Abschnitt 2.3/4.2) -- danach werden Wiederherstellungscode
+// UND die Aktivierungscodes fuer die anderen Mitglieder einmalig angezeigt. Loest erst auf, wenn
+// die Bestaetigungs-Checkbox tatsaechlich abgehakt wurde (siehe showRecoveryCodeOnce()-Kommentar
+// in login.js, identisches Prinzip); der Haushalts-Schluessel liegt danach bereits im Speicher.
+function promptBootstrapExisting() {
+  return new Promise(resolve => {
+    const dlg = $('#bootstrapDialog');
+    const stepPassword = $('#bootstrapStepPassword');
+    const stepResult = $('#bootstrapStepResult');
+    const form = $('#bootstrapPasswordForm');
+    const pwInput = $('#bootstrapPassword');
+    const errEl = $('#bootstrapPasswordError');
+    errEl.hidden = true;
+    stepPassword.hidden = false;
+    stepResult.hidden = true;
+    const onCancel = ev => ev.preventDefault();
+    dlg.addEventListener('cancel', onCancel);
+
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      errEl.hidden = true;
+      const password = pwInput.value;
+      try {
+        const { members } = await api('GET', '/api/household/members');
+        const otherMembers = members.filter(m => m.id !== state.user.id);
+
+        const householdKey = await WPCrypto.generateHouseholdKey();
+        const kdfParams = WPCrypto.defaultKdfParams();
+
+        const pwSalt = await WPCrypto.generateSalt();
+        const pwWrapKey = await WPCrypto.deriveWrapKey(password, pwSalt, kdfParams);
+        const pwWrap = await WPCrypto.wrapKey(householdKey, pwWrapKey);
+
+        const rcSalt = await WPCrypto.generateSalt();
+        const recoveryCode = await WPCrypto.generateRecoveryCode();
+        const rcWrapKey = await WPCrypto.deriveWrapKey(WPCrypto.normalizeRecoveryCode(recoveryCode), rcSalt, kdfParams);
+        const rcWrap = await WPCrypto.wrapKey(householdKey, rcWrapKey);
+
+        // Fuer jedes andere Mitglied: frisches, ausschliesslich hier im Browser existierendes
+        // Aktivierungsgeheimnis -- dieselbe Code-Form wie der Wiederherstellungscode (gute
+        // Entropie, gut abzutippen). Wird NIE an den Server gesendet, nur der daraus abgeleitete
+        // Wrap.
+        const activationEntries = [];
+        const pendingWraps = [];
+        for (const member of otherMembers) {
+          const secret = await WPCrypto.generateRecoveryCode();
+          const salt = await WPCrypto.generateSalt();
+          const wrapKey = await WPCrypto.deriveWrapKey(WPCrypto.normalizeRecoveryCode(secret), salt, kdfParams);
+          const wrapped = await WPCrypto.wrapKey(householdKey, wrapKey);
+          pendingWraps.push({ userId: member.id, ...buildWrapPayload(wrapped.wrappedKey, wrapped.nonce, salt, kdfParams) });
+          activationEntries.push({ member, secret });
+        }
+
+        const res = await api('POST', '/api/crypto/bootstrap-existing', {
+          crypto: {
+            passwordWrap: buildWrapPayload(pwWrap.wrappedKey, pwWrap.nonce, pwSalt, kdfParams),
+            recoveryWrap: buildWrapPayload(rcWrap.wrappedKey, rcWrap.nonce, rcSalt, kdfParams)
+          },
+          pendingWraps
+        });
+
+        WPCrypto.setHouseholdKey(householdKey);
+        state.crypto = { ...state.crypto, encryptionStatus: res.encryptionStatus };
+
+        $('#bootstrapRecoveryCodeOut').textContent = recoveryCode;
+        const listEl = $('#bootstrapActivationList');
+        listEl.textContent = '';
+        if (activationEntries.length) {
+          activationEntries.forEach(({ member, secret }) => {
+            const li = document.createElement('li');
+            li.className = 'list-group-item';
+            const label = document.createElement('strong');
+            label.textContent = `${member.name} (${member.email}):`;
+            const code = document.createElement('span');
+            code.style.fontFamily = 'monospace';
+            code.style.marginLeft = '0.4em';
+            code.textContent = secret;
+            li.append(label, code);
+            listEl.appendChild(li);
+          });
+          $('#bootstrapActivationCodes').hidden = false;
+        } else {
+          $('#bootstrapActivationCodes').hidden = true;
+        }
+
+        stepPassword.hidden = true;
+        stepResult.hidden = false;
+        const checkbox = $('#bootstrapConfirm');
+        const continueBtn = $('#bootstrapContinue');
+        checkbox.checked = false;
+        continueBtn.disabled = true;
+        checkbox.onchange = () => { continueBtn.disabled = !checkbox.checked; };
+        continueBtn.onclick = () => {
+          dlg.removeEventListener('cancel', onCancel);
+          dlg.close();
+          resolve();
+        };
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.hidden = false;
+      }
+    };
+    dlg.showModal();
+    pwInput.focus();
+  });
+}
+
+// Aktivierungs-Fluss fuer ein NACHZUEGLER-Mitglied: dieses Konto hat bereits einen 'pending'-Wrap
+// (state.crypto.pendingWrap, siehe /api/me), aber noch keinen eigenen password-Wrap. Entpackt den
+// Haushalts-Schluessel mit dem offline erhaltenen Aktivierungscode, wrappt ihn sofort neu mit dem
+// (bereits bekannten, unveraenderten) eigenen Login-Passwort und meldet den neuen Wrap an den
+// Server -- danach liegt der Schluessel im Speicher, boot() faehrt normal fort.
+function promptActivatePending() {
+  return new Promise(resolve => {
+    const dlg = $('#activateDialog');
+    const form = $('#activateForm');
+    const codeInput = $('#activateCode');
+    const errEl = $('#activateError');
+    errEl.hidden = true;
+    const onCancel = ev => ev.preventDefault();
+    dlg.addEventListener('cancel', onCancel);
+
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      errEl.hidden = true;
+      try {
+        const pending = state.crypto.pendingWrap;
+        const code = WPCrypto.normalizeRecoveryCode(codeInput.value);
+        const kdfParams = { algo: pending.kdfAlgo, opslimit: pending.kdfTimeCost, memlimit: pending.kdfMemoryCost, parallelism: pending.kdfParallelism };
+        const wrapKeyBytes = await WPCrypto.deriveWrapKey(code, WPCrypto.fromB64(pending.kdfSalt), kdfParams);
+        let householdKey;
+        try {
+          householdKey = await WPCrypto.unwrapKey(
+            WPCrypto.fromB64(pending.wrappedKey), WPCrypto.fromB64(pending.wrapNonce), wrapKeyBytes);
+        } catch {
+          errEl.textContent = 'Aktivierungscode ist falsch – bitte erneut versuchen.';
+          errEl.hidden = false;
+          codeInput.value = '';
+          codeInput.focus();
+          return;
+        }
+
+        // Sofortiger Re-Wrap mit dem eigenen, bereits bekannten Login-Passwort -- das
+        // Aktivierungsgeheimnis selbst wird nach diesem Schritt nicht mehr gebraucht (der
+        // pending-Wrap wird serverseitig auf revoked_at gesetzt, siehe /api/crypto/activate).
+        // Das Passwort liegt hier bereits vor: der Login-Vorgang selbst (login.html) hat es
+        // bereits per bcrypt server-authentifiziert, wird aber -- wie beim urspruenglichen
+        // Registrierungs-Bootstrap (AP2.1) -- ein zweites Mal fuer die KDF gebraucht. Da
+        // login.html/index.html getrennte JS-Kontexte sind (siehe Kommentar bei unlockHousehold()),
+        // fragen wir es hier ein zweites Mal ab -- ueber dasselbe Formularfeld wie beim normalen
+        // Entsperren-Dialog waere ein Bruch der Aktivierungs-UX; stattdessen nutzen wir den bereits
+        // eingegebenen Aktivierungscode NICHT als Passwort-Ersatz, sondern fragen explizit nach.
+        const newKdfParams = WPCrypto.defaultKdfParams();
+        const salt = await WPCrypto.generateSalt();
+        const password = await promptPasswordForRewrap();
+        const wrapKey = await WPCrypto.deriveWrapKey(password, salt, newKdfParams);
+        const wrapped = await WPCrypto.wrapKey(householdKey, wrapKey);
+        const res = await api('POST', '/api/crypto/activate', {
+          passwordWrap: buildWrapPayload(wrapped.wrappedKey, wrapped.nonce, salt, newKdfParams)
+        });
+
+        WPCrypto.setHouseholdKey(householdKey);
+        state.crypto = { ...state.crypto, encryptionStatus: res.encryptionStatus, pendingWrap: null };
+        dlg.removeEventListener('cancel', onCancel);
+        dlg.close();
+        resolve();
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.hidden = false;
+      }
+    };
+    dlg.showModal();
+    codeInput.focus();
+  });
+}
+
+// Kleiner Zwischenschritt innerhalb von promptActivatePending(): fragt das Login-Passwort ein
+// zweites Mal ab (fuer die KDF, siehe dortiger Kommentar) -- wiederverwendet #unlockDialog/
+// #unlockForm (identisches Markup/Fehlerverhalten wie der normale Entsperren-Fall), nur dass hier
+// NICHT unlockHousehold() (Unwrap gegen einen bestehenden Wrap) aufgerufen wird, sondern das
+// Passwort unveraendert zurueckgegeben wird -- der Aufrufer (promptActivatePending()) leitet
+// daraus selbst den NEUEN Wrap ab.
+function promptPasswordForRewrap() {
+  return new Promise(resolve => {
+    const dlg = $('#unlockDialog');
+    const form = $('#unlockForm');
+    const pwInput = $('#unlockPassword');
+    const errEl = $('#unlockError');
+    $('#unlockTitle').textContent = 'Passwort bestätigen';
+    dlg.querySelector('.sub').textContent = 'Bitte dein Passwort erneut eingeben, um die Aktivierung abzuschließen.';
+    errEl.hidden = true;
+    const onCancel = ev => ev.preventDefault();
+    dlg.addEventListener('cancel', onCancel);
+    form.onsubmit = ev => {
+      ev.preventDefault();
+      dlg.removeEventListener('cancel', onCancel);
+      dlg.close();
+      resolve(pwInput.value);
+    };
+    dlg.showModal();
+    pwInput.focus();
+  });
+}
+
+/* ---------------- AP2.5: clientseitiges Sweep-Feature ----------------
+ * Laeuft NICHT-BLOCKIEREND im Hintergrund, nachdem der Haushalts-Schluessel entsperrt ist und
+ * encryption_status==='active' (boot()) -- verschluesselt alle noch im Klartext liegenden
+ * Altwochen des eigenen Haushalts lokal nach.
+ *
+ * ZANDORs bindende Vorgabe (Uebergangsfristen-Review): KEIN Karenzzeitraum mit parallelem
+ * Klartext. Jede einzelne Woche wird ueber denselben PUT /api/weeks/:monday-Zyklus wie in AP2.1
+ * atomar getauscht -- data=NULL und data_ciphertext werden in EINEM einzigen UPDATE gesetzt, der
+ * XOR-CHECK (weeks_plaintext_xor_ciphertext, Migration 009) erzwingt serverseitig, dass niemals
+ * ein Zwischenzustand mit gleichzeitig gueltigem Klartext UND Ciphertext entsteht.
+ *
+ * Wiederaufnahmefaehigkeit OHNE eigenen Fortschrittsspeicher: jeder Sweep-Lauf fragt
+ * GET /api/weeks/sweep-status frisch ab. Eine vorzeitig abgebrochene vorherige Sitzung (Tab
+ * geschlossen, Netzwerkfehler, ...) hinterlaesst dank der zeilen-atomaren Swaps IMMER einen
+ * gueltigen Zustand -- ein Mix aus bereits verschluesselten und noch unverschluesselten Wochen,
+ * nie eine halb geschriebene Zeile. Der naechste Sweep-Lauf (naechster Login) verschluesselt
+ * einfach die verbleibenden Wochen weiter, ohne Duplikate oder Datenverlust.
+ */
+async function runEncryptionSweep() {
+  const { plaintextWeeks } = await api('GET', '/api/weeks/sweep-status');
+  if (!plaintextWeeks.length) return; // haeufigster Fall: nichts zu tun
+
+  const panel = $('#sweepPanel');
+  const total = plaintextWeeks.length;
+  let done = 0;
+  const renderProgress = () => {
+    panel.hidden = false;
+    panel.className = 'alert alert-info';
+    panel.textContent = `Verschlüssle Altdaten: ${done} von ${total} Wochen …`;
+  };
+  renderProgress();
+
+  for (const iso of plaintextWeeks) {
+    try {
+      const res = await api('GET', `/api/weeks/${iso}`);
+      if (res.encrypted) { done++; renderProgress(); continue; } // zwischenzeitlich anderswo verschluesselt (z. B. zweiter Tab)
+      const { nonce, ciphertext } = await WPCrypto.encryptJSON(WPCrypto.getHouseholdKey(), res.data);
+      await api('PUT', `/api/weeks/${iso}`,
+        { encrypted: true, keyVersion: state.crypto?.keyVersion || 1, nonce, ciphertext, baseUpdatedAt: res.updatedAt });
+      done++;
+      renderProgress();
+    } catch (err) {
+      // Abbruch mitten im Sweep: die bereits verschluesselten Wochen bleiben es (atomarer Swap je
+      // Woche, siehe Dateikopf-Kommentar) -- kein Rollback noetig oder gewuenscht. Der naechste
+      // Login setzt den Sweep automatisch dort fort, wo dieser Lauf aufgehoert hat.
+      panel.hidden = false;
+      panel.className = 'alert alert-warning';
+      panel.textContent = `Verschlüsselung der Altdaten unterbrochen (${done} von ${total} erledigt) – wird beim nächsten Anmelden fortgesetzt.`;
+      console.error('AP2.5-Sweep: Fehler bei Woche', iso, err);
+      return;
+    }
+  }
+
+  panel.hidden = false;
+  panel.className = 'alert alert-success';
+  panel.textContent = 'Alle Termine sind jetzt vollständig verschlüsselt.';
+  setTimeout(() => { panel.hidden = true; }, 6000);
 }
 
 // Wandelt eine GET-/409-Konflikt-Antwort von /api/weeks(/:monday) einheitlich in Klartext um --
@@ -2564,14 +2857,32 @@ async function boot() {
   $('#householdName').textContent = me.user.householdName;
   initAccountView(); // AP2.2b: einmalige Verdrahtung der neuen Konto-Ansicht, siehe dortiger Kommentar
 
-  // AP2.1: index.html ist ein eigenes Dokument/JS-Kontext gegenueber login.html -- der Haushalts-
-  // Schluessel kann daher nicht "mitgebracht" werden (siehe Kommentar bei #unlockDialog,
-  // index.html). Ist der Haushalt bereits aktiv verschluesselt, MUSS das Passwort hier erneut
-  // abgefragt werden, bevor irgendeine Woche geladen wird -- ohne Schluessel liesse sich weder
-  // eine bestehende verschluesselte Woche entschluesseln noch eine neue korrekt verschluesselt
-  // speichern.
-  if (state.crypto?.encryptionStatus === 'active') {
+  // AP2.1/AP2.3: index.html ist ein eigenes Dokument/JS-Kontext gegenueber login.html -- der
+  // Haushalts-Schluessel kann daher nicht "mitgebracht" werden (siehe Kommentar bei
+  // #unlockDialog). Drei sich gegenseitig ausschliessende Faelle, siehe /api/me:
+  //  1. state.crypto.encryptionStatus==='plaintext': Bestandshaushalt, der die Verschluesselung
+  //     ueberhaupt noch nicht aktiviert hat -- Bootstrap-Fluss (AP2.3).
+  //  2. state.crypto.wrappedKey vorhanden: dieses Konto hat bereits einen eigenen password-Wrap
+  //     (frisch registrierter Haushalt ODER bereits aktiviertes/aktivierendes Bestandsmitglied) --
+  //     normales Entsperren wie in AP2.1.
+  //  3. state.crypto.pendingWrap vorhanden (aber kein wrappedKey): Nachzuegler-Mitglied eines
+  //     bereits von einem ANDEREN Mitglied aktivierten Haushalts -- Aktivierungs-Fluss (AP2.3).
+  // Ohne einen dieser drei Zustaende bleibt der Haushalt plaintext und keiner der Dialoge wird
+  // gezeigt (unveraendertes Verhalten wie vor AP2.1).
+  if (state.crypto?.encryptionStatus === 'plaintext') {
+    await promptBootstrapExisting();
+  } else if (state.crypto?.wrappedKey) {
     await promptUnlock();
+  } else if (state.crypto?.pendingWrap) {
+    await promptActivatePending();
+  }
+
+  // AP2.5: nicht-blockierender Sweep im Hintergrund -- ausschliesslich, wenn WIRKLICH jedes
+  // Mitglied bereits einen Wrap hat (encryption_status==='active', ap1.2-datenmodell.md
+  // Abschnitt 4.2 Schritt 4). Bei 'activating' wuerde ein noch nicht aktiviertes Mitglied sonst
+  // von einer zwischenzeitlich verschluesselten Altwoche ausgesperrt.
+  if (state.crypto?.encryptionStatus === 'active') {
+    runEncryptionSweep().catch(err => console.error('AP2.5-Sweep konnte nicht gestartet werden:', err));
   }
 
   if (window.matchMedia('(max-width: 900px)').matches) { setView('day'); state.day = (new Date().getDay() + 6) % 7; }

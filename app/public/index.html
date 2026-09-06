@@ -761,6 +761,88 @@
   </div>
 </dialog>
 
+<!-- ================= AP2.3 (projects/wochenplaner-termine-verschluesselung/plan.md): Bootstrap-
+     Dialog fuer BESTANDSHAUSHALTE (encryption_status noch 'plaintext' beim Login nach dem
+     Verschluesselungs-Rollout, siehe /api/me). Zwei Schritte (".bootstrap-step", analog zum
+     bestehenden Zell-Klick-Dialog-Muster, app.js): zuerst Passwort-Bestaetigung (fuer den eigenen
+     Wrap), danach EINMALIGE Anzeige des Wiederherstellungscodes UND -- falls es weitere
+     Haushaltsmitglieder gibt -- je ein Aktivierungscode zum offline Weitergeben. Kein Abbrechen
+     vor Bestaetigung der Schritte (siehe app.js), damit weder Wiederherstellungscode noch
+     Aktivierungscodes versehentlich uebersehen werden -- sie koennen aus Sicherheitsgruenden
+     NICHT nachtraeglich angezeigt werden (nie serverseitig gespeichert). -->
+<dialog class="daylist" id="bootstrapDialog" aria-labelledby="bootstrapTitle">
+  <div class="daylist-head modal-header">
+    <div>
+      <h2 id="bootstrapTitle" class="font-heading">Termine verschlüsseln</h2>
+      <div class="sub">Dieser Haushalt nutzt die Ende-zu-Ende-Verschlüsselung für Termine noch nicht.</div>
+    </div>
+  </div>
+  <div class="daylist-body modal-body">
+    <div id="bootstrapStepPassword" class="bootstrap-step">
+      <p>Eure bisherigen Termine werden jetzt einmalig lokal in diesem Browser verschlüsselt und
+         danach ausschließlich verschlüsselt gespeichert — der Server sieht sie ab sofort nie
+         wieder im Klartext.</p>
+      <form id="bootstrapPasswordForm">
+        <label class="form-label" for="bootstrapPassword">Passwort erneut eingeben</label>
+        <input type="password" class="form-control" id="bootstrapPassword" autocomplete="current-password" required>
+        <div class="recipe-form-error" id="bootstrapPasswordError" role="alert" hidden></div>
+        <button class="legacy-btn primary" type="submit" style="margin-top:0.75em;">Verschlüsselung aktivieren</button>
+      </form>
+    </div>
+    <div id="bootstrapStepResult" class="bootstrap-step" hidden>
+      <p>
+        Dieser Code gilt für euren <strong>ganzen Haushalt</strong> und entsperrt eure Termine unabhängig
+        vom Passwort — z. B. wenn ihr das Passwort vergesst. Ohne Passwort <em>und</em> ohne diesen Code
+        können eure verschlüsselten Termine <strong>niemand mehr</strong> lesen, auch wir als Betreiber nicht.
+      </p>
+      <p style="font-family:monospace; font-size:1.3em; letter-spacing:0.05em; text-align:center; padding:0.75em; border:1px solid var(--border-color); border-radius:var(--radius);" id="bootstrapRecoveryCodeOut"></p>
+      <div id="bootstrapActivationCodes" hidden>
+        <p style="margin-top:1em;">Für die übrigen Haushaltsmitglieder wurde je ein persönlicher
+           <strong>Aktivierungscode</strong> erzeugt. Bitte jeden Code sicher (z. B. mündlich, per
+           verschlüsseltem Messenger) an die jeweilige Person weitergeben — sie gibt ihn beim
+           nächsten eigenen Login ein.</p>
+        <ul id="bootstrapActivationList" class="list-group"></ul>
+      </div>
+      <label style="display:flex; gap:0.5em; align-items:flex-start; margin-top:1em;">
+        <input type="checkbox" id="bootstrapConfirm">
+        <span>Ich habe den Wiederherstellungscode (und ggf. die Aktivierungscodes) sicher gespeichert/weitergegeben.</span>
+      </label>
+      <button class="legacy-btn primary" id="bootstrapContinue" disabled style="margin-top:1em;">Weiter</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ================= AP2.3: Aktivierungs-Dialog fuer NACHZUEGLER-MITGLIEDER -- dieses Konto hat
+     bereits einen 'pending'-Wrap (ein anderes Mitglied hat den Haushalt bereits aktiviert, siehe
+     /api/me: crypto.pendingWrap), aber noch keinen eigenen password-Wrap. Statt des normalen
+     "Entsperren"-Dialogs (Passwort) wird hier zuerst der offline erhaltene Aktivierungscode
+     abgefragt. ================= -->
+<dialog class="daylist" id="activateDialog" aria-labelledby="activateTitle">
+  <div class="daylist-head modal-header">
+    <div>
+      <h2 id="activateTitle" class="font-heading">Termine entsperren (erste Aktivierung)</h2>
+      <div class="sub">Ein anderes Haushaltsmitglied hat die Termin-Verschlüsselung bereits aktiviert.</div>
+    </div>
+  </div>
+  <div class="daylist-body modal-body">
+    <p>Bitte den Aktivierungscode eingeben, den du von diesem Mitglied erhalten hast.</p>
+    <form id="activateForm">
+      <label class="form-label" for="activateCode">Aktivierungscode</label>
+      <input type="text" class="form-control upper" id="activateCode" required>
+      <div class="recipe-form-error" id="activateError" role="alert" hidden></div>
+      <button class="legacy-btn primary" type="submit" style="margin-top:0.75em;">Entsperren</button>
+    </form>
+  </div>
+</dialog>
+
+<!-- ================= AP2.5: nicht-blockierender Fortschritts-/Status-Hinweis fuer das
+     clientseitige Sweep-Feature (verschluesselt nach dem Entsperren automatisch alle noch im
+     Klartext liegenden Altwochen des eigenen Haushalts nach, siehe app.js runEncryptionSweep()).
+     Bewusst KEIN <dialog> (nicht modal) -- der Sweep laeuft im Hintergrund, die App bleibt
+     waehrenddessen normal nutzbar. ================= -->
+<div id="sweepPanel" class="alert alert-info" role="status" hidden
+     style="position:fixed; bottom:1rem; right:1rem; z-index:1050; max-width:22rem; box-shadow:0 2px 10px rgba(0,0,0,0.15);"></div>
+
 <script src="vendor/libsodium/libsodium.js"></script>
 <script src="vendor/libsodium/libsodium-wrappers.js"></script>
 <script src="crypto.js"></script>

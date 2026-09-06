@@ -1655,22 +1655,33 @@ app.get('/api/me', wrap(async (req, res) => {
   // darf laut Risikotabelle des Plans NIE ausserhalb des JS-Arbeitsspeichers der jeweils
   // LAUFENDEN Seite liegen, kann also nicht einfach von login.html "mitgenommen" werden, siehe
   // Kommentar in boot()/unlockHousehold() in app.js).
+  // AP2.3: zusaetzlich ein zweiter LEFT JOIN auf den eigenen AUSSTEHENDEN ('pending') Wrap --
+  // ein Nachzuegler-Mitglied eines bereits von einem anderen Mitglied aktivierten Haushalts
+  // (encryption_status='activating'/'active') hat noch KEINEN password-Wrap, aber einen
+  // pending-Wrap (siehe Bootstrap-Kommentar bei /api/crypto/bootstrap-existing unten). app.js/
+  // boot() unterscheidet anhand dessen, ob es das normale Entsperren-Dialog (Passwort) oder das
+  // Aktivierungs-Dialog (Aktivierungscode) zeigen muss.
   const q = await withTenantClient(req.session.householdId, client => client.query(
     `SELECT u.id, u.name, u.email, u.role, u.household_id AS "householdId", h.name AS "householdName",
             h.encryption_status AS "encryptionStatus",
             w.key_version AS "wrapKeyVersion", w.wrapped_key AS "wrapWrappedKey", w.wrap_nonce AS "wrapNonce",
             w.kdf_salt AS "wrapKdfSalt", w.kdf_algo AS "wrapKdfAlgo", w.kdf_time_cost AS "wrapKdfTimeCost",
-            w.kdf_memory_cost AS "wrapKdfMemoryCost", w.kdf_parallelism AS "wrapKdfParallelism"
+            w.kdf_memory_cost AS "wrapKdfMemoryCost", w.kdf_parallelism AS "wrapKdfParallelism",
+            p.key_version AS "pendingKeyVersion", p.wrapped_key AS "pendingWrappedKey", p.wrap_nonce AS "pendingWrapNonce",
+            p.kdf_salt AS "pendingKdfSalt", p.kdf_algo AS "pendingKdfAlgo", p.kdf_time_cost AS "pendingKdfTimeCost",
+            p.kdf_memory_cost AS "pendingKdfMemoryCost", p.kdf_parallelism AS "pendingKdfParallelism"
        FROM users u
        JOIN households h ON h.id = u.household_id
        LEFT JOIN household_key_wraps w
               ON w.user_id = u.id AND w.wrap_type = 'password' AND w.revoked_at IS NULL
+       LEFT JOIN household_key_wraps p
+              ON p.user_id = u.id AND p.wrap_type = 'pending' AND p.revoked_at IS NULL
       WHERE u.id=$1`, [req.session.userId]));
   if (!q.rowCount) return req.session.destroy(() => res.status(401).json({ error: 'Nicht angemeldet' }));
   const row = q.rows[0];
   const user = { id: row.id, name: row.name, email: row.email, role: row.role,
                  householdId: row.householdId, householdName: row.householdName };
-  const crypto = {
+  const cryptoInfo = {
     encryptionStatus: row.encryptionStatus,
     keyVersion: row.wrapKeyVersion,
     wrappedKey: row.wrapWrappedKey ? row.wrapWrappedKey.toString('base64') : null,
@@ -1679,9 +1690,19 @@ app.get('/api/me', wrap(async (req, res) => {
     kdfAlgo: row.wrapKdfAlgo || null,
     kdfTimeCost: row.wrapKdfTimeCost,
     kdfMemoryCost: row.wrapKdfMemoryCost,
-    kdfParallelism: row.wrapKdfParallelism
+    kdfParallelism: row.wrapKdfParallelism,
+    pendingWrap: row.pendingWrappedKey ? {
+      keyVersion: row.pendingKeyVersion,
+      wrappedKey: row.pendingWrappedKey.toString('base64'),
+      wrapNonce: row.pendingWrapNonce.toString('base64'),
+      kdfSalt: row.pendingKdfSalt.toString('base64'),
+      kdfAlgo: row.pendingKdfAlgo,
+      kdfTimeCost: row.pendingKdfTimeCost,
+      kdfMemoryCost: row.pendingKdfMemoryCost,
+      kdfParallelism: row.pendingKdfParallelism
+    } : null
   };
-  res.json({ user, crypto });
+  res.json({ user, crypto: cryptoInfo });
 }));
 
 app.post('/api/invites', requireAuth, inviteLimiter, rejectForeignHouseholdId, wrap(async (req, res) => {
@@ -1694,6 +1715,139 @@ app.post('/api/invites', requireAuth, inviteLimiter, rejectForeignHouseholdId, w
 }));
 
 /* ------------------------------------------------------------------ *
+ * AP2.3: Bootstrap-/Aktivierungs-UX fuer BESTANDSHAUSHALTE (encryption_
+ * status='plaintext' beim ersten Login nach dem Verschluesselungs-Rollout).
+ * ap1.2-datenmodell.md Abschnitt 4.2: das einloggende Mitglied erzeugt den
+ * Haushalts-Schluessel, wrapt ihn fuer sich selbst (password) UND haushaltsweit
+ * fuer den Wiederherstellungscode (recovery_code) sowie fuer JEDES ANDERE
+ * Mitglied einen 'pending'-Wrap mit einem NUR clientseitig existierenden,
+ * frisch erzeugten Aktivierungsgeheimnis (nie an den Server uebertragen,
+ * siehe Migration 009 Abschnitt 2.3) -- das bootstrappende Mitglied teilt
+ * dieses Geheimnis dem jeweiligen anderen Mitglied offline mit. Ein Mitglied
+ * mit 'pending'-Wrap erhaelt ueber /api/me (siehe oben) dessen Krypto-Felder
+ * und ruft nach Eingabe des Geheimnisses /api/crypto/activate auf.
+ * ------------------------------------------------------------------ */
+
+// Liefert die Mitgliederliste des eigenen Haushalts (id/name/email) -- Grundlage dafuer, dass das
+// bootstrappende Mitglied weiss, fuer wen es je einen pending-Wrap erzeugen muss, und welches
+// Aktivierungsgeheimnis zu wem gehoert (Anzeige im Bootstrap-Dialog, app.js).
+app.get('/api/household/members', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const q = await withTenantClient(req.session.householdId, client => client.query(
+    `SELECT id, name, email FROM users WHERE household_id=$1 ORDER BY id`, [req.session.householdId]));
+  res.json({ members: q.rows });
+}));
+
+app.post('/api/crypto/bootstrap-existing', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const cryptoPayload = parseCryptoBootstrapPayload(req.body);
+  if (!cryptoPayload) return res.status(400).json({ error: 'Ungueltige oder fehlende Verschluesselungsdaten' });
+
+  const pendingWrapsRaw = Array.isArray(req.body.pendingWraps) ? req.body.pendingWraps : [];
+  const pendingWraps = [];
+  for (const p of pendingWrapsRaw) {
+    const userId = Number(p?.userId);
+    if (!Number.isInteger(userId) || userId < 1) return res.status(400).json({ error: 'Ungueltige userId in pendingWraps' });
+    const wrap = parseWrapPayload(p);
+    if (!wrap) return res.status(400).json({ error: 'Ungueltiges Wrap-Format in pendingWraps' });
+    pendingWraps.push({ userId, wrap });
+  }
+
+  const client = await appPool.connect();
+  try {
+    await client.query('BEGIN');
+    await setTenantContext(client, req.session.householdId);
+    // FOR UPDATE verhindert einen doppelten Bootstrap, falls zwei Mitglieder gleichzeitig
+    // einloggen und beide den (noch) 'plaintext'-Zustand sehen.
+    const hQ = await client.query('SELECT encryption_status FROM households WHERE id=$1 FOR UPDATE', [req.session.householdId]);
+    if (hQ.rows[0]?.encryption_status !== 'plaintext') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Dieser Haushalt wurde zwischenzeitlich bereits aktiviert (vermutlich von einem anderen Mitglied). Bitte die Seite neu laden.' });
+    }
+    // Die mitgeschickten pendingWraps muessen EXAKT alle anderen aktuellen Mitglieder abdecken --
+    // sonst bliebe ein Mitglied nach der Aktivierung dauerhaft ohne jeden Wrap zurueck.
+    const membersQ = await client.query('SELECT id FROM users WHERE household_id=$1', [req.session.householdId]);
+    const otherMemberIds = new Set(membersQ.rows.map(r => String(r.id)).filter(id => id !== String(req.session.userId)));
+    const providedIds = new Set(pendingWraps.map(p => String(p.userId)));
+    const sameSet = otherMemberIds.size === providedIds.size && [...otherMemberIds].every(id => providedIds.has(id));
+    if (!sameSet) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Die Mitgliederliste hat sich zwischenzeitlich geaendert. Bitte die Seite neu laden und erneut versuchen.' });
+    }
+
+    await insertKeyWrap(client, { householdId: req.session.householdId, userId: req.session.userId, wrapType: 'password', wrap: cryptoPayload.passwordWrap });
+    // recovery_code ist haushaltsweit (user_id NULL), siehe /api/auth/register-Kommentar oben.
+    await insertKeyWrap(client, { householdId: req.session.householdId, userId: null, wrapType: 'recovery_code', wrap: cryptoPayload.recoveryWrap });
+    for (const p of pendingWraps) {
+      await insertKeyWrap(client, { householdId: req.session.householdId, userId: p.userId, wrapType: 'pending', wrap: p.wrap });
+    }
+    // Kein weiteres Mitglied -> sofort aktiv (identisch zum AP2.1-Fall bei der Registrierung
+    // eines brandneuen Haushalts). Sonst 'activating', bis jedes Mitglied seinen pending-Wrap
+    // ueber /api/crypto/activate in einen echten password-Wrap umgewandelt hat.
+    const newStatus = otherMemberIds.size === 0 ? 'active' : 'activating';
+    await client.query('UPDATE households SET encryption_status=$1 WHERE id=$2', [newStatus, req.session.householdId]);
+    await client.query('COMMIT');
+    res.json({ ok: true, encryptionStatus: newStatus });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally { client.release(); }
+}));
+
+// Nachzuegler-Mitglied: wandelt den eigenen 'pending'-Wrap (nach erfolgreichem clientseitigem
+// Unwrap mit dem offline erhaltenen Aktivierungsgeheimnis) in einen echten 'password'-Wrap um.
+// Der Server sieht dabei nur die neuen Wrap-Bytes -- ob der Client tatsaechlich denselben
+// Haushalts-Schluessel korrekt entpackt/neu verpackt hat, kann/muss der Server hier NICHT
+// verifizieren (identisches Prinzip wie beim urspruenglichen Registrierungs-Bootstrap, AP2.1) --
+// der Aufrufer ist bereits ueber eine gueltige, per Passwort authentifizierte Sitzung
+// legitimiert, ein potenziell fehlerhafter Client kann hier ausschliesslich SICH SELBST
+// aussperren, nicht ein fremdes Konto (kein Authentifizierungs-Bypass-Risiko wie bei
+// /api/auth/recover, siehe dortiger Kommentar).
+app.post('/api/crypto/activate', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  // Lokale Variable bewusst NICHT "wrap" genannt -- wuerde die aeussere Express-Route-Wrapper-
+  // Funktion wrap() (siehe "const wrap = fn => ..." oben) innerhalb dieses Handlers verdecken.
+  const passwordWrap = parseWrapPayload(req.body?.passwordWrap);
+  if (!passwordWrap) return res.status(400).json({ error: 'Ungueltiges Wrap-Format' });
+
+  const client = await appPool.connect();
+  try {
+    await client.query('BEGIN');
+    await setTenantContext(client, req.session.householdId);
+    const pendingQ = await client.query(
+      `SELECT id FROM household_key_wraps
+        WHERE household_id=$1 AND user_id=$2 AND wrap_type='pending' AND revoked_at IS NULL
+        FOR UPDATE`,
+      [req.session.householdId, req.session.userId]);
+    if (!pendingQ.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Kein ausstehender Aktivierungs-Wrap fuer dieses Konto gefunden' });
+    }
+    // Nicht loeschen, sondern revoked_at setzen (Nachvollziehbarkeit, ap1.2-datenmodell.md
+    // Abschnitt 2.2) -- derselbe Nutzer koennte diesen Endpunkt sonst kein zweites Mal sauber
+    // aufrufen, ohne dass der partielle Unique-Index (user_id, wrap_type) WHERE revoked_at IS
+    // NULL einen neuen password-Wrap blockiert.
+    await client.query(`UPDATE household_key_wraps SET revoked_at=now() WHERE id=$1`, [pendingQ.rows[0].id]);
+    await insertKeyWrap(client, { householdId: req.session.householdId, userId: req.session.userId, wrapType: 'password', wrap: passwordWrap });
+
+    // Aktivierung abschliessen, sobald ALLE aktuellen Mitglieder einen password-Wrap haben.
+    const countsQ = await client.query(
+      `SELECT (SELECT count(*) FROM users WHERE household_id=$1) AS member_count,
+              (SELECT count(*) FROM household_key_wraps
+                WHERE household_id=$1 AND wrap_type='password' AND revoked_at IS NULL) AS wrap_count`,
+      [req.session.householdId]);
+    const { member_count: memberCount, wrap_count: wrapCount } = countsQ.rows[0];
+    let encryptionStatus = 'activating';
+    if (Number(wrapCount) >= Number(memberCount)) {
+      await client.query(`UPDATE households SET encryption_status='active' WHERE id=$1`, [req.session.householdId]);
+      encryptionStatus = 'active';
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, encryptionStatus });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally { client.release(); }
+}));
+
+/* ------------------------------------------------------------------ *
  * Wochen
  * ------------------------------------------------------------------ */
 app.get('/api/weeks', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
@@ -1703,6 +1857,19 @@ app.get('/api/weeks', requireAuth, rejectForeignHouseholdId, wrap(async (req, re
       WHERE w.household_id = $1
       ORDER BY w.week_start DESC LIMIT 200`, [req.session.householdId]));
   res.json({ weeks: q.rows });
+}));
+
+// AP2.5 (clientseitiges Sweep-Feature): rein lesende Grundlage -- listet ALLE (kein LIMIT 200 wie
+// oben, das Sweep-Feature darf keine Altwoche uebersehen) noch unverschluesselten weeks-Zeilen des
+// eigenen Haushalts. Der eigentliche Verschluesselungsschritt passiert ausschliesslich clientseitig
+// ueber den bestehenden PUT /api/weeks/:monday-Zyklus (app.js) -- dieser Endpunkt liefert nur die
+// Arbeitsliste, schreibt selbst nie etwas (ap1.2-datenmodell.md Abschnitt 4.1/4.2 Schritt 4).
+app.get('/api/weeks/sweep-status', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const q = await withTenantClient(req.session.householdId, client => client.query(
+    `SELECT to_char(week_start,'YYYY-MM-DD') AS "weekStart"
+       FROM weeks WHERE household_id=$1 AND data IS NOT NULL
+      ORDER BY week_start`, [req.session.householdId]));
+  res.json({ plaintextWeeks: q.rows.map(r => r.weekStart) });
 }));
 
 app.get('/api/weeks/:monday', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
