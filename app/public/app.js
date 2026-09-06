@@ -189,8 +189,15 @@ function promptBootstrapExisting() {
 
         const rcSalt = await WPCrypto.generateSalt();
         const recoveryCode = await WPCrypto.generateRecoveryCode();
-        const rcWrapKey = await WPCrypto.deriveWrapKey(WPCrypto.normalizeRecoveryCode(recoveryCode), rcSalt, kdfParams);
+        const normalizedCode = WPCrypto.normalizeRecoveryCode(recoveryCode);
+        const rcWrapKey = await WPCrypto.deriveWrapKey(normalizedCode, rcSalt, kdfParams);
         const rcWrap = await WPCrypto.wrapKey(householdKey, rcWrapKey);
+
+        // AP2.6 (ap1.2-datenmodell.md Abschnitt 2.2a): zweiter, unabhaengiger Argon2id-Output
+        // desselben Codes mit eigenem Salt -- der "verifier", siehe Kommentar in
+        // login.js/buildCryptoBootstrap() fuer die identische Herleitung beim Neu-Haushalt-Fall.
+        const verifierSalt = await WPCrypto.generateSalt();
+        const verifier = await WPCrypto.deriveWrapKey(normalizedCode, verifierSalt, kdfParams);
 
         // Fuer jedes andere Mitglied: frisches, ausschliesslich hier im Browser existierendes
         // Aktivierungsgeheimnis -- dieselbe Code-Form wie der Wiederherstellungscode (gute
@@ -210,7 +217,8 @@ function promptBootstrapExisting() {
         const res = await api('POST', '/api/crypto/bootstrap-existing', {
           crypto: {
             passwordWrap: buildWrapPayload(pwWrap.wrappedKey, pwWrap.nonce, pwSalt, kdfParams),
-            recoveryWrap: buildWrapPayload(rcWrap.wrappedKey, rcWrap.nonce, rcSalt, kdfParams)
+            recoveryWrap: buildWrapPayload(rcWrap.wrappedKey, rcWrap.nonce, rcSalt, kdfParams),
+            recoveryVerifier: { verifierSalt: WPCrypto.toB64(verifierSalt), verifier: WPCrypto.toB64(verifier) }
           },
           pendingWraps
         });
@@ -2835,6 +2843,149 @@ function initAccountView() {
     WPCrypto.clearHouseholdKey();
     location.href = 'login.html';
   };
+
+  // AP2.6: Passwort-Aendern/Wiederherstellungscode-Karten brauchen einen bereits entsperrten
+  // Haushalts-Schluessel im Speicher (Re-Wrap-Prinzip) -- fuer einen noch nicht aktivierten
+  // (plaintext) Haushalt gibt es schlicht keinen Wrap, den man neu verpacken koennte. Statt
+  // Formularfelder unbrauchbar anzuzeigen, blenden wir beide Karten dann mit einer kurzen
+  // Erklaerung aus.
+  const pwCard = $('#acctPwForm').closest('.card');
+  const recoveryCard = $('#acctRecoveryRegen').closest('.card');
+  if (state.crypto?.encryptionStatus !== 'active') {
+    pwCard.hidden = true;
+    recoveryCard.hidden = true;
+  } else {
+    initAccountPasswordForm();
+    initAccountRecoveryRegen();
+  }
+}
+
+// AP2.6, Teil A: Passwort-Aenderung. Server prueft das ALTE Passwort weiterhin per bcrypt
+// (bestehendes Verhalten) -- der Client leitet zusaetzlich aus dem NEUEN Passwort einen neuen
+// Wrap-Schluessel ab und schickt nur den fertigen, neu gewrappten password-Wrap (ap1.2-
+// datenmodell.md Abschnitt 7). Der Wiederherstellungscode bleibt davon vollstaendig unberuehrt.
+function initAccountPasswordForm() {
+  const form = $('#acctPwForm');
+  const errEl = $('#acctPwError');
+  form.onsubmit = async ev => {
+    ev.preventDefault();
+    errEl.hidden = true;
+    const oldPassword = $('#pwCurrent').value;
+    const newPassword = $('#pwNew').value;
+    const newPassword2 = $('#pwConfirm').value;
+    if (newPassword !== newPassword2) {
+      errEl.textContent = 'Die beiden neuen Passwörter stimmen nicht überein.';
+      errEl.hidden = false;
+      return;
+    }
+    $('#acctPwSubmit').disabled = true;
+    try {
+      const kdfParams = WPCrypto.defaultKdfParams();
+      const newSalt = await WPCrypto.generateSalt();
+      const newWrapKey = await WPCrypto.deriveWrapKey(newPassword, newSalt, kdfParams);
+      const newWrapped = await WPCrypto.wrapKey(WPCrypto.getHouseholdKey(), newWrapKey);
+      await api('PUT', '/api/account/password', {
+        oldPassword, newPassword,
+        passwordWrap: {
+          wrappedKey: WPCrypto.toB64(newWrapped.wrappedKey), wrapNonce: WPCrypto.toB64(newWrapped.nonce),
+          kdfSalt: WPCrypto.toB64(newSalt), kdfAlgo: kdfParams.algo,
+          kdfTimeCost: kdfParams.opslimit, kdfMemoryCost: kdfParams.memlimit, kdfParallelism: kdfParams.parallelism
+        }
+      });
+      form.reset();
+      flash('Passwort erfolgreich geändert.');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    } finally {
+      $('#acctPwSubmit').disabled = false;
+    }
+  };
+}
+
+// Zeigt einen (neu erzeugten) Wiederherstellungscode EINMALIG an -- gemeinsam genutzt von
+// initAccountRecoveryRegen() (freiwillig, ueber die Konto-Ansicht) und
+// forceRecoveryCodeRegeneration() (zwingend nach einem Passwort-Reset, siehe boot()). Identisches
+// Blockier-Muster wie login.js/showRecoveryCodeOnce(): kein Abbrechen vor Bestaetigung.
+function showRecoveryCodeOnce(code) {
+  return new Promise(resolve => {
+    const dlg = $('#recoveryCodeDialog');
+    $('#recoveryCodeOut').textContent = code;
+    const checkbox = $('#recoveryCodeConfirm');
+    const btn = $('#recoveryCodeContinue');
+    checkbox.checked = false;
+    btn.disabled = true;
+    checkbox.onchange = () => { btn.disabled = !checkbox.checked; };
+    const onCancel = ev => ev.preventDefault();
+    dlg.addEventListener('cancel', onCancel);
+    btn.onclick = () => {
+      dlg.removeEventListener('cancel', onCancel);
+      dlg.close();
+      resolve();
+    };
+    dlg.showModal();
+  });
+}
+
+// Erzeugt einen komplett NEUEN Wiederherstellungscode fuer den Haushalt und macht den alten damit
+// ungueltig (ZANDORs Vorgabe 3: nie still/automatisch, immer ein expliziter, vom Nutzer
+// ausgeloester Vorgang mit sofortiger einmaliger Anzeige). Der bestehende Haushalts-Schluessel
+// bleibt dabei unveraendert -- nur seine "Verpackung" fuer den Wiederherstellungscode wird
+// ersetzt, identisch zum Passwort-Re-Wrap-Prinzip.
+async function regenerateRecoveryCode() {
+  const kdfParams = WPCrypto.defaultKdfParams();
+  const recoveryCode = await WPCrypto.generateRecoveryCode();
+  const normalized = WPCrypto.normalizeRecoveryCode(recoveryCode);
+
+  const rcSalt = await WPCrypto.generateSalt();
+  const rcWrapKey = await WPCrypto.deriveWrapKey(normalized, rcSalt, kdfParams);
+  const rcWrap = await WPCrypto.wrapKey(WPCrypto.getHouseholdKey(), rcWrapKey);
+
+  const verifierSalt = await WPCrypto.generateSalt();
+  const verifier = await WPCrypto.deriveWrapKey(normalized, verifierSalt, kdfParams);
+
+  await api('POST', '/api/crypto/recovery-code', {
+    recoveryWrap: {
+      wrappedKey: WPCrypto.toB64(rcWrap.wrappedKey), wrapNonce: WPCrypto.toB64(rcWrap.nonce),
+      kdfSalt: WPCrypto.toB64(rcSalt), kdfAlgo: kdfParams.algo,
+      kdfTimeCost: kdfParams.opslimit, kdfMemoryCost: kdfParams.memlimit, kdfParallelism: kdfParams.parallelism
+    },
+    recoveryVerifier: { verifierSalt: WPCrypto.toB64(verifierSalt), verifier: WPCrypto.toB64(verifier) }
+  });
+  await showRecoveryCodeOnce(recoveryCode);
+}
+
+function initAccountRecoveryRegen() {
+  const btn = $('#acctRecoveryRegen');
+  const out = $('#acctRecoveryOut');
+  btn.onclick = async () => {
+    if (!confirm('Einen neuen Wiederherstellungscode erzeugen? Der bisherige Code wird dabei für den gesamten Haushalt sofort ungültig.')) return;
+    btn.disabled = true;
+    try {
+      await regenerateRecoveryCode();
+      out.textContent = 'Neuer Wiederherstellungscode erzeugt.';
+      out.hidden = false;
+    } catch (err) {
+      out.textContent = 'Fehler: ' + err.message;
+      out.hidden = false;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
+
+// AP2.6, Teil B (ZANDORs Vorgabe 3): direkt nach einem erfolgreichen Passwort-Reset via
+// Wiederherstellungscode (login.js) hinterlaesst login.js einen harmlosen Merker in localStorage
+// (KEIN Schluesselmaterial, siehe dortiger Kommentar) -- beim naechsten normalen Login wird der
+// Nutzer dadurch HIER zwingend zur Neu-Erzeugung des Codes aufgefordert, bevor die App normal
+// nutzbar wird (keine stille/automatische Rotation, siehe ap1.2-datenmodell.md Abschnitt 7a).
+async function forceRecoveryCodeRegenerationIfNeeded() {
+  const marker = localStorage.getItem('wp_force_recovery_regen');
+  if (!marker || marker !== state.user.email) return;
+  alert('Du hast dein Passwort gerade über den Wiederherstellungscode zurückgesetzt. Aus Sicherheitsgründen ' +
+    'muss jetzt ein neuer Wiederherstellungscode erzeugt werden, bevor es weitergeht.');
+  await regenerateRecoveryCode();
+  localStorage.removeItem('wp_force_recovery_regen');
 }
 
 /* ---------------- Start ---------------- */
@@ -2875,6 +3026,14 @@ async function boot() {
     await promptUnlock();
   } else if (state.crypto?.pendingWrap) {
     await promptActivatePending();
+  }
+
+  // AP2.6: siehe Kommentar bei forceRecoveryCodeRegenerationIfNeeded() -- muss NACH dem Entsperren
+  // (Haushalts-Schluessel im Speicher) und VOR dem Sweep laufen (ein noch gueltiger Wrap ist keine
+  // Voraussetzung fuer den Sweep, aber die Reihenfolge "erst Sicherheit, dann Komfort" ist hier
+  // bewusst so gewaehlt).
+  if (WPCrypto.hasHouseholdKey()) {
+    await forceRecoveryCodeRegenerationIfNeeded();
   }
 
   // AP2.5: nicht-blockierender Sweep im Hintergrund -- ausschliesslich, wenn WIRKLICH jedes

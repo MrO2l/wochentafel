@@ -49,9 +49,19 @@ async function buildCryptoBootstrap(password) {
   const pwWrap = await WPCrypto.wrapKey(householdKey, pwWrapKey);
 
   const recoveryCode = await WPCrypto.generateRecoveryCode();
+  const normalizedCode = WPCrypto.normalizeRecoveryCode(recoveryCode);
   const rcSalt = await WPCrypto.generateSalt();
-  const rcWrapKey = await WPCrypto.deriveWrapKey(WPCrypto.normalizeRecoveryCode(recoveryCode), rcSalt, kdfParams);
+  const rcWrapKey = await WPCrypto.deriveWrapKey(normalizedCode, rcSalt, kdfParams);
   const rcWrap = await WPCrypto.wrapKey(householdKey, rcWrapKey);
+
+  // AP2.6 (ap1.2-datenmodell.md Abschnitt 2.2a, MORROW/ZANDOR): zweiter, von wrap_key
+  // UNABHAENGIGER Argon2id-Output DESSELBEN Codes -- eigenes Salt (Domain-Separation), sonst
+  // identische Kostenparameter. Dieser "verifier" ist der EINZIGE der vier hier erzeugten Werte,
+  // der jemals (roh, per TLS) den Browser verlaesst -- beim Passwort-Reset, siehe login.js weiter
+  // unten. Der Server hasht ihn selbst (SHA-256) und kann damit spaeter die Code-Kenntnis pruefen,
+  // ohne wrap_key oder den Haushalts-Schluessel je zu sehen.
+  const verifierSalt = await WPCrypto.generateSalt();
+  const verifier = await WPCrypto.deriveWrapKey(normalizedCode, verifierSalt, kdfParams);
 
   return {
     recoveryCode,
@@ -61,7 +71,8 @@ async function buildCryptoBootstrap(password) {
         kdfTimeCost: kdfParams.opslimit, kdfMemoryCost: kdfParams.memlimit, kdfParallelism: kdfParams.parallelism },
       recoveryWrap: { wrappedKey: WPCrypto.toB64(rcWrap.wrappedKey), wrapNonce: WPCrypto.toB64(rcWrap.nonce),
         kdfSalt: WPCrypto.toB64(rcSalt), kdfAlgo: kdfParams.algo,
-        kdfTimeCost: kdfParams.opslimit, kdfMemoryCost: kdfParams.memlimit, kdfParallelism: kdfParams.parallelism }
+        kdfTimeCost: kdfParams.opslimit, kdfMemoryCost: kdfParams.memlimit, kdfParallelism: kdfParams.parallelism },
+      recoveryVerifier: { verifierSalt: WPCrypto.toB64(verifierSalt), verifier: WPCrypto.toB64(verifier) }
     }
   };
 }
@@ -118,12 +129,24 @@ $('#formRegister').onsubmit = async e => {
   catch (err) { msg(err.message, 'err'); }
 };
 
-/* ---------------- AP2.1: Wiederherstellungscode-Testfluss (rein lokal, siehe login.html) ---------------- */
+/* ---------------- AP2.6: Passwort-Reset via Wiederherstellungscode (ap1.2-datenmodell.md
+ * Abschnitt 7a) ----------------
+ * Schritt 1 (dieser Handler): rein lokal -- POST /api/auth/recover liefert die AEAD-geschuetzten
+ * Wrap-Felder + recoveryVerifierSalt (NICHT recovery_verifier_hash, der bleibt server-intern).
+ * Der Client entpackt lokal den Haushalts-Schluessel (wirft bei falschem Code automatisch, kein
+ * Server-Roundtrip fuer DIESE Pruefung noetig) und leitet zusaetzlich den "verifier" ab (zweiter,
+ * unabhaengiger Argon2id-Output desselben Codes, eigenes Salt). Schritt 2 (siehe
+ * #recoverStep2Submit unten) sendet ausschliesslich diesen verifier (nie den Code selbst, nie
+ * wrap_key, nie den Haushalts-Schluessel) an POST /api/auth/password-reset.
+ */
+let recoverState = null; // { email, householdKey, verifier } -- ausschliesslich zwischen Schritt 1 und 2 gehalten
+
 $('#formRecover').onsubmit = async e => {
   e.preventDefault();
   const email = $('#cve').value.trim().toLowerCase();
   const codeInput = WPCrypto.normalizeRecoveryCode($('#cvc').value);
   msg('Prüfe …', '');
+  $('#recoverStep1Submit').disabled = true;
   try {
     const res = await fetch('/api/auth/recover', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -147,23 +170,68 @@ $('#formRecover').onsubmit = async e => {
       return;
     }
 
-    if (wrapInfo.sample) {
-      try {
-        const decrypted = await WPCrypto.decryptJSON(householdKey, wrapInfo.sample.nonce, wrapInfo.sample.ciphertext);
-        const rowCount = Array.isArray(decrypted.rows) ? decrypted.rows.length : 0;
-        msg(`Wiederherstellungscode ist korrekt: der Haushalts-Schlüssel wurde entsperrt und die Woche ` +
-            `ab ${wrapInfo.sample.weekStart} (${rowCount} Zeilen) konnte erfolgreich entschlüsselt werden. ` +
-            `Termine sind damit wieder lesbar.`, 'ok');
-      } catch {
-        msg('Der Wiederherstellungscode hat den Haushalts-Schlüssel entsperrt, aber die Test-Woche konnte ' +
-            'nicht entschlüsselt werden (unerwartet -- bitte melden).', 'err');
-      }
-    } else {
-      msg('Wiederherstellungscode ist korrekt: der Haushalts-Schlüssel wurde entsperrt. ' +
-          '(Für diesen Haushalt liegt noch keine verschlüsselte Woche vor, daher kein Datenbeispiel.)', 'ok');
-    }
+    // Zweiter, unabhaengiger Argon2id-Output desselben Codes (eigenes Salt) -- das ist der Wert,
+    // den Schritt 2 an den Server schickt. Die lokale AEAD-Unwrap-Pruefung oben ist bereits der
+    // vollstaendige Nachweis "Code korrekt" fuer den Nutzer -- der verifier dient ausschliesslich
+    // dazu, dass der SERVER dieselbe Kenntnis unabhaengig pruefen kann.
+    const verifier = await WPCrypto.deriveWrapKey(codeInput, WPCrypto.fromB64(wrapInfo.recoveryVerifierSalt), kdfParams);
+
+    recoverState = { email, householdKey, verifier };
+    msg('Code korrekt — bitte jetzt ein neues Passwort festlegen.', 'ok');
+    $('#recoverStep1').hidden = true;
+    $('#recoverStep2').hidden = false;
+    $('#cvnp').focus();
   } catch (err) {
     msg(err.message, 'err');
+  } finally {
+    $('#recoverStep1Submit').disabled = false;
+  }
+};
+
+$('#recoverStep2Submit').onclick = async () => {
+  if (!recoverState) return;
+  const newPassword = $('#cvnp').value;
+  const newPassword2 = $('#cvnp2').value;
+  if (newPassword.length < 10) { msg('Das neue Passwort muss mindestens 10 Zeichen haben.', 'err'); return; }
+  if (newPassword !== newPassword2) { msg('Die beiden Passwörter stimmen nicht überein.', 'err'); return; }
+
+  $('#recoverStep2Submit').disabled = true;
+  msg('Setze neues Passwort …', '');
+  try {
+    const kdfParams = WPCrypto.defaultKdfParams();
+    const newSalt = await WPCrypto.generateSalt();
+    const newWrapKey = await WPCrypto.deriveWrapKey(newPassword, newSalt, kdfParams);
+    const newWrapped = await WPCrypto.wrapKey(recoverState.householdKey, newWrapKey);
+
+    await post('/api/auth/password-reset', {
+      email: recoverState.email,
+      verifier: WPCrypto.toB64(recoverState.verifier),
+      newPassword,
+      passwordWrap: {
+        wrappedKey: WPCrypto.toB64(newWrapped.wrappedKey), wrapNonce: WPCrypto.toB64(newWrapped.nonce),
+        kdfSalt: WPCrypto.toB64(newSalt), kdfAlgo: kdfParams.algo,
+        kdfTimeCost: kdfParams.opslimit, kdfMemoryCost: kdfParams.memlimit, kdfParallelism: kdfParams.parallelism
+      }
+    });
+
+    // ZANDORs Vorgabe 3: keine stille Verifier-Rotation. Stattdessen hinterlassen wir einen
+    // harmlosen Merker (KEIN Schluesselmaterial -- nur die E-Mail-Adresse als Erinnerung, siehe
+    // app.js/forceRecoveryCodeRegenerationIfNeeded()) fuer den naechsten Login: dort wird der
+    // Nutzer zwingend zur Neu-Erzeugung des Wiederherstellungscodes aufgefordert, bevor die App
+    // normal nutzbar wird. localStorage ist hier bewusst unkritisch (anders als der Haushalts-
+    // Schluessel, der NIE in eine Web-Storage-API darf).
+    localStorage.setItem('wp_force_recovery_regen', recoverState.email);
+
+    recoverState = null;
+    $('#cvnp').value = ''; $('#cvnp2').value = ''; $('#cvc').value = '';
+    $('#recoverStep2').hidden = true;
+    $('#recoverStep1').hidden = false;
+    $('#tabLogin').click(); // zurueck zum Login-Tab -- bewusst KEIN automatischer Login, siehe server.js-Kommentar
+    msg('Passwort erfolgreich zurückgesetzt. Bitte jetzt mit dem neuen Passwort anmelden.', 'ok');
+  } catch (err) {
+    msg(err.message, 'err');
+  } finally {
+    $('#recoverStep2Submit').disabled = false;
   }
 };
 

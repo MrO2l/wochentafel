@@ -456,48 +456,54 @@
     <div class="acct-out" id="acctOut" role="status" hidden></div>
   </div>
 
-  <!-- ================= Platzhalter fuer AP2.6 (Passwort-Aenderung inkl. Re-Wrap des Haushalts-
-       Schluessels, projects/wochenplaner-termine-verschluesselung/plan.md) -- bewusst rein
-       visuell/deaktiviert (kein Backend, keine JS-Verdrahtung), bis AP2.6 beauftragt wird. ================= -->
-  <div class="card acct-future-card shadow-sm p-3 p-md-4 mb-4">
+  <!-- ================= AP2.6, Teil A: echte Passwort-Aenderung inkl. Re-Wrap des Haushalts-
+       Schluessels (PUT /api/account/password, server.js). Nur sichtbar/nutzbar, wenn der
+       Haushalt bereits verschluesselt ist (siehe initAccountView(), app.js) -- ohne
+       Haushalts-Schluessel im Speicher kann kein neuer Wrap gebildet werden. ================= -->
+  <div class="card shadow-sm p-3 p-md-4 mb-4">
     <h2 class="h6 fw-bold mb-1" style="color:var(--primary-dark)">
       <i class="bi bi-key me-1" aria-hidden="true"></i> Passwort ändern
-      <span class="acct-future-badge">In Vorbereitung</span>
     </h2>
-    <p class="view-lead mb-3">Kommt mit der Termin-Verschlüsselung (AP2.6) — inklusive automatischem Re-Wrap des Haushalts-Schlüssels.</p>
-    <form novalidate>
+    <p class="view-lead mb-3" id="acctPwLead">Ändert dein Login-Passwort und verpackt euren Haushalts-Schlüssel automatisch neu.</p>
+    <form id="acctPwForm">
       <div class="mb-3">
         <label class="form-label" for="pwCurrent">Aktuelles Passwort</label>
-        <input type="password" class="form-control" id="pwCurrent" disabled>
+        <input type="password" class="form-control" id="pwCurrent" autocomplete="current-password" required>
       </div>
       <div class="row g-3">
         <div class="col-12 col-sm-6">
           <label class="form-label" for="pwNew">Neues Passwort</label>
-          <input type="password" class="form-control" id="pwNew" disabled>
+          <input type="password" class="form-control" id="pwNew" autocomplete="new-password" minlength="10" required>
         </div>
         <div class="col-12 col-sm-6">
           <label class="form-label" for="pwConfirm">Neues Passwort bestätigen</label>
-          <input type="password" class="form-control" id="pwConfirm" disabled>
+          <input type="password" class="form-control" id="pwConfirm" autocomplete="new-password" minlength="10" required>
         </div>
       </div>
+      <div class="recipe-form-error" id="acctPwError" role="alert" hidden></div>
       <div class="mt-3">
-        <button type="button" class="btn btn-primary" disabled>Passwort ändern</button>
+        <button type="submit" class="btn btn-primary" id="acctPwSubmit">Passwort ändern</button>
       </div>
     </form>
   </div>
 
-  <!-- ================= Platzhalter fuer AP2.3 (Wiederherstellungscode, haushaltsweit gueltig,
-       projects/wochenplaner-termine-verschluesselung/plan.md) -- ebenfalls rein visuell/
-       deaktiviert, siehe Kommentar oben. ================= -->
-  <div class="card acct-future-card shadow-sm p-3 p-md-4">
+  <!-- ================= AP2.6, Teil B: Wiederherstellungscode neu erzeugen (POST
+       /api/crypto/recovery-code, server.js). Der bisherige Code kann aus Sicherheitsgruenden
+       NIE erneut angezeigt werden (er wird nirgends -- weder Client noch Server -- im Klartext
+       aufbewahrt, siehe ap1.2-datenmodell.md) -- die einzige "Anzeige"-Funktion, die es geben
+       KANN, ist die Erzeugung eines neuen Codes samt einmaliger Anzeige (identisches Muster wie
+       beim Setup/Bootstrap). ================= -->
+  <div class="card shadow-sm p-3 p-md-4">
     <h2 class="h6 fw-bold mb-1" style="color:var(--primary-dark)">
       <i class="bi bi-shield-lock me-1" aria-hidden="true"></i> Wiederherstellungscode
-      <span class="acct-future-badge">In Vorbereitung</span>
     </h2>
-    <p class="view-lead mb-3">Kommt mit der Termin-Verschlüsselung (AP2.3) — ein Code pro Haushalt, unabhängig vom Passwort jedes Mitglieds nutzbar.</p>
+    <p class="view-lead mb-3">Euer Wiederherstellungscode wurde beim Einrichten einmalig angezeigt und danach nirgends
+       gespeichert — auch wir können ihn euch nicht erneut zeigen. Falls ihr ihn verloren habt oder er
+       jemand Unbefugtem bekannt sein könnte, erzeugt hier einen neuen (der alte Code wird dabei für
+       den <strong>gesamten Haushalt</strong> ungültig).</p>
+    <div id="acctRecoveryOut" class="acct-out" role="status" hidden></div>
     <div class="d-flex gap-2 flex-wrap">
-      <button type="button" class="btn btn-outline-secondary" disabled><i class="bi bi-eye me-1" aria-hidden="true"></i> Code anzeigen</button>
-      <button type="button" class="btn btn-outline-secondary" disabled><i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i> Neuen Code erzeugen</button>
+      <button type="button" class="btn btn-outline-secondary" id="acctRecoveryRegen"><i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i> Neuen Code erzeugen</button>
     </div>
   </div>
 </section>
@@ -842,6 +848,33 @@
      waehrenddessen normal nutzbar. ================= -->
 <div id="sweepPanel" class="alert alert-info" role="status" hidden
      style="position:fixed; bottom:1rem; right:1rem; z-index:1050; max-width:22rem; box-shadow:0 2px 10px rgba(0,0,0,0.15);"></div>
+
+<!-- ================= AP2.6: einmalige Anzeige eines NEU erzeugten Wiederherstellungscodes --
+     genutzt sowohl vom "Neuen Code erzeugen"-Knopf in der Konto-Ansicht (freiwillig) als auch
+     zwingend direkt nach einem Passwort-Reset via Wiederherstellungscode (ZANDORs Vorgabe 3: keine
+     stille Rotation, siehe app.js boot()/forceRecoveryCodeRegeneration()). Gleiches Muster wie
+     login.html #recoveryCodeDialog (kein Abbrechen vor Bestaetigung). ================= -->
+<dialog class="daylist" id="recoveryCodeDialog" aria-labelledby="rcdTitle">
+  <div class="daylist-head modal-header">
+    <div>
+      <h2 id="rcdTitle" class="font-heading">Neuer Wiederherstellungscode</h2>
+      <div class="sub">Nur jetzt sichtbar — bitte sicher aufbewahren und an alle Haushaltsmitglieder weitergeben.</div>
+    </div>
+  </div>
+  <div class="daylist-body modal-body">
+    <p id="rcdIntro">
+      Dieser Code gilt für euren <strong>ganzen Haushalt</strong> und ersetzt jeden bisherigen Code —
+      der alte Code funktioniert ab sofort nicht mehr. Ohne Passwort <em>und</em> ohne diesen Code
+      können eure verschlüsselten Termine <strong>niemand mehr</strong> lesen, auch wir als Betreiber nicht.
+    </p>
+    <p style="font-family:monospace; font-size:1.3em; letter-spacing:0.05em; text-align:center; padding:0.75em; border:1px solid var(--border-color); border-radius:var(--radius);" id="recoveryCodeOut"></p>
+    <label style="display:flex; gap:0.5em; align-items:flex-start; margin-top:1em;">
+      <input type="checkbox" id="recoveryCodeConfirm">
+      <span>Ich habe den Code sicher gespeichert/weitergegeben.</span>
+    </label>
+    <button class="legacy-btn primary" id="recoveryCodeContinue" disabled style="margin-top:1em;">Weiter</button>
+  </div>
+</dialog>
 
 <script src="vendor/libsodium/libsodium.js"></script>
 <script src="vendor/libsodium/libsodium-wrappers.js"></script>

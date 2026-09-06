@@ -47,17 +47,17 @@
               data-bs-toggle="tab" data-bs-target="#formLogin" aria-controls="formLogin">Anmelden</button>
       <button id="tabRegister" type="button" role="tab" aria-selected="false"
               data-bs-toggle="tab" data-bs-target="#formRegister" aria-controls="formRegister">Neu hier</button>
-      <!-- AP2.1 (projects/wochenplaner-termine-verschluesselung/plan.md): dritter Tab, rein
-           lesend/lokal -- prueft, ob ein Wiederherstellungscode den Haushalts-Schluessel korrekt
-           entsperrt (POST /api/auth/recover liefert NUR die bereits AEAD-geschuetzten Wrap-Felder
-           + eine Ciphertext-Stichprobe, siehe dortiger Server-Kommentar). Bewusst KEIN
-           "Passwort vergessen, neues Passwort setzen"-Fluss: der Server kann ohne einen dafuer
-           vorgesehenen Verifier-Wert im Datenmodell nie pruefen, ob ein Client den Code wirklich
-           korrekt entpackt hat -- ein Endpunkt, der allein aufgrund einer bekannten E-Mail-Adresse
-           Passwort/Session aendert, waere ein Authentifizierungs-Bypass. Siehe Ruecklauf an
-           MORROW/ANORAK/ZANDOR im Abschlussbericht zu diesem Arbeitspaket. -->
+      <!-- AP2.1, erweitert in AP2.6 (projects/wochenplaner-termine-verschluesselung/plan.md,
+           ap1.2-datenmodell.md Abschnitt 7a): dritter Tab -- "Passwort vergessen"-Fluss.
+           MORROW/ZANDOR haben inzwischen einen serverseitig pruefbaren "verifier"-Wert entworfen
+           (zweiter, von wrap_key unabhaengiger Argon2id-Output desselben Codes, Domain-Separation
+           ueber ein eigenes Salt) -- der urspruengliche Auth-Bypass-Einwand aus AP2.1 ist damit
+           behoben: der Server prueft SHA-256(verifier) gegen recovery_verifier_hash, sieht aber nie
+           den Code, wrap_key oder den Haushalts-Schluessel selbst. Zwei Schritte in diesem Formular
+           (siehe login.js): zuerst lokale Code-Pruefung (Unwrap-Versuch, kein Server-Roundtrip
+           noetig), erst bei Erfolg erscheint das Feld fuer das neue Passwort. -->
       <button id="tabRecover" type="button" role="tab" aria-selected="false"
-              data-bs-toggle="tab" data-bs-target="#formRecover" aria-controls="formRecover">Wiederherstellungscode</button>
+              data-bs-toggle="tab" data-bs-target="#formRecover" aria-controls="formRecover">Passwort vergessen</button>
     </div>
 
     <form id="formLogin" class="tab-pane active" role="tabpanel" aria-labelledby="tabLogin">
@@ -95,16 +95,28 @@
       <button class="legacy-btn primary" type="submit">Konto anlegen</button>
     </form>
 
-    <!-- AP2.1: reiner Nachweis-/Testfluss, siehe Kommentar bei #tabRecover oben. Kein Login,
-         keine Sitzung, keine Server-Aenderung -- ausschliesslich ein lokaler Entschluesselungs-
-         versuch im Browser. -->
+    <!-- AP2.6: zwei Schritte, siehe login.js. Schritt 1 ist rein lokal (kein Server-Roundtrip fuer
+         die Code-Pruefung selbst noetig -- ein falscher Code scheitert beim AEAD-Unwrap). Erst nach
+         erfolgreichem lokalem Unwrap wird Schritt 2 (neues Passwort) sichtbar; DORT verlaesst
+         ausschliesslich der "verifier" (nicht der Code selbst) den Browser, siehe
+         ap1.2-datenmodell.md Abschnitt 7a. -->
     <form id="formRecover" class="tab-pane" role="tabpanel" aria-labelledby="tabRecover">
-      <p class="view-lead">Prüft, ob dein Wiederherstellungscode den Haushalts-Schlüssel entsperrt — ohne dich anzumelden oder etwas zu ändern.</p>
-      <label for="cve" class="form-label">E-Mail</label>
-      <input id="cve" type="email" class="form-control" autocomplete="username" required>
-      <label for="cvc" class="form-label">Wiederherstellungscode</label>
-      <input id="cvc" type="text" class="form-control upper" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXX" required>
-      <button class="legacy-btn primary" type="submit">Code prüfen</button>
+      <div id="recoverStep1">
+        <p class="view-lead">Gib deine E-Mail-Adresse und euren Wiederherstellungscode ein.</p>
+        <label for="cve" class="form-label">E-Mail</label>
+        <input id="cve" type="email" class="form-control" autocomplete="username" required>
+        <label for="cvc" class="form-label">Wiederherstellungscode</label>
+        <input id="cvc" type="text" class="form-control upper" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXX" required>
+        <button class="legacy-btn primary" type="submit" id="recoverStep1Submit">Code prüfen</button>
+      </div>
+      <div id="recoverStep2" hidden>
+        <p class="view-lead">Code korrekt — bitte jetzt ein neues Passwort festlegen.</p>
+        <label for="cvnp" class="form-label">Neues Passwort (mindestens 10 Zeichen)</label>
+        <input id="cvnp" type="password" class="form-control" autocomplete="new-password" minlength="10">
+        <label for="cvnp2" class="form-label">Neues Passwort bestätigen</label>
+        <input id="cvnp2" type="password" class="form-control" autocomplete="new-password" minlength="10">
+        <button class="legacy-btn primary" type="button" id="recoverStep2Submit">Passwort zurücksetzen</button>
+      </div>
     </form>
 
     <div class="msg" id="msg"></div>

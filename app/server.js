@@ -604,6 +604,10 @@ function buildTemplateEnvelope(nonce, ciphertext, keyVersion) {
  * ------------------------------------------------------------------ */
 const ARGON2ID_SALT_BYTES = 16;         // libsodium crypto_pwhash_SALTBYTES
 const WRAPPED_HOUSEHOLD_KEY_BYTES = 48; // 32-Byte-Haushalts-Schluessel + 16-Byte-Poly1305-Tag
+// AP2.6 (ap1.2-datenmodell.md Abschnitt 2.2a): der "verifier" ist ein zweiter, unabhaengiger
+// Argon2id-Output DESSELBEN Wiederherstellungscodes (eigenes Salt, gleiche Kostenparameter) --
+// derselbe angeforderte Output-Laenge wie wrap_key (32 Byte, siehe crypto.js deriveWrapKey()).
+const RECOVERY_VERIFIER_BYTES = 32;
 
 function parseWrapPayload(w) {
   if (!w || typeof w !== 'object') return null;
@@ -621,23 +625,40 @@ function parseWrapPayload(w) {
   return { kdfAlgo: 'argon2id', kdfTimeCost, kdfMemoryCost, kdfParallelism, kdfSalt, wrappedKey, wrapNonce };
 }
 
+// AP2.6 (ap1.2-datenmodell.md Abschnitt 2.2a): prueft Form/Groesse von {verifierSalt, verifier}
+// und hasht den vom Client gesendeten ROHEN verifier-Wert selbst server-seitig mit SHA-256 --
+// analog zu bcrypt beim Passwort: der Client schickt das Klartext-Geheimnis (hier: einen Argon2id-
+// Output, kein Nutzerpasswort), der Server hasht/speichert, niemals umgekehrt. Der rohe verifier-
+// Wert selbst wird NICHT zurueckgegeben und darf nirgends geloggt werden (siehe Aufrufer).
+function parseRecoveryVerifierPayload(v) {
+  if (!v || typeof v !== 'object') return null;
+  const verifierSalt = decodeBase64Field(v.verifierSalt, ARGON2ID_SALT_BYTES);
+  if (!verifierSalt) return null;
+  const verifierRaw = decodeBase64Field(v.verifier, RECOVERY_VERIFIER_BYTES);
+  if (!verifierRaw) return null;
+  return { verifierSalt, verifierHash: crypto.createHash('sha256').update(verifierRaw).digest() };
+}
+
 function parseCryptoBootstrapPayload(body) {
   const c = body && body.crypto;
   if (!c || typeof c !== 'object') return null;
   const passwordWrap = parseWrapPayload(c.passwordWrap);
   const recoveryWrap = parseWrapPayload(c.recoveryWrap);
-  if (!passwordWrap || !recoveryWrap) return null;
-  return { passwordWrap, recoveryWrap };
+  const recoveryVerifier = parseRecoveryVerifierPayload(c.recoveryVerifier);
+  if (!passwordWrap || !recoveryWrap || !recoveryVerifier) return null;
+  return { passwordWrap, recoveryWrap, recoveryVerifier };
 }
 
-async function insertKeyWrap(client, { householdId, userId, wrapType, wrap }) {
+async function insertKeyWrap(client, { householdId, userId, wrapType, wrap, verifierSalt = null, verifierHash = null }) {
   await client.query(
     `INSERT INTO household_key_wraps
        (household_id, user_id, wrap_type, key_version, wrapped_key, wrap_nonce,
-        kdf_salt, kdf_algo, kdf_time_cost, kdf_memory_cost, kdf_parallelism)
-     VALUES ($1,$2,$3,1,$4,$5,$6,$7,$8,$9,$10)`,
+        kdf_salt, kdf_algo, kdf_time_cost, kdf_memory_cost, kdf_parallelism,
+        recovery_verifier_salt, recovery_verifier_hash)
+     VALUES ($1,$2,$3,1,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [householdId, userId, wrapType, wrap.wrappedKey, wrap.wrapNonce,
-     wrap.kdfSalt, wrap.kdfAlgo, wrap.kdfTimeCost, wrap.kdfMemoryCost, wrap.kdfParallelism]);
+     wrap.kdfSalt, wrap.kdfAlgo, wrap.kdfTimeCost, wrap.kdfMemoryCost, wrap.kdfParallelism,
+     verifierSalt, verifierHash]);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1167,7 +1188,12 @@ app.post('/api/auth/register', authLimiter, wrap(async (req, res) => {
         // recovery_code ist bewusst HAUSHALTSWEIT, nicht an user_id gebunden (Nutzerentscheidung
         // 2026-09-06, siehe ap1.2-datenmodell.md Abschnitt 2.2/Migration 009 CHECK-Constraint
         // household_key_wraps_subject_shape) -- user_id bleibt hier daher NULL.
-        await insertKeyWrap(client, { householdId, userId: null, wrapType: 'recovery_code', wrap: cryptoPayload.recoveryWrap });
+        // AP2.6-Nachtrag: recovery_verifier_salt/-hash gehoeren untrennbar zum selben Code wie
+        // wrappedKey -- werden hier gemeinsam mit dem recovery_code-Wrap angelegt (nie getrennt).
+        await insertKeyWrap(client, {
+          householdId, userId: null, wrapType: 'recovery_code', wrap: cryptoPayload.recoveryWrap,
+          verifierSalt: cryptoPayload.recoveryVerifier.verifierSalt, verifierHash: cryptoPayload.recoveryVerifier.verifierHash
+        });
         // Einziges Mitglied dieses frischen Haushalts hat jetzt sofort einen echten password-Wrap
         // -- der Uebergangszustand 'activating' (fuer Haushalte mit noch nicht durchgaengig
         // gewrappten Bestandsmitgliedern, siehe ap1.2-datenmodell.md Abschnitt 2.5) ist hier nicht
@@ -1234,33 +1260,22 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 /* ------------------------------------------------------------------ *
- * Wiederherstellungscode-Abfrage (AP2.1, Test-/Nachweis-Baustein)
+ * Wiederherstellungscode-Abfrage (AP2.1, erweitert in AP2.6 -- Phase 1 des
+ * Passwort-Reset-Flusses, ap1.2-datenmodell.md Abschnitt 7a)
  *
- * WICHTIGE, BEWUSSTE EINSCHRAENKUNG (an ANORAK/ZANDOR zurueckgemeldet, siehe
- * Abschlussbericht zu diesem Arbeitspaket): dieser Endpunkt ist rein LESEND
- * und veraendert NIE Sitzung, Passwort oder Wraps. Er liefert lediglich die
- * bereits AEAD-geschuetzten Wrap-Felder des haushaltsweiten recovery_code-
- * Wraps zu einer E-Mail-Adresse (analog zum Login-Lookup, nur ohne
- * password_hash, siehe auth_lookup_recovery_wrap() aus Migration 009) sowie
- * -- rein zu Demonstrations-/Testzwecken -- die Ciphertext-Bytes der zuletzt
- * geaenderten Woche desselben Haushalts, damit ein Client den entschluesselten
- * Haushalts-Schluessel direkt an echten Daten verifizieren kann. Beides sind
- * bereits AEAD-verschluesselte Bytes -- ein Aufrufer ohne den echten
- * Wiederherstellungscode kann damit nichts anfangen (identisches Schutzniveau
- * wie ein direkter DB-Zugriff, das bereits akzeptierte Bedrohungsmodell dieses
- * Projekts).
- *
- * BEWUSST NICHT gebaut: ein Endpunkt, der nach erfolgreichem Entpacken (rein
- * clientseitig, vom Server nicht ueberpruefbar) das Passwort zuruecksetzt und
- * eine Sitzung eroeffnet. Der Server kann angesichts der echten Ende-zu-Ende-
- * Architektur NIE verifizieren, ob ein Client den Haushalts-Schluessel
- * tatsaechlich korrekt entpackt hat (das wuerde einen serverseitig
- * ueberpruefbaren Verifier-Wert voraussetzen, den household_key_wraps aktuell
- * nicht vorsieht) -- ein "Passwort automatisch zuruecksetzen"-Endpunkt ohne
- * einen solchen Verifier waere ein Authentifizierungs-Bypass fuer jeden, der
- * lediglich die E-Mail-Adresse eines Haushaltsmitglieds kennt. Diese Luecke im
- * bestehenden Datenmodell wird als offener Punkt an MORROW/ANORAK/ZANDOR
- * zurueckgemeldet statt hier eigenmaechtig geschlossen.
+ * Dieser Endpunkt bleibt weiterhin rein LESEND und veraendert nie Sitzung,
+ * Passwort oder Wraps -- er liefert die bereits AEAD-geschuetzten Wrap-Felder
+ * des haushaltsweiten recovery_code-Wraps zu einer E-Mail-Adresse (analog zum
+ * Login-Lookup, nur ohne password_hash) sowie -- rein zu Demonstrations-/
+ * Testzwecken -- die Ciphertext-Bytes der zuletzt geaenderten Woche desselben
+ * Haushalts. AP2.6-Ergaenzung: liefert jetzt zusaetzlich
+ * recoveryVerifierSalt (unkritisch, siehe Migration 009 Kommentar) -- damit
+ * kann der Client lokal denselben "verifier"-Wert reproduzieren, den Phase 2
+ * (POST /api/auth/password-reset unten) prueft. recovery_verifier_hash bleibt
+ * server-intern und wird HIER NICHT in die Antwort uebernommen (siehe dortiger
+ * Kommentar) -- AP2.1s urspruenglich hier dokumentierte Einschraenkung ("kein
+ * Passwort-Reset moeglich, da kein Verifier-Wert existiert") ist mit AP2.6
+ * behoben, siehe POST /api/auth/password-reset weiter unten.
  * ------------------------------------------------------------------ */
 app.post('/api/auth/recover', authLimiter, wrap(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
@@ -1308,8 +1323,121 @@ app.post('/api/auth/recover', authLimiter, wrap(async (req, res) => {
     kdfTimeCost: row.kdf_time_cost,
     kdfMemoryCost: row.kdf_memory_cost,
     kdfParallelism: row.kdf_parallelism,
+    // AP2.6: recoveryVerifierSalt darf raus (unkritisch, wie kdfSalt) -- recovery_verifier_hash
+    // (row.recovery_verifier_hash) wird an dieser Stelle BEWUSST NICHT gelesen/uebernommen, siehe
+    // Dateikopf-Kommentar und ap1.2-datenmodell.md Abschnitt 2.2a.
+    recoveryVerifierSalt: row.recovery_verifier_salt.toString('base64'),
     sample: sampleOut
   });
+}));
+
+/* ------------------------------------------------------------------ *
+ * AP2.6, Phase 2 -- Passwort-Reset via Wiederherstellungscode
+ * (ap1.2-datenmodell.md Abschnitt 7a, MORROWs Design; Rate-Limiting-Vorgaben
+ * von ZANDOR, siehe unten -- beides woertlich umgesetzt, nicht optional).
+ *
+ * Ablauf: Client hat bereits per POST /api/auth/recover (Phase 1, oben)
+ * wrappedKey/wrapNonce/kdfSalt/recoveryVerifierSalt geladen, den eingegebenen
+ * Wiederherstellungscode lokal in ZWEI unabhaengige Argon2id-Outputs
+ * ueberfuehrt (wrap_key ueber kdfSalt, verifier ueber recoveryVerifierSalt --
+ * unterschiedliche Salts, siehe ap1.2-datenmodell.md Abschnitt 2.2a) und
+ * lokal per AEAD-Unwrap bereits verifiziert, dass wrap_key den Haushalts-
+ * Schluessel tatsaechlich entpackt (misslingt das, bricht der Client VOR
+ * diesem Request ab -- kein Server-Roundtrip fuer diese Pruefung noetig).
+ * Dieser Endpunkt bekommt NUR den rohen verifier-Wert (NICHT wrap_key, NICHT
+ * den Code selbst, NICHT den Haushalts-Schluessel) sowie einen fertigen,
+ * bereits clientseitig neu gewrappten password-Wrap fuer das eine, ueber die
+ * E-Mail identifizierte Konto.
+ *
+ * Sicherheitseigenschaft (server-seitige Sicht): der Server kann NIE selbst
+ * pruefen, dass der neue Wrap tatsaechlich denselben Haushalts-Schluessel
+ * kapselt wie der bestehende recovery_code-Wrap (E2E-Prinzip, identisch zum
+ * Registrierungs-Bootstrap AP2.1) -- die einzige serverseitig pruefbare
+ * Autorisierung ist der verifier-Vergleich. Ein falscher/erratener verifier
+ * fuehrt zu 401, ohne dass irgendein Wrap/Passwort veraendert wird.
+ * ------------------------------------------------------------------ */
+
+// ZANDORs Vorgabe 2 (Rate-Limiting): dedizierter IP-Limiter, NICHT im geteilten
+// authLimiter-Budget -- ein Angreifer, der viele E-Mail-Adressen gegen denselben
+// Endpunkt durchprobiert, soll nicht durch die grosszuegigere authLimiter-Quote
+// (30/15min, geteilt mit Login/Registrierung) gedeckt sein.
+const passwordResetLimiter = rateLimiter({ windowMs: 15 * 60 * 1000, max: 10 });
+// ZANDORs Vorgabe 2: escalating Pro-Konto-Bremse analog zum bestehenden Admin-
+// Login-Muster (createLoginThrottle({escalating:true})) -- 5 Fehlversuche loesen
+// die naechste Eskalationsstufe aus (5/15/60/240/1440 min), Key "pwreset:<email>".
+const { throttle: pwResetThrottle, noteFailure: pwResetNoteFailure, clearFailures: pwResetClearFailures } =
+  createLoginThrottle({ escalating: true });
+
+app.post('/api/auth/password-reset', passwordResetLimiter, wrap(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const throttleKey = `pwreset:${email}`;
+  const wait = pwResetThrottle(throttleKey);
+  if (wait) return res.status(429).json({ error: `Zu viele Versuche. Bitte ${wait} Sekunden warten.` });
+
+  const newPassword = String(req.body.newPassword || '');
+  if (newPassword.length < 10) return res.status(400).json({ error: 'Das neue Passwort muss mindestens 10 Zeichen haben' });
+
+  const passwordWrap = parseWrapPayload(req.body?.passwordWrap);
+  const verifierRaw = decodeBase64Field(req.body?.verifier, RECOVERY_VERIFIER_BYTES);
+  if (!passwordWrap || !verifierRaw) return res.status(400).json({ error: 'Ungueltige oder fehlende Daten' });
+
+  const q = await appPool.query('SELECT * FROM auth_lookup_recovery_wrap($1)', [email]);
+  const row = q.rows[0];
+  // Generische Fehlermeldung fuer "E-Mail unbekannt" UND "verifier falsch" -- verhindert E-Mail-
+  // Enumeration (ap1.2-datenmodell.md Abschnitt 7a, Schritt 4). Ein Dummy-Hash-Vergleich haelt die
+  // Antwortzeit fuer den "E-Mail unbekannt"-Fall auf demselben Niveau wie einen echten Vergleich
+  // (identisches Muster wie beim bestehenden Login-Dummy-bcrypt-Vergleich).
+  const providedHash = crypto.createHash('sha256').update(verifierRaw).digest();
+  const storedHash = row ? row.recovery_verifier_hash : crypto.createHash('sha256').update(Buffer.alloc(RECOVERY_VERIFIER_BYTES)).digest();
+  // timingSafeEqual verlangt gleich lange Buffer -- beide sind hier immer exakt 32 Byte (SHA-256-
+  // Digest-Laenge), daher kein Laengen-Mismatch-Sonderfall noetig.
+  const verifierMatches = row ? crypto.timingSafeEqual(providedHash, storedHash) : false;
+
+  if (!row || !verifierMatches) {
+    pwResetNoteFailure(throttleKey);
+    // KEIN Logging von email/verifier/newPassword hier -- nur die generische Fehlerkategorie.
+    return res.status(401).json({ error: 'E-Mail-Adresse oder Wiederherstellungscode ist falsch' });
+  }
+  pwResetClearFailures(throttleKey);
+
+  const client = await appPool.connect();
+  try {
+    await client.query('BEGIN');
+    await setTenantContext(client, row.household_id);
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await client.query('UPDATE users SET password_hash=$1 WHERE id=$2', [passwordHash, row.user_id]);
+
+    // Bestehenden password-Wrap ersetzen (haeufigster Fall) ODER neu anlegen (Nachzuegler-
+    // Mitglied ohne bisherigen password-Wrap, z. B. noch nicht abgeschlossene AP2.3-Aktivierung --
+    // ap1.2-datenmodell.md Abschnitt 7a, Schritt 5).
+    const existing = await client.query(
+      `SELECT id FROM household_key_wraps
+        WHERE household_id=$1 AND user_id=$2 AND wrap_type='password' AND revoked_at IS NULL
+        FOR UPDATE`,
+      [row.household_id, row.user_id]);
+    if (existing.rowCount) {
+      await client.query(
+        `UPDATE household_key_wraps
+            SET wrapped_key=$1, wrap_nonce=$2, kdf_salt=$3, kdf_algo=$4,
+                kdf_time_cost=$5, kdf_memory_cost=$6, kdf_parallelism=$7, updated_at=now()
+          WHERE id=$8`,
+        [passwordWrap.wrappedKey, passwordWrap.wrapNonce, passwordWrap.kdfSalt, passwordWrap.kdfAlgo,
+         passwordWrap.kdfTimeCost, passwordWrap.kdfMemoryCost, passwordWrap.kdfParallelism, existing.rows[0].id]);
+    } else {
+      await insertKeyWrap(client, { householdId: row.household_id, userId: row.user_id, wrapType: 'password', wrap: passwordWrap });
+    }
+    // recovery_code-Wrap bleibt UNVERAENDERT (ap1.2-datenmodell.md Abschnitt 7: Passwort-/Code-
+    // Kompromittierung sind unabhaengige Ereignisse) -- ZANDORs Vorgabe 3: keine automatische/
+    // stille Verifier-Rotation, der Client fordert den Nutzer stattdessen zur manuellen
+    // Neu-Erzeugung auf (siehe Konto-Ansicht, app.js).
+
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally { client.release(); }
 }));
 
 /* ------------------------------------------------------------------ *
@@ -1775,7 +1903,11 @@ app.post('/api/crypto/bootstrap-existing', requireAuth, rejectForeignHouseholdId
 
     await insertKeyWrap(client, { householdId: req.session.householdId, userId: req.session.userId, wrapType: 'password', wrap: cryptoPayload.passwordWrap });
     // recovery_code ist haushaltsweit (user_id NULL), siehe /api/auth/register-Kommentar oben.
-    await insertKeyWrap(client, { householdId: req.session.householdId, userId: null, wrapType: 'recovery_code', wrap: cryptoPayload.recoveryWrap });
+    // AP2.6-Nachtrag: recovery_verifier_salt/-hash gemeinsam mit dem Wrap anlegen (siehe dort).
+    await insertKeyWrap(client, {
+      householdId: req.session.householdId, userId: null, wrapType: 'recovery_code', wrap: cryptoPayload.recoveryWrap,
+      verifierSalt: cryptoPayload.recoveryVerifier.verifierSalt, verifierHash: cryptoPayload.recoveryVerifier.verifierHash
+    });
     for (const p of pendingWraps) {
       await insertKeyWrap(client, { householdId: req.session.householdId, userId: p.userId, wrapType: 'pending', wrap: p.wrap });
     }
@@ -1841,6 +1973,107 @@ app.post('/api/crypto/activate', requireAuth, rejectForeignHouseholdId, wrap(asy
     }
     await client.query('COMMIT');
     res.json({ ok: true, encryptionStatus });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally { client.release(); }
+}));
+
+/* ------------------------------------------------------------------ *
+ * AP2.6, Teil A -- normale Passwort-Aenderung (eingeloggt, UI-Heimat: die
+ * Konto-Ansicht aus AP2.2b). ap1.2-datenmodell.md Abschnitt 7: altes Passwort
+ * wird weiterhin serverseitig per bcrypt geprueft (bestehendes Verhalten),
+ * der Client hat den Haushalts-Schluessel bereits im Speicher (laufende
+ * Sitzung), leitet aus dem NEUEN Passwort einen neuen Wrap-Schluessel ab und
+ * schickt nur den fertigen, neu gewrappten password-Wrap. Betrifft
+ * ausschliesslich users.password_hash und GENAU EINE Zeile in
+ * household_key_wraps (der eigene password-Wrap, per UPDATE ersetzt, nicht
+ * neu angelegt) -- kein einziges Byte weeks-Ciphertext aendert sich, der
+ * recovery_code-Wrap bleibt unberuehrt (unabhaengige Geheimnisse, siehe
+ * Abschnitt 7).
+ * ------------------------------------------------------------------ */
+app.put('/api/account/password', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const oldPassword = String(req.body.oldPassword || '');
+  const newPassword = String(req.body.newPassword || '');
+  if (newPassword.length < 10) return res.status(400).json({ error: 'Das neue Passwort muss mindestens 10 Zeichen haben' });
+  const newPasswordWrap = parseWrapPayload(req.body?.passwordWrap);
+  if (!newPasswordWrap) return res.status(400).json({ error: 'Ungueltige oder fehlende Verschluesselungsdaten' });
+
+  const client = await appPool.connect();
+  try {
+    await client.query('BEGIN');
+    await setTenantContext(client, req.session.householdId);
+
+    const userQ = await client.query('SELECT password_hash FROM users WHERE id=$1 FOR UPDATE', [req.session.userId]);
+    if (!userQ.rowCount) { await client.query('ROLLBACK'); return res.status(401).json({ error: 'Nicht angemeldet' }); }
+    const ok = await bcrypt.compare(oldPassword, userQ.rows[0].password_hash);
+    if (!ok) { await client.query('ROLLBACK'); return res.status(401).json({ error: 'Aktuelles Passwort stimmt nicht' }); }
+
+    const wrapQ = await client.query(
+      `SELECT id FROM household_key_wraps
+        WHERE household_id=$1 AND user_id=$2 AND wrap_type='password' AND revoked_at IS NULL
+        FOR UPDATE`,
+      [req.session.householdId, req.session.userId]);
+    if (!wrapQ.rowCount) {
+      await client.query('ROLLBACK');
+      // Haushalt hat die Verschluesselung noch nicht aktiviert (kein password-Wrap vorhanden) --
+      // ohne Haushalts-Schluessel im Speicher kann der Client keinen neuen Wrap bilden. Passwort-
+      // Aenderung ist in diesem Fall bewusst nicht Teil dieses Arbeitspakets (kein Wrap zum
+      // Re-Wrappen vorhanden).
+      return res.status(409).json({ error: 'Passwort-Aenderung ist erst nach Aktivierung der Termin-Verschluesselung fuer diesen Haushalt moeglich' });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 12);
+    await client.query('UPDATE users SET password_hash=$1 WHERE id=$2', [newHash, req.session.userId]);
+    await client.query(
+      `UPDATE household_key_wraps
+          SET wrapped_key=$1, wrap_nonce=$2, kdf_salt=$3, kdf_algo=$4,
+              kdf_time_cost=$5, kdf_memory_cost=$6, kdf_parallelism=$7, updated_at=now()
+        WHERE id=$8`,
+      [newPasswordWrap.wrappedKey, newPasswordWrap.wrapNonce, newPasswordWrap.kdfSalt, newPasswordWrap.kdfAlgo,
+       newPasswordWrap.kdfTimeCost, newPasswordWrap.kdfMemoryCost, newPasswordWrap.kdfParallelism, wrapQ.rows[0].id]);
+
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally { client.release(); }
+}));
+
+/* ------------------------------------------------------------------ *
+ * AP2.6, Teil B (ZANDORs Vorgabe 3) -- Wiederherstellungscode NEU erzeugen.
+ * Bewusst ein eigener, EXPLIZITER Endpunkt statt einer automatischen/stillen
+ * Rotation nach einem Passwort-Reset: eine stille Rotation wuerde den
+ * geteilten Haushalts-Code fuer ALLE anderen Mitglieder ohne Vorwarnung
+ * invalidieren. Der Client (Konto-Ansicht, app.js) fordert nach einem
+ * erfolgreichen Reset zwingend zu diesem Schritt auf, erzwingt ihn aber
+ * nicht serverseitig (Nutzer koennte den Dialog theoretisch wegklicken --
+ * das Risiko liegt dann beim alten, dem Nutzer selbst bekannten Code, kein
+ * zusaetzliches serverseitiges Risiko).
+ * ------------------------------------------------------------------ */
+app.post('/api/crypto/recovery-code', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const recoveryVerifier = parseRecoveryVerifierPayload(req.body?.recoveryVerifier);
+  const recoveryWrap = parseWrapPayload(req.body?.recoveryWrap);
+  if (!recoveryVerifier || !recoveryWrap) return res.status(400).json({ error: 'Ungueltige oder fehlende Verschluesselungsdaten' });
+
+  const client = await appPool.connect();
+  try {
+    await client.query('BEGIN');
+    await setTenantContext(client, req.session.householdId);
+    // Alte Zeile revoken (nicht loeschen, Nachvollziehbarkeit) statt UPDATE -- ein alter Code soll
+    // nach Neuerzeugung explizit ungueltig werden (anders als beim Passwort-Wrap, das per UPDATE
+    // ueberschrieben wird, siehe ap1.2-datenmodell.md Abschnitt 7 letzter Absatz).
+    await client.query(
+      `UPDATE household_key_wraps SET revoked_at=now()
+        WHERE household_id=$1 AND wrap_type='recovery_code' AND revoked_at IS NULL`,
+      [req.session.householdId]);
+    await insertKeyWrap(client, {
+      householdId: req.session.householdId, userId: null, wrapType: 'recovery_code', wrap: recoveryWrap,
+      verifierSalt: recoveryVerifier.verifierSalt, verifierHash: recoveryVerifier.verifierHash
+    });
+    await client.query('COMMIT');
+    res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
