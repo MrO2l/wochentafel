@@ -77,17 +77,55 @@ dann bleibt `APP_BIND=0.0.0.0` und der Proxy wird nicht gebraucht.
 
 ## Sicherung und Wiederherstellung
 
-Sichern (täglich per Cron, die Datei ist winzig):
+Der reguläre Voll-Datenbank-Dump läuft **GPG-verschlüsselt**, per Cron über
+[`ops/backup-db-encrypted.sh`](ops/backup-db-encrypted.sh) (löst den früheren,
+unverschlüsselten `pg_dump | gzip`-Cronjob ohne Prüfsumme ab). Dump,
+Komprimierung und Verschlüsselung laufen in einer einzigen Pipeline — der
+unverschlüsselte Inhalt landet zu keinem Zeitpunkt als Datei auf der Platte.
+
+Verschlüsselt wird **asymmetrisch**: Auf dem Server liegt nur der
+*öffentliche* Schlüssel (`secrets/db-backup-pubkey.asc`), der *private*
+Schlüssel bleibt auf einer separaten Maschine — ein kompromittierter Server
+kann damit kein einziges Backup entschlüsseln, weder alte noch neue. Details
+zur einmaligen Schlüsselerzeugung, zum Cron-Eintrag und zur Wiederherstellung
+stehen im Kopfkommentar des Skripts.
+
+Einmalig einrichten:
 
 ```bash
-docker compose exec -T db pg_dump -U wochenplan wochenplan | gzip > wochenplan_$(date +%F).sql.gz
+# auf einer separaten/offline Maschine, NICHT auf dem VPS:
+gpg --batch --quick-generate-key "Wochenplaner DB-Backup <ops@deine-domain.de>" rsa4096 encr never
+gpg --armor --export "Wochenplaner DB-Backup" > db-backup-pubkey.asc
+# nur die .asc-Datei (kein Geheimnis) auf den Server kopieren nach:
+#   secrets/db-backup-pubkey.asc
 ```
 
-Zurückspielen:
+Sichern (täglich per Cron, siehe Skript-Kopfkommentar für die Crontab-Zeile):
 
 ```bash
-gunzip -c wochenplan_2026-08-16.sql.gz | docker compose exec -T db psql -U wochenplan wochenplan
+./ops/backup-db-encrypted.sh
 ```
+
+Zurückspielen (auf der Maschine mit dem *privaten* Schlüssel, nicht auf dem
+Server):
+
+```bash
+sha256sum -c wochenplan-db-2026-09-06T092058Z.sql.gz.gpg.sha256
+gpg --batch --yes --decrypt wochenplan-db-2026-09-06T092058Z.sql.gz.gpg \
+  | gunzip \
+  | docker compose exec -T db psql -U wochenplan wochenplan
+```
+
+Das per Mandant getrennte Backup/Restore (`ops/backup-tenant-offsite.sh` /
+`ops/restore-tenant-from-offsite.sh`) verwendet bewusst ein anderes,
+*symmetrisches* GPG-Verfahren (siehe Kopfkommentare dort) und bleibt davon
+unberührt.
+
+Offen: Die verschlüsselten Dateien unter `ops/db-backups/` liegen weiterhin
+auf demselben Server wie die Datenbank selbst (kein Offsite-Ziel). Für volle
+Ausfallsicherheit sollten sie zusätzlich regelmäßig auf einen zweiten,
+unabhängigen Host übertragen werden (z. B. `rclone`/`rsync`, analog zum
+Hinweis "OFFSITE-TRANSFER" in `ops/backup-tenant-offsite.sh`).
 
 Zusätzlich lässt sich jede einzelne Woche über **Konto → Diese Woche als Datei sichern**
 als JSON ablegen und später wieder einlesen. Dieses Format liest auch die Dateien der

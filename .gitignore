@@ -19,6 +19,12 @@ Thumbs.db
 # generierte Binaerdaten -- gehoeren nicht ins Repo, blaehen die Historie auf)
 ops/offsite-backup-simulation/
 
+# Ablage der regulaeren, GPG-verschluesselten Voll-DB-Backups (siehe
+# ops/backup-db-encrypted.sh) -- wie oben: verschluesselte Binaerdaten,
+# gehoeren nicht ins Repo, und muessen ohnehin regelmaessig woanders (offsite)
+# abgelegt werden.
+ops/db-backups/
+
 # Lokale Rezeptbild-Ablage (AP2.1, projects/wochenplaner-rezeptkarten/plan.md):
 # Standard-Fallback von RECIPE_IMAGE_DIR ausserhalb von Docker (server.js).
 # Im Docker-Stack zeigt RECIPE_IMAGE_DIR stattdessen auf ein gemountetes
