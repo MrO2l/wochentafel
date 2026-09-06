@@ -147,6 +147,84 @@ async function buildWeekSaveBody(data, baseUpdatedAt) {
   return { data, baseUpdatedAt };
 }
 
+/* ---------------- AP2.2: beliebige Woche laden/speichern -----------------
+ * loadWeekDataFor()/saveWeekDataFor() sind die verallgemeinerten Geschwister von loadWeek()/save()
+ * fuer eine NICHT die aktuell geladene Woche (Next-Woche-Vorschau, Rezeptkarten-Zuweisung in eine
+ * zweite/dritte Woche via Einkaufstag-Auswahl) -- ohne den vollen state.data/dirty/saving-Zyklus,
+ * siehe Kommentar bei nextWeekStart/nextWeekData weiter unten. */
+
+// JS-Port von mergeTemplate() (server.js) -- fuer AP2.2 noetig, weil der Server einer
+// verschluesselten Vorlage nicht mehr ansehen kann, wie sie mit einer neuen Woche zu mergen ist
+// (GET /api/weeks/:monday liefert fuer eine noch nicht existierende Woche eines aktiven Haushalts
+// nur noch einen unbestueckten Standardaufbau + templateEncrypted:true, siehe server.js). Identische
+// Argumentreihenfolge wie im Server-Original: "week" (hier: die entschluesselte Vorlage) ist die
+// Basis und gewinnt bei Namenskonflikten, "template" (hier: der vom Server gelieferte
+// Standardaufbau) ergaenzt nur fehlende Zeilen/leere Zellen.
+function mergeTemplateClient(week, template) {
+  if (!template) return week;
+  const out = structuredClone(week);
+  const rowKey = r => (r.kind || '') + '|' + String(r.label || '').trim().toLowerCase();
+  const existing = new Set(out.rows.map(rowKey));
+  template.rows.forEach((trow, i) => {
+    const row = out.rows[i];
+    if (!row) {
+      const key = rowKey(trow);
+      if (trow.label && existing.has(key)) return;
+      out.rows[i] = structuredClone(trow);
+      existing.add(key);
+      return;
+    }
+    if (!row.label) row.label = trow.label;
+    if (!row.role) row.role = trow.role;
+    if (Array.isArray(trow.cells) && Array.isArray(row.cells)) {
+      trow.cells.forEach((cell, d) => {
+        if (cell.length && row.cells[d] && row.cells[d].length === 0) row.cells[d] = structuredClone(cell);
+      });
+    } else if (Array.isArray(trow.meals) && Array.isArray(row.meals)) {
+      trow.meals.forEach((tmeal, mi) => {
+        const meal = row.meals[mi];
+        if (!meal) return;
+        tmeal.cells.forEach((cell, d) => {
+          if (cell.length && meal.cells[d] && meal.cells[d].length === 0) meal.cells[d] = structuredClone(cell);
+        });
+      });
+    }
+  });
+  out.rows = out.rows.filter(Boolean);
+  return out;
+}
+
+// Laedt+entschluesselt eine BELIEBIGE Woche per ISO-Montag (nicht zwingend die aktuell geladene).
+// Uebernimmt fuer eine noch nicht existierende Woche eines aktiven Haushalts zusaetzlich das
+// Vorlagen-Merge, das der Server fuer diesen Fall nicht mehr selbst leisten kann (templateEncrypted).
+async function loadWeekDataFor(iso) {
+  const res = await api('GET', `/api/weeks/${iso}`);
+  const decoded = await decodeWeekResponse(res);
+  let data = decoded.data;
+  if (!res.exists && res.templateEncrypted) {
+    const tRes = await api('GET', '/api/template');
+    if (tRes.encrypted) {
+      const template = await WPCrypto.decryptJSON(WPCrypto.getHouseholdKey(), tRes.nonce, tRes.ciphertext);
+      data = mergeTemplateClient(structuredClone(template), data);
+    }
+  }
+  return { data, updatedAt: res.updatedAt, exists: res.exists, mustEncryptOnSave: decoded.mustEncryptOnSave };
+}
+
+// Speichert eine BELIEBIGE Woche per ISO-Montag zurueck. "mustEncrypt" kommt vom vorherigen
+// loadWeekDataFor()-Aufruf (siehe dort) -- bewusst NICHT state.weekEncrypted, das gilt nur fuer die
+// aktuell geladene Hauptwoche.
+async function saveWeekDataFor(iso, data, baseUpdatedAt, mustEncrypt) {
+  let body;
+  if (mustEncrypt) {
+    const { nonce, ciphertext } = await WPCrypto.encryptJSON(WPCrypto.getHouseholdKey(), data);
+    body = { encrypted: true, keyVersion: state.crypto?.keyVersion || 1, nonce, ciphertext, baseUpdatedAt };
+  } else {
+    body = { data, baseUpdatedAt };
+  }
+  return api('PUT', `/api/weeks/${iso}`, body);
+}
+
 /* ---------------- Tokens <-> DOM ---------------- */
 function tokensToFragment(tokens) {
   const frag = document.createDocumentFragment();
@@ -1635,16 +1713,31 @@ function initMealPlanToolbar() {
 
 /* ================= AP2 (projects/wochenplaner-design-nacharbeiten/plan.md, Stufe 1+2): Read-only-
    Vorschau + gezielt editierbare "Essen & Kochen"-Zeile der auf state.weekStart FOLGENDEN Woche
-   (#nextWeekPanel). Bewusst KEIN eigener state.data/dirty/save/baseUpdatedAt-Zyklus fuer diese
-   zweite Woche (MORROWs Kernempfehlung) -- nur die "mode:'week'"-Zeile wird lokal gehalten
-   (nextWeekMeal), Schreibzugriffe laufen ausschliesslich ueber die gezielten Endpunkte assign-
+   (#nextWeekPanel). Bewusst KEIN VOLLER state.data/dirty/saving/view-Zyklus fuer diese zweite Woche
+   (MORROWs Kernempfehlung) -- nur die "mode:'week'"-Zeile wird lokal gehalten (nextWeekMeal).
+   Schreibzugriffe laufen fuer PLAINTEXT-Haushalte weiterhin ueber die gezielten Endpunkte assign-
    recipe/set-meal-cell (beide mit targetWeekStart, server.js), siehe applyMealSlotTokens()/
-   submitMealSlotRecipe() weiter unten. Eigener Mobile-Tagesumschalter (nextWeekDay/#nextWeekDayNav)
-   komplett unabhaengig von state.mealDay/#mpDayNav, damit ein Wechsel des Vorschau-Tages die
-   aktuelle Wochenansicht nicht beeinflusst (und umgekehrt) -- dieselbe CSS-Spaltenausblendung wie
-   bei #mpTable, jetzt ueber die geteilte Klasse ".mobile-day-table" (siehe style.css). ================= */
+   submitMealSlotRecipe() weiter unten.
+   AP2.2-Ergaenzung: diese Endpunkte lehnen fuer AKTIVE (verschluesselte) Haushalte serverseitig ab
+   (der Server kann weeks.data nicht mehr lesen/aendern) -- fuer diesen Fall haelt
+   loadNextWeekPreview() zusaetzlich die VOLLE entschluesselte Vorschau-Woche (nextWeekData) plus
+   deren updatedAt (nextWeekUpdatedAt), damit ein "Zelle aendern"-Vorgang die komplette Woche lokal
+   neu verschluesseln und per PUT /api/weeks/:monday zurueckschreiben kann (siehe
+   assignRecipeClientSide()/loadWeekDataFor()/saveWeekDataFor() weiter unten) -- exakt das von
+   MORROW beschriebene "Client liest die ganze Woche, aendert lokal die eine Zelle, schickt die
+   komplette neu verschluesselte Woche zurueck"-Muster (ap1.2-datenmodell.md Abschnitt 6.3).
+   Eigener Mobile-Tagesumschalter (nextWeekDay/#nextWeekDayNav) komplett unabhaengig von
+   state.mealDay/#mpDayNav, damit ein Wechsel des Vorschau-Tages die aktuelle Wochenansicht nicht
+   beeinflusst (und umgekehrt) -- dieselbe CSS-Spaltenausblendung wie bei #mpTable, jetzt ueber die
+   geteilte Klasse ".mobile-day-table" (siehe style.css). ================= */
 let nextWeekStart = null; // ISO-Datum (Montag) der Vorschau-Woche, == addDays(state.weekStart, 7)
 let nextWeekMeal = null; // die "mode:'week'"-Zeile der Vorschau-Woche (row.meals[...]) oder null
+// AP2.2: volle entschluesselte Vorschau-Woche + ihr updatedAt, NUR fuer den verschluesselten
+// Schreib-Rueckweg gebraucht (siehe Kommentar oben) -- nextWeekMeal bleibt eine Referenz IN
+// nextWeekData.rows, Mutationen an nextWeekMeal wirken sich also automatisch auch hier aus.
+let nextWeekData = null;
+let nextWeekUpdatedAt = null;
+let nextWeekMustEncrypt = false;
 let nextWeekDay = 0; // Mobile-Tagesumschalter der Vorschau, unabhaengig von state.mealDay
 
 // Laedt die Vorschau neu, sobald sich die geladene Woche aendert (siehe loadWeek()). Ein
@@ -1654,13 +1747,15 @@ let nextWeekDay = 0; // Mobile-Tagesumschalter der Vorschau, unabhaengig von sta
 async function loadNextWeekPreview() {
   nextWeekStart = addDays(state.weekStart, 7);
   try {
-    const res = await api('GET', `/api/weeks/${nextWeekStart}`);
-    // AP2.1: dieselbe lokale Entschluesselung wie loadWeek() -- mustEncryptOnSave wird hier
-    // ignoriert (reine Vorschau, kein eigener save()-Zyklus fuer diese zweite Woche, siehe
-    // Kommentar oben bei nextWeekStart/nextWeekMeal).
-    const decoded = await decodeWeekResponse(res);
-    nextWeekMeal = decoded.data.rows.find(r => r && r.kind === 'shared' && r.mode === 'week') || null;
+    // AP2.2: loadWeekDataFor() statt eines direkten api('GET', ...) -- entschluesselt lokal UND
+    // holt/mergt bei Bedarf die (ggf. ebenfalls verschluesselte) Vorlage, siehe dort.
+    const loaded = await loadWeekDataFor(nextWeekStart);
+    nextWeekData = loaded.data;
+    nextWeekUpdatedAt = loaded.updatedAt;
+    nextWeekMustEncrypt = loaded.mustEncryptOnSave;
+    nextWeekMeal = nextWeekData.rows.find(r => r && r.kind === 'shared' && r.mode === 'week') || null;
   } catch (err) {
+    nextWeekData = null;
     nextWeekMeal = null;
     flash('Vorschau der nächsten Woche konnte nicht geladen werden: ' + err.message);
   }
@@ -1884,12 +1979,15 @@ function closeMealSlotDialog() {
 // AP2: schreibt "tokens" in die aktuell im Dialog bearbeitete Zelle (die 4 einfachen Optionen,
 // siehe handleMealSlotOption()/submitMealSlotText()) -- fuer die AKTUELL GELADENE Woche
 // unveraendert lokal (state.data-Mutation + markDirty(), derselbe Autosave-Weg wie jede andere
-// Zellenaenderung); fuer die AP2-Vorschau der naechsten Woche stattdessen ueber den gezielten
-// set-meal-cell-Endpunkt (server.js) -- explizit OHNE state.data/dirty/save-Zyklus fuer diese
-// zweite Woche (MORROWs Kernempfehlung). Kein "close"-Aufruf bei einem Fehler im Naechste-Woche-
-// Fall: der Dialog bleibt offen (Schritt unveraendert), Fehlermeldung per flash() (die betroffenen
-// Schritte -- Optionen/Freitext -- haben keine eigene Inline-Fehleranzeige, anders als die
-// Rezeptdetails-/Einkaufstag-Schritte).
+// Zellenaenderung, funktioniert dank AP2.1 bereits transparent verschluesselt). Fuer die AP2-
+// Vorschau der naechsten Woche: bei einem PLAINTEXT-Haushalt weiterhin ueber den gezielten
+// set-meal-cell-Endpunkt (server.js); bei einem AKTIVEN (verschluesselten) Haushalt lehnt dieser
+// Endpunkt serverseitig ab (der Server kann weeks.data nicht mehr lesen/aendern, siehe dortiger
+// Kommentar) -- AP2.2 schreibt fuer diesen Fall stattdessen die komplette, bereits lokal
+// gehaltene Vorschau-Woche (nextWeekData) neu verschluesselt zurueck (saveWeekDataFor()). Kein
+// "close"-Aufruf bei einem Fehler im Naechste-Woche-Fall: der Dialog bleibt offen (Schritt
+// unveraendert), Fehlermeldung per flash() (die betroffenen Schritte -- Optionen/Freitext --
+// haben keine eigene Inline-Fehleranzeige, anders als die Rezeptdetails-/Einkaufstag-Schritte).
 async function applyMealSlotTokens(tokens) {
   if (!mealSlotContext) return;
   const { meal, mi, d, weekStart, isNextWeek } = mealSlotContext;
@@ -1904,9 +2002,18 @@ async function applyMealSlotTokens(tokens) {
     return;
   }
   try {
-    await api('POST', `/api/weeks/${state.weekStart}/set-meal-cell`,
-      { targetWeekStart: weekStart, dayIndex: d, slotIndex: mi, tokens });
-    meal.cells[d] = tokens; // "meal" ist eine Referenz IN nextWeekMeal (siehe renderNextWeekBody()) -- Mutation wirkt sich direkt dort aus.
+    if (state.crypto?.encryptionStatus === 'active') {
+      // AP2.2: "meal" ist bereits eine Referenz IN nextWeekData (ueber nextWeekMeal) -- die
+      // Mutation unten wirkt sich automatisch dort aus, bevor die gesamte Woche verschluesselt
+      // zurueckgeschrieben wird.
+      meal.cells[d] = tokens;
+      const saved = await saveWeekDataFor(weekStart, nextWeekData, nextWeekUpdatedAt, nextWeekMustEncrypt);
+      nextWeekUpdatedAt = saved.updatedAt;
+    } else {
+      await api('POST', `/api/weeks/${state.weekStart}/set-meal-cell`,
+        { targetWeekStart: weekStart, dayIndex: d, slotIndex: mi, tokens });
+      meal.cells[d] = tokens; // "meal" ist eine Referenz IN nextWeekMeal (siehe renderNextWeekBody()) -- Mutation wirkt sich direkt dort aus.
+    }
     renderNextWeekPanel();
     closeMealSlotDialog();
   } catch (err) {
@@ -2110,6 +2217,41 @@ async function openMealSlotRecipeCell(meal, mi, d, recipeTok, weekCtx) {
     $('#msdRecipeSubmit').disabled = false;
   }
 }
+// AP2.2: clientseitiges Aequivalent zu POST .../assign-recipe fuer AKTIVE (verschluesselte)
+// Haushalte -- der Server kann weeks.data fuer diese Haushalte nicht mehr lesen/skalieren und lehnt
+// den Endpunkt serverseitig mit 409 ab (siehe dortiger Kommentar in server.js). Baut denselben
+// Rezept-Snapshot-Token wie der Server (identische Skalierungsformel/-rundung, siehe
+// scaleIngredientsClient()-Kommentar), schreibt ihn in die bereits lokal gehaltene Zielwoche
+// (state.data fuer die aktuelle Woche, nextWeekData fuer die Vorschau) und verschluesselt die
+// KOMPLETTE Woche neu zurueck -- MORROWs "Lese-Aendern-Schreiben"-Muster (ap1.2-datenmodell.md
+// Abschnitt 6.3). Liefert bewusst dieselbe Form wie die bisherige Server-Antwort
+// ({token, data, updatedAt}), damit der Rest von submitMealSlotRecipe() unten unveraendert bleibt.
+async function assignRecipeClientSide({ recipeId, dayIndex, slotIndex, servings, targetWeekStart, isNextWeek }) {
+  const recipe = mealSlotRecipe.recipe;
+  const scaledIngredients = scaleIngredientsClient(recipe.ingredients, recipe.baseServings, servings)
+    .map(ing => ({ amount: ing.amount, unit: ing.unit, name: ing.name }));
+  const recipeTitle = String(recipe.title || '').slice(0, 200).trim() || recipe.title;
+  const token = { t: 'recipe', recipeId, recipeTitle, servings, ingredients: scaledIngredients };
+
+  const targetData = isNextWeek ? nextWeekData : state.data;
+  const mealRow = targetData?.rows.find(r => r && r.kind === 'shared' && r.mode === 'week');
+  if (!mealRow) throw new Error('"Essen & Kochen"-Zeile in dieser Woche nicht gefunden');
+  mealRow.meals[slotIndex].cells[dayIndex] = [token];
+
+  let updatedAt;
+  if (isNextWeek) {
+    const saved = await saveWeekDataFor(targetWeekStart, targetData, nextWeekUpdatedAt, nextWeekMustEncrypt);
+    nextWeekUpdatedAt = saved.updatedAt;
+    updatedAt = saved.updatedAt;
+  } else {
+    // Aktuelle Woche: ueber den ganz normalen Speicherpfad, identisch zu jeder anderen
+    // Zellenaenderung -- save() aktualisiert state.updatedAt bereits selbst.
+    await save();
+    updatedAt = state.updatedAt;
+  }
+  return { token, data: targetData, updatedAt };
+}
+
 async function submitMealSlotRecipe(e) {
   e.preventDefault();
   setStepError('msdRecipeError', '');
@@ -2136,8 +2278,13 @@ async function submitMealSlotRecipe(e) {
 
     // AP2: targetWeekStart (== state.weekStart im Normalfall, == weekStart der Vorschau bei einer
     // Zuweisung in die naechste Woche) analog AP0s Erweiterung von add-ingredient-to-list.
-    const res = await api('POST', `/api/weeks/${state.weekStart}/assign-recipe`,
-      { recipeId, dayIndex: d, slotIndex: mi, servings, targetWeekStart: weekStart });
+    // AP2.2: fuer aktive (verschluesselte) Haushalte laeuft die Zuweisung komplett clientseitig
+    // (assignRecipeClientSide()) statt ueber den Server-Endpunkt, der fuer diese Haushalte mit 409
+    // ablehnt (server.js).
+    const res = (state.crypto?.encryptionStatus === 'active')
+      ? await assignRecipeClientSide({ recipeId, dayIndex: d, slotIndex: mi, servings, targetWeekStart: weekStart, isNextWeek })
+      : await api('POST', `/api/weeks/${state.weekStart}/assign-recipe`,
+          { recipeId, dayIndex: d, slotIndex: mi, servings, targetWeekStart: weekStart });
 
     const placedRow = res.data.rows.find(r => r.mode === 'week');
     const placedToken = placedRow?.meals?.[mi]?.cells?.[d]?.find(t => t.t === 'recipe');
@@ -2212,6 +2359,64 @@ async function submitMealSlotRecipe(e) {
    mehrere Zutaten in dieselbe (evtl. neu anzulegende) Zielwoche einander nicht per Race
    ueberschreiben (jeder Aufruf serialisiert ohnehin per FOR UPDATE serverseitig, sequentielle
    Aufrufe vermeiden zusaetzlich unnoetige 409/Retry-Faelle). */
+// JS-Port von formatIngredientText() (server.js) -- baut aus einer Zutat einen einzelnen
+// Anzeigetext fuer einen Tagesliste-Eintrag, identisch zum bisherigen Server-Format.
+function formatIngredientTextClient(ingredient) {
+  const amountUnit = [
+    typeof ingredient.amount === 'number' && Number.isFinite(ingredient.amount) ? String(ingredient.amount) : null,
+    ingredient.unit || null
+  ].filter(Boolean).join(' ');
+  return amountUnit ? `${amountUnit} ${ingredient.name}` : ingredient.name;
+}
+
+// AP2.2: clientseitiges Aequivalent zu POST .../add-ingredient-to-list fuer AKTIVE (verschluesselte)
+// Haushalte -- der Server kann weeks.data fuer diese Haushalte nicht mehr lesen/aendern (409, siehe
+// server.js). Die QUELL-Woche (Rezept-Snapshot) ist immer entweder die aktuelle (state.data) oder
+// die Vorschau-Woche (nextWeekData) -- der Dialog kennt keine dritte Quelle. Die ZIEL-Woche
+// (Einkaufsliste) kann dagegen eine voellig BELIEBIGE, noch nicht geladene Woche sein (frei per
+// Datumsauswahl gewaehlt) -- dafuer wird sie bei Bedarf ueber loadWeekDataFor() extra geholt.
+// Liefert dieselbe Form wie die bisherige Server-Antwort ({targetWeekStart, data, updatedAt}),
+// damit submitMealSlotShopDate() unten unveraendert bleibt.
+async function addIngredientToListClientSide({ sourceWeekStart, dayIndex, slotIndex, ingredientIndex, targetWeekStart, targetDayIndex }) {
+  const sourceData = sourceWeekStart === state.weekStart ? state.data
+    : sourceWeekStart === nextWeekStart ? nextWeekData
+    : null;
+  const sourceMealRow = sourceData?.rows.find(r => r && r.kind === 'shared' && r.mode === 'week');
+  const recipeTok = sourceMealRow?.meals?.[slotIndex]?.cells?.[dayIndex]?.find(t => t && t.t === 'recipe');
+  if (!recipeTok) throw new Error('In dieser Zelle ist aktuell kein Rezept zugewiesen');
+  const ingredient = recipeTok.ingredients[ingredientIndex];
+  if (!ingredient) throw new Error('Zutat mit diesem Index nicht gefunden');
+
+  let targetData, targetBaseUpdatedAt, targetMustEncrypt;
+  if (targetWeekStart === state.weekStart) {
+    targetData = state.data; targetBaseUpdatedAt = state.updatedAt; targetMustEncrypt = state.weekEncrypted;
+  } else if (targetWeekStart === nextWeekStart) {
+    targetData = nextWeekData; targetBaseUpdatedAt = nextWeekUpdatedAt; targetMustEncrypt = nextWeekMustEncrypt;
+  } else {
+    // Dritte, noch nicht geladene Woche -- eigener Laden+Entschluesseln+Vorlagen-Merge-Zyklus.
+    const loaded = await loadWeekDataFor(targetWeekStart);
+    targetData = loaded.data; targetBaseUpdatedAt = loaded.updatedAt; targetMustEncrypt = loaded.mustEncryptOnSave;
+  }
+  const listRow = targetData.rows.find(r => r && r.kind === 'shared' && r.listMode === true);
+  if (!listRow) throw new Error('"Einkauf & Besorgungen"-Zeile in der Zielwoche nicht gefunden');
+  const targetList = listRow.cells[targetDayIndex];
+  // 40 == LIMITS.listItems in server.js (cleanListItems()) -- identischer Wert, hier hart
+  // hinterlegt, da LIMITS eine reine Server-Konstante ist.
+  if (targetList.length >= 40) throw new Error('Tagesliste ist bereits voll (max. 40 Einträge)');
+  targetList.push({ done: false, tokens: [{ t: 'text', v: formatIngredientTextClient(ingredient) }] });
+
+  let updatedAt;
+  if (targetWeekStart === state.weekStart) {
+    await save();
+    updatedAt = state.updatedAt;
+  } else {
+    const saved = await saveWeekDataFor(targetWeekStart, targetData, targetBaseUpdatedAt, targetMustEncrypt);
+    updatedAt = saved.updatedAt;
+    if (targetWeekStart === nextWeekStart) nextWeekUpdatedAt = updatedAt;
+  }
+  return { targetWeekStart, data: targetData, updatedAt };
+}
+
 async function submitMealSlotShopDate(e) {
   e.preventDefault();
   setStepError('msdShopDateError', '');
@@ -2230,8 +2435,13 @@ async function submitMealSlotShopDate(e) {
     // Zuweisung gerade dort erfolgt ist (siehe submitMealSlotRecipe()). Nicht zu verwechseln mit
     // "targetWeekStart" (Ziel der Einkaufsliste, aus dem gewaehlten Datum oben).
     for (const ingredientIndex of indexes) {
-      const res = await api('POST', `/api/weeks/${sourceWeekStart}/add-ingredient-to-list`,
-        { dayIndex, slotIndex, ingredientIndex, targetDayIndex, targetWeekStart });
+      // AP2.2: fuer aktive (verschluesselte) Haushalte laeuft die Uebernahme komplett clientseitig
+      // (addIngredientToListClientSide()) statt ueber den Server-Endpunkt, der fuer diese Haushalte
+      // mit 409 ablehnt (server.js).
+      const res = (state.crypto?.encryptionStatus === 'active')
+        ? await addIngredientToListClientSide({ sourceWeekStart, dayIndex, slotIndex, ingredientIndex, targetDayIndex, targetWeekStart })
+        : await api('POST', `/api/weeks/${sourceWeekStart}/add-ingredient-to-list`,
+            { dayIndex, slotIndex, ingredientIndex, targetDayIndex, targetWeekStart });
       // AP0-Vorgabe: state.data/state.updatedAt nur uebernehmen, wenn die tatsaechlich
       // beschriebene Woche der aktuell geladenen entspricht (identische Begruendung wie beim
       // AP0-Ruecklauf/submitMealSlotRecipe() oben).
