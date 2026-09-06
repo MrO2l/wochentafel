@@ -11,6 +11,17 @@
  * genau einem household_id und schreibt das Ergebnis als portables
  * JSON-Dokument nach STDOUT.
  *
+ * NACHTRAG (Rezeptkarten-Feature, urspruenglich am 2026-08-30 als Luecke
+ * dokumentiert -- knowledge/entries/2026-08-30-rezeptkarten-feature-
+ * abschluss-wochenplaner.md): exportiert zusaetzlich die fuenfte fachliche
+ * Tabelle `recipes` (household-gebundene Rezeptkarten, siehe
+ * migrations/008_recipes.sql). `recipes.image_path` referenziert NUR einen
+ * Dateinamen (kein Pfad, kein Blob in der DB) -- die eigentliche Bilddatei
+ * wird von DIESEM Skript NICHT gesichert, sondern separat ueber das
+ * Volume-Backup (ops/backup-tenant-offsite.sh / ops/restore-tenant-from-
+ * offsite.sh). Ein vollstaendiger Tenant-Umzug erfordert daher BEIDES:
+ * dieses JSON-Dokument UND das Volume-Backup der Bilddateien.
+ *
  * Rollenwahl (WICHTIG): verbindet bewusst ueber DATABASE_URL (Owner-/
  * Migrator-Rolle), NICHT DATABASE_URL_APP. Backup ist ein administrativer
  * Vorgang, kein App-Laufzeitzugriff (siehe Briefing AP3.2) -- die
@@ -58,7 +69,9 @@ Verwendung:
   node scripts/export-tenant.mjs --household-id <id> > export.json
 
 Schreibt ein JSON-Dokument mit allen Daten des angegebenen Haushalts
-(households/users/weeks/invites) nach STDOUT. Fehler-/Statusmeldungen gehen
+(households/users/weeks/invites/recipes) nach STDOUT. Bilddateien zu
+recipes.image_path sind NICHT enthalten (separates Volume-Backup, siehe
+Kommentar am Dateikopf). Fehler-/Statusmeldungen gehen
 nach STDERR, damit STDOUT ausschliesslich das reine Exportdokument enthaelt
 (wichtig fuer die Weiterverarbeitung/Pipe in ops/backup-tenant-offsite.sh).
 
@@ -105,6 +118,18 @@ async function main() {
       `SELECT code, household_id, created_by, created_at, expires_at, used_at, used_by
          FROM invites WHERE household_id = $1 ORDER BY created_at`, [householdId]);
 
+    // recipes: household-gebundene Rezeptkarten (migrations/008_recipes.sql).
+    // Kein FK von weeks auf recipes -- die Grid-Zuweisung ist ein
+    // unabhaengiger Snapshot-Token in weeks.data (recipeId ist informativ,
+    // kein DB-FK, darf ins Leere zeigen) -- deshalb hier unabhaengig von
+    // weeks exportierbar, keine Reihenfolgen-Kopplung noetig.
+    // image_path ist NUR ein Dateiname, siehe Kommentar am Dateikopf --
+    // die Bilddatei selbst wird hier NICHT mit exportiert.
+    const recipesRes = await client.query(
+      `SELECT id, household_id, title, base_servings, instructions, ingredients,
+              image_path, created_at, updated_at, created_by, updated_by
+         FROM recipes WHERE household_id = $1 ORDER BY id`, [householdId]);
+
     // Bewusst KEIN Zugriff auf/Export von "session" -- ephemerer
     // Sitzungsspeicher (connect-pg-simple), keine Kundendaten im fachlichen
     // Sinn, siehe ap1.1-datenmodell-migration.md ("Migrationsweg").
@@ -116,12 +141,14 @@ async function main() {
       users: usersRes.rows,
       weeks: weeksRes.rows,
       invites: invitesRes.rows,
+      recipes: recipesRes.rows,
     };
 
     process.stdout.write(JSON.stringify(doc));
     console.error(
       `Export ok: household_id=${householdId} ("${householdsRes.rows[0].name}"), ` +
-      `${usersRes.rowCount} Nutzer, ${weeksRes.rowCount} Wochen, ${invitesRes.rowCount} Einladungen.`);
+      `${usersRes.rowCount} Nutzer, ${weeksRes.rowCount} Wochen, ${invitesRes.rowCount} Einladungen, ` +
+      `${recipesRes.rowCount} Rezepte.`);
   } finally {
     await client.end();
   }

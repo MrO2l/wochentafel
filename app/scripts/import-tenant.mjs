@@ -48,6 +48,24 @@
  *     als Warnung gemeldet -- Einladungscodes sind keine kritischen
  *     Kundendaten, ein einzelner uebersprungener Code darf den Restore der
  *     eigentlichen Haushalts-/Nutzer-/Wochendaten nicht verhindern.
+ *   - recipes.id: analog weeks.id wird IMMER eine frische id vergeben
+ *     (id-Spalte im INSERT bewusst ausgelassen, bigserial-Default) --
+ *     keine PK-Kollision moeglich, kein Mapping fuer recipes.id noetig, weil
+ *     keine andere Tabelle recipes.id per DB-FK referenziert (weeks.data
+ *     enthaelt hoechstens einen informativen recipeId-Snapshot-Token, kein
+ *     DB-FK, siehe migrations/008_recipes.sql). recipes.created_by/
+ *     updated_by werden wie weeks.updated_by ueber das bestehende
+ *     userIdMap alt->neu uebersetzt. Weil recipes unabhaengig von weeks
+ *     ist, gibt es keine Reihenfolgen-Kopplung zwischen beiden Tabellen
+ *     beim Import.
+ *
+ * NACHTRAG (Rezeptkarten-Feature, urspruenglich am 2026-08-30 als Luecke
+ * dokumentiert): recipes.image_path referenziert NUR einen Dateinamen, kein
+ * Pfad, kein Blob in der DB. Dieses Skript stellt AUSSCHLIESSLICH die
+ * DB-Zeile wieder her, NICHT die Bilddatei selbst -- die Bilddatei muss
+ * separat ueber das Volume-Backup (ops/backup-tenant-offsite.sh / ops/
+ * restore-tenant-from-offsite.sh) wiederhergestellt werden, sonst zeigt
+ * image_path nach dem Restore ins Leere.
  *
  * Isolationsnachweis: Da dieses Skript ausschliesslich INSERTs auf frisch
  * reservierte bzw. explizit gepruefte households.id-Werte ausfuehrt, werden
@@ -116,7 +134,12 @@ Optionen:
 Voraussetzung: Umgebungsvariable DATABASE_URL (Owner-/Migrator-Rolle) muss
 gesetzt sein -- im Docker-Compose-Stack bereits der Fall. Die Ziel-DB muss
 das Schema aus app/migrations/ bereits enthalten (households/users/weeks/
-invites-Tabellen vorhanden).
+invites/recipes-Tabellen vorhanden).
+
+Hinweis: recipes.image_path verweist nur auf einen Dateinamen. Die
+eigentliche Bilddatei wird von diesem Skript NICHT wiederhergestellt --
+separat ueber das Volume-Backup restaurieren (ops/restore-tenant-from-
+offsite.sh), sonst zeigt image_path nach dem Restore ins Leere.
 `);
 }
 
@@ -204,6 +227,7 @@ async function main() {
   const srcUsers = doc.users || [];
   const srcWeeks = doc.weeks || [];
   const srcInvites = doc.invites || [];
+  const srcRecipes = doc.recipes || [];
 
   const client = new pg.Client({ connectionString: targetConnectionString });
   await client.connect();
@@ -309,10 +333,41 @@ async function main() {
     }
 
     // ------------------------------------------------------------------
-    // 5. Validierung vor dem Commit (Zaehlvergleich Quelle/Ziel, analog
+    // 5. Rezeptkarten. Kein Mapping fuer recipes.id noetig (kein DB-FK
+    //    referenziert recipes.id, siehe Kommentar am Dateikopf) -- id-Spalte
+    //    bewusst nicht angegeben, bigserial vergibt automatisch eine
+    //    kollisionsfreie neue id. created_by/updated_by ueber userIdMap
+    //    uebersetzt, analog weeks.updated_by. Unabhaengig von weeks
+    //    importierbar, keine Reihenfolgen-Kopplung zwischen beiden Tabellen.
+    //    image_path wird 1:1 als Dateiname mitgenommen -- die Bilddatei
+    //    selbst NICHT (separates Volume-Backup, siehe Kommentar am
+    //    Dateikopf).
+    // ------------------------------------------------------------------
+    let recipesInserted = 0;
+    for (const r of srcRecipes) {
+      const createdBy = r.created_by != null ? (userIdMap.get(r.created_by) ?? null) : null;
+      const updatedBy = r.updated_by != null ? (userIdMap.get(r.updated_by) ?? null) : null;
+      // r.ingredients ist nach JSON.parse(STDIN) ein JS-Array. node-postgres
+      // serialisiert rohe JS-Arrays als Postgres-ARRAY-Literal ("{...}"),
+      // NICHT als JSON -- fuer eine jsonb-Spalte muss daher explizit
+      // JSON.stringify() erfolgen, sonst schlaegt der INSERT mit "invalid
+      // input syntax for type json" fehl. Gleiches Muster wie in server.js
+      // (POST/PUT /api/recipes, JSON.stringify(clean.ingredients)).
+      await client.query(
+        `INSERT INTO recipes (household_id, title, base_servings, instructions, ingredients,
+                               image_path, created_at, updated_at, created_by, updated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [newHouseholdId, r.title, r.base_servings, r.instructions, JSON.stringify(r.ingredients),
+          r.image_path, r.created_at, r.updated_at, createdBy, updatedBy]);
+      recipesInserted++;
+    }
+
+    // ------------------------------------------------------------------
+    // 6. Validierung vor dem Commit (Zaehlvergleich Quelle/Ziel, analog
     //    ap1.1-konsolidierungs-vorlage.sql Abschnitt 5)
     // ------------------------------------------------------------------
-    const ok = srcUsers.length === userIdMap.size && srcWeeks.length === weeksInserted;
+    const ok = srcUsers.length === userIdMap.size && srcWeeks.length === weeksInserted
+      && srcRecipes.length === recipesInserted;
 
     if (dryRun || !ok) {
       await client.query('ROLLBACK');
@@ -326,7 +381,12 @@ async function main() {
     console.error(
       `${dryRun ? '[dry-run] ' : ''}Restore ${ok ? 'ok' : 'FEHLGESCHLAGEN'}: neue household_id=${newHouseholdId} ` +
       `("${srcHousehold.name}"), ${userIdMap.size}/${srcUsers.length} Nutzer, ` +
-      `${weeksInserted}/${srcWeeks.length} Wochen, ${invitesInserted}/${srcInvites.length} Einladungen.`);
+      `${weeksInserted}/${srcWeeks.length} Wochen, ${invitesInserted}/${srcInvites.length} Einladungen, ` +
+      `${recipesInserted}/${srcRecipes.length} Rezepte.`);
+    if (srcRecipes.some(r => r.image_path)) {
+      console.error('Hinweis: recipes.image_path wurde als Dateiname wiederhergestellt, ' +
+        'die zugehoerigen Bilddateien selbst NICHT -- separat aus dem Volume-Backup restaurieren.');
+    }
     if (skippedInviteCodes.length > 0) {
       console.error(`Warnung: ${skippedInviteCodes.length} Einladungscode(s) wegen Kollision uebersprungen: ` +
         skippedInviteCodes.join(', '));
