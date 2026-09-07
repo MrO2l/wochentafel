@@ -121,17 +121,15 @@
   </div>
 </section>
 
-<!-- ================= Screenshot-Sektion (Scrollytelling) =================
+<!-- ================= Screenshot-Sektion =================
      Ersetzt die bisherige kleine .gallery-grid-Kartenreihe: Screenshot ueber die volle Breite,
      dazugehoerige Infotext-Karte liegt darueber und ueberlappt leicht den oberen Bildrand
-     (reines Layout-CSS, siehe landing.css). Beim Durchscrollen bleibt der Screenshot gepinnt
-     (position:sticky) und die Textkarte blendet per CSS Scroll-Driven Animation
-     (animation-timeline) ein und wieder aus -- kein JavaScript, bleibt damit AP5-konform (siehe
-     Kommentar im <head> oben, "rein statische Landingpage"). Reihenfolge identisch zu den
-     Feature-Kacheln oben. Ohne Browser-Support fuer Scroll-Driven Animations zeigt die
-     @supports-Absicherung in landing.css den fertigen Endzustand: Textkarte + Screenshot normal
-     gestapelt, voll sichtbar, ohne Sticky-Pinning und ohne Animation -- vollstaendig lesbar,
-     kein kaputtes Layout. -->
+     (reines Layout-CSS, siehe landing.css). Die 4 Items werden nacheinander in normalem,
+     kompaktem Dokumentfluss angezeigt -- kein JavaScript (bleibt damit AP5-konform, siehe
+     Kommentar im <head> oben, "rein statische Landingpage"), kein Sticky-Pinning, keine
+     Scroll-Driven Animation mehr (Nutzerentscheidung 2026-09-07, siehe landing.css: die
+     fruehere "Scroll-Variante" machte die Seite unnoetig lang). Reihenfolge identisch zu den
+     Feature-Kacheln oben. -->
 <section class="landing-section scrolly" aria-labelledby="gallery-h2">
   <div class="container">
     <h2 id="gallery-h2">So sieht's in echt aus</h2>

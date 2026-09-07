@@ -463,6 +463,22 @@ dialog.daylist{
   background:var(--surface); width:100%; max-width:640px; border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,.3);
 }
 dialog.daylist::backdrop{background:rgba(20,26,32,.45)}
+
+/* Nutzer-Feedback (2026-09-06, "Entsperren"-Dialog, projects/wochenplaner-termine-
+   verschluesselung/plan.md, AP2.1): #unlockDialog erscheint -- anders als die uebrigen
+   .daylist-Dialoge (z.B. #daylist selbst, bewusst nahe am oberen Rand, siehe Kommentar oben) --
+   SOFORT beim Seitenaufruf, noch bevor irgendein anderer Seiteninhalt sichtbar ist. Echte
+   Bildschirmmitte (statt des von .daylist geerbten "top:26px") stellt sicher, dass der Dialog
+   nicht z.B. von einem Passwort-Manager-Popup ueberlagert werden kann. ID-Selektor ueberschreibt
+   gezielt nur die Positionierung, Breite/Optik/Schatten bleiben von .daylist geerbt. */
+#unlockDialog{ top:50%; transform:translate(-50%, -50%); }
+
+/* Nutzer-Feedback (2026-09-06): zu wenig Abstand zwischen Eingabefeld und "Entsperren"-Button --
+   .form-control (style-v2.css) bringt von sich aus keinerlei margin-bottom mit, und
+   #unlockError bleibt im Normalfall unsichtbar (hidden-Attribut, keine eigene Hoehe), sodass
+   bisher nur der Button-eigene, knappe Inline-Abstand uebrig blieb. */
+#unlockForm .form-control{ margin-bottom:1rem; }
+#unlockForm button[type="submit"]{ margin-top:.25rem; }
 /* Design-Mischmasch-Fix, zweite Runde (Nutzer-Feedback 2026-08-19): der Pastell-Farbtupfer-
    Verlauf hier gehoert zur selben veralteten Design-Runde wie der frueher entfernte
    body{background}-Verlauf (siehe dortiger Kommentar) und wurde ebenso ersatzlos durch eine

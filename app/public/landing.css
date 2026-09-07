@@ -162,25 +162,17 @@ a{ color:var(--primary) }
    ebenso NACH der Basisregel platziert, damit die Ueberschreibung zuverlaessig greift. */
 .feature-card--print p{ max-width:520px; margin:0 auto }
 
-/* ---------------- Screenshot-Sektion (Scrollytelling) ----------------
- * Basisregeln unten gelten IMMER (auch ohne Scroll-Driven-Animation-Support) und zeigen bereits
- * den fertigen Endzustand: Screenshot ueber die volle Breite (bis max-width:1120px), Textkarte
- * darueber, die per negativem margin-bottom leicht auf das Bild ueberlappt -- das ist reine
- * Layout-CSS (kein Scroll-Trick) und funktioniert daher in JEDEM Browser identisch, auch ohne
- * das @supports-Enhancement weiter unten. Kein Grid-Spalten-Split mehr (frueher 3fr/2fr
- * nebeneinander) -- damit entfaellt auch der zuvor gemeldete Bug ungleicher Spaltenbreiten bei
- * vertauschten Items strukturell, es gibt keine zwei Spalten unterschiedlicher Breite mehr.
- * Das @supports-Enhancement haengt nur noch das Sticky-Pinning des Screenshots + den Ein-/
- * Ausblend-Effekt der Textkarte zusaetzlich an -- progressive enhancement, kein zweiter
- * Layout-Zustand, den man separat pflegen muesste.
+/* ---------------- Screenshot-Sektion ----------------
+ * Nutzerentscheidung (2026-09-07): die fruehere "Scroll-Variante" (Screenshot per position:sticky
+ * gepinnt, Textkarte blendet ueber eine CSS Scroll-Driven Animation waehrend ~150dvh Scroll-
+ * Strecke pro Screenshot ein/aus -- siehe Git-Historie fuer die entfernte @supports-Regel) wurde
+ * wieder verworfen: sie machte die Landingpage insgesamt sehr lang (4 Screenshots x ~150dvh
+ * Scroll-Strecke). Die 4 Items werden jetzt wieder in normalem, kompaktem Dokumentfluss
+ * nacheinander angezeigt -- Reihenfolge und Inhalt unveraendert, nur ohne Sticky-Pinning und
+ * ohne die ueberlangen Scroll-Spuren. Screenshot ueber die volle Breite (bis max-width:1120px/
+ * 1400px, siehe .scrolly-panel unten), Textkarte darueber, die per negativem margin-bottom
+ * leicht auf das Bild ueberlappt -- reine Layout-CSS, kein Scroll-Trick.
  */
-:root{
-  /* Hoehe von .landing-header: 40px Brand-Mark + 2x.75rem vertikales Padding + 1px Border
-     (siehe Zeile 22-33) -- als Variable, damit der gepinnte Screenshot unten den Sticky-Header
-     nicht ueberdeckt. */
-  --header-h:64px;
-}
-
 .scrolly-item{ padding:3rem 0 }
 /* Dezent unterschiedlicher Hintergrund je Screenshot-Abschnitt, damit der Wechsel beim
    Durchscrollen als "neues Kapitel" wahrnehmbar ist. Erste Deklaration je Regel ist ein fester
@@ -236,72 +228,6 @@ a{ color:var(--primary) }
   margin:0; border-radius:var(--radius); overflow:hidden; box-shadow:0 .2rem .7rem rgba(74,63,46,.1);
 }
 .scrolly-figure img{ display:block; width:100%; height:auto; background:var(--secondary) }
-
-/* Enhancement: der Screenshot bleibt beim Durchscrollen des Items gepinnt (position:sticky),
-   waehrend die ueberlappende Textkarte per Scroll-Driven Animation ein- und wieder ausblendet --
-   nur wenn der Browser das unterstuetzt (Chrome/Edge; Firefox/Safari seit ca. 2025). @supports
-   mit einer konkreten Wertpruefung (nicht nur Property-Name) scheitert in aelteren Browsern
-   zuverlaessig an der Syntaxpruefung, greift dort also gar nicht erst ein.
-   view-timeline-name auf dem hohen .scrolly-panel-Track (statt animation-timeline:view()
-   direkt an der kleinen Textkarte) spannt die Ein-/Ausblend-Phasen ueber die GESAMTE Scroll-
-   Strecke des Panels auf -- so bleibt die Karte laenger sichtbar, waehrend der Screenshot
-   gepinnt ist, statt nur waehrend der kurzen Zeit, in der die Karte selbst durchs Sichtfeld
-   laeuft.
-   WICHTIG (Fix nach visueller Pruefung): .scrolly-figure ist sticky *innerhalb von
-   .scrolly-panel* -- der sticky "Containing Block" ist also .scrolly-panel, NICHT
-   .scrolly-item. .scrolly-item hatte bisher zwar min-height:160dvh, aber nur MIN-HEIGHT, keine
-   explizite height -- und Kind-Elemente mit height:100% resolven per Spezifikation NICHT gegen
-   eine min-height des Elternelements (nur gegen eine explizit gesetzte height), sondern gegen
-   auto. .scrolly-panel hatte also in Wirklichkeit nur seine natuerliche Inhaltshoehe (Textkarte
-   + Bild, ca. 650-700px) statt der vollen Item-Spur -- der Screenshot loeste sich dadurch viel
-   frueher vom Pinning als gedacht, und der Rest der Spur scrollte als leere Flaeche vorbei (der
-   urspruenglich gemeldete Bug). Fix: min-height direkt auf .scrolly-panel selbst gesetzt (statt
-   auf .scrolly-item + height:100%-Weiterreichung) -- damit ist .scrolly-panel selbst das Element
-   mit expliziter Mindesthoehe UND der sticky-Containing-Block, keine Prozent-Vererbung mehr
-   noetig. .scrolly-item bekommt dadurch automatisch dieselbe Hoehe (Block-Elternelement waechst
-   mit seinem einzigen Kind), der Hintergrund-Farbwechsel weiter unten bleibt also weiterhin
-   ueber die volle Spur sichtbar. Zusaetzlich min-height von 160dvh auf 125dvh reduziert und die
-   Keyframe-Prozentsaetze gestrafft (kuerzeres Ein-/Ausblenden, laengere Lesezeit dazwischen),
-   damit der Uebergang zum naechsten Screenshot dichter am sichtbaren Inhalt liegt statt auf
-   Leerlaufstrecke zu warten. */
-/* Nachrechnung fuer die 25%-Vergroesserung des Screenshots (max-width 1120px -> 1400px):
-   Bildseitenverhaeltnis 1568:782 ~ 2:1, effektive Bildbreite bei voller Panelbreite (1400px -
-   2x1rem Padding) = 1368px -> Bildhoehe ~1368/2 = 684px (vorher bei 1120px Panel: ~543px).
-   Der sticky-Spielraum (wie lange das Bild tatsaechlich gepinnt sichtbar bleibt, bevor die
-   .scrolly-panel-Hoehe "aufgebraucht" ist) ergibt sich aus: Panel-Mindesthoehe minus
-   [Sticky-top-Offset (--header-h 64px + 1.5rem 24px = 88px) + Abstand vom Panel-Anfang bis zum
-   Bild (padding-top 1.5rem=24px + Textkarte ~150px hoch, davon 3rem/48px durch den negativen
-   margin-bottom wieder abgezogen, macht ~126px) + Bildhoehe 684px] = Panel-Mindesthoehe - 898px.
-   Bei den bisherigen 125dvh waere dieser Puffer bei einer typischen 800px hohen Anzeigeflaeche
-   nur noch 1000-898=102px (statt vorher, bei kleinerem Bild, ~226px) -- das wuerde den
-   Leerraum-Fix von oben durch die Vergroesserung wieder teilweise aufheben, besonders auf
-   niedrigeren Anzeigeflaechen (bei 700px Anzeigeflaeche waere der Puffer sogar NEGATIV, das Bild
-   koennte sich dann gar nicht mehr sinnvoll fixieren). Deshalb min-height von 125dvh auf 150dvh
-   angehoben: bei 700px Anzeigeflaeche ergibt das 1050-898=152px Puffer (wieder positiv,
-   ausreichend), bei 800px 1200-898=302px, bei 900px 1350-898=452px -- durchgehend ein
-   vergleichbarer oder groesserer Puffer als vor der Bildvergroesserung, ohne wieder auf die
-   urspruenglichen (zu langen) 160dvh zurueckzugehen. */
-@supports (animation-timeline: view()) {
-  .scrolly-item{ padding:0 }
-  .scrolly-panel{
-    min-height:150dvh; padding-top:1.5rem;
-    view-timeline-name:--scrolly-reveal; view-timeline-axis:block;
-  }
-  .scrolly-figure{ position:sticky; top:calc(var(--header-h) + 1.5rem) }
-  .scrolly-text{
-    opacity:0; transform:translateY(24px);
-    animation:scrolly-reveal linear both;
-    animation-timeline:--scrolly-reveal;
-    animation-range:cover 0% cover 100%;
-  }
-  @keyframes scrolly-reveal{
-    0%  { opacity:0; transform:translateY(24px) }
-    12% { opacity:1; transform:translateY(0) }
-    70% { opacity:1; transform:translateY(0) }
-    85% { opacity:0; transform:translateY(-24px) }
-    100%{ opacity:0; transform:translateY(-24px) }
-  }
-}
 
 /* ---------------- Abschluss-CTA ---------------- */
 .landing-cta{

@@ -2855,13 +2855,23 @@ function initAccountView() {
   };
 
   // AP2.6: Passwort-Aendern/Wiederherstellungscode-Karten brauchen einen bereits entsperrten
-  // Haushalts-Schluessel im Speicher (Re-Wrap-Prinzip) -- fuer einen noch nicht aktivierten
-  // (plaintext) Haushalt gibt es schlicht keinen Wrap, den man neu verpacken koennte. Statt
-  // Formularfelder unbrauchbar anzuzeigen, blenden wir beide Karten dann mit einer kurzen
-  // Erklaerung aus.
+  // Haushalts-Schluessel im Speicher (Re-Wrap-Prinzip) -- ohne einen eigenen, bereits bestehenden
+  // password-Wrap gibt es schlicht nichts, was man neu verpacken koennte. Statt Formularfelder
+  // unbrauchbar anzuzeigen, blenden wir beide Karten dann mit einer kurzen Erklaerung aus.
+  //
+  // Bugfix (Nutzer-Feedback 2026-09-06): urspruenglich wurde hier auf state.crypto.
+  // encryptionStatus==='active' geprueft (Zustand des GESAMTEN Haushalts) statt auf
+  // state.crypto.wrappedKey (Zustand DIESES Kontos). Das versteckte die Karten unnoetig auch
+  // fuer das MITGLIED, das den AP2.3-Bootstrap bereits selbst abgeschlossen hat, waehrend der
+  // Haushalt insgesamt noch auf 'activating' steht (zweites Mitglied hat noch nicht aktiviert) --
+  // dieses Mitglied hat zu diesem Zeitpunkt aber bereits einen eigenen, gueltigen password-Wrap
+  // und koennte ihn problemlos re-wrappen. Massgeblich ist daher wrappedKey (Konto-Ebene), nicht
+  // encryptionStatus (Haushalts-Ebene) -- fuer ein Nachzuegler-Mitglied ganz ohne eigenen Wrap
+  // (nur pendingWrap, siehe boot()) bleibt wrappedKey weiterhin null, die Karten bleiben also
+  // korrekt ausgeblendet.
   const pwCard = $('#acctPwForm').closest('.card');
   const recoveryCard = $('#acctRecoveryRegen').closest('.card');
-  if (state.crypto?.encryptionStatus !== 'active') {
+  if (!state.crypto?.wrappedKey) {
     pwCard.hidden = true;
     recoveryCard.hidden = true;
   } else {
