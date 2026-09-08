@@ -140,6 +140,32 @@
  *     Prinzip wie bei template_data oben) -- lediglich JSON.stringify() vor dem INSERT noetig,
  *     siehe Kommentar bei den beiden betroffenen INSERT-Stellen (Postgres quotiert einen rohen
  *     JS-String sonst nicht automatisch, "invalid input syntax for type json").
+ *
+ * NACHTRAG (AP6.4, Migration 011_email_blind_index.sql, MORROW ap6.3-datenmodell.md):
+ *   - users.email ist jetzt ebenfalls jsonb (identisches Muster/identische Begruendung wie
+ *     users.name oben) -- JSON.stringify(u.email) vor dem INSERT, siehe dortige Stelle.
+ *   - NEU: users.email_lookup (bytea, der E-Mail-Blindindex) wird 1:1 mitgenommen (base64 ->
+ *     Buffer via unb64(), export-tenant.mjs exportiert ihn seit AP6.4 entsprechend) -- OHNE diesen
+ *     Wert waere ein importierter Nutzer, dessen email bereits ein Ciphertext-Envelope ist (Client-
+ *     Sweep bereits gelaufen), dauerhaft nicht mehr einloggbar (der Boot-Backfill in server.js kann
+ *     email_lookup nur aus einem noch KLARTEXT-jsonb-String nachberechnen, siehe dortiger
+ *     Kommentar). Dieses Skript berechnet email_lookup an keiner Stelle selbst (kein Zugriff auf
+ *     EMAIL_HMAC_KEY noetig/vorgesehen, konsistent mit dem "kein Kryptografie-Schritt"-Prinzip
+ *     dieses Skripts, siehe Kommentar am Dateikopf oben).
+ *   - GEAENDERT: die bisherige Kollisionspruefung "SELECT email FROM users WHERE lower(email) =
+ *     ANY($1::text[])" (AP3.2) funktioniert nach dem Typ-Umbau text->jsonb nicht mehr (lower()
+ *     kennt keinen jsonb-Parameter, "function lower(jsonb) does not exist") UND spiegelt seit
+ *     Migration 011 ohnehin nicht mehr den tatsaechlichen DB-Constraint wider: der einzige
+ *     DB-seitige Duplikat-Schutz ist jetzt users_email_lookup_uidx (UNIQUE INDEX auf
+ *     email_lookup), NICHT mehr die email-Spalte selbst. Die neue Pruefung vergleicht daher
+ *     email_lookup-Bytes direkt -- exakt der Wert, den die DB tatsaechlich als eindeutig
+ *     erzwingt. EINSCHRAENKUNG (dokumentiertes Restrisiko, siehe Kommentar an der Pruefstelle
+ *     unten): fuer Quelldokumente OHNE email_lookup (Exporte von vor AP6.4) kann diese
+ *     Vorab-Pruefung nicht greifen -- das Skript kann ohne EMAIL_HMAC_KEY (bewusst nicht
+ *     vorgesehen, siehe oben) keinen eigenen email_lookup-Wert berechnen. Ein echter Duplikat-Fall
+ *     wuerde in diesem Sonderfall erst beim naechsten Boot-Backfill sichtbar (dort dann als
+ *     protokollierter Einzelfehler fuer die betroffene Zeile, kein stiller Datenverlust, siehe
+ *     lib/email-lookup.mjs) statt hier vorab kontrolliert abgefangen zu werden.
  * ============================================================================ */
 
 import pg from 'pg';
@@ -187,7 +213,7 @@ Voraussetzung: Umgebungsvariable DATABASE_URL (Owner-/Migrator-Rolle) muss
 gesetzt sein -- im Docker-Compose-Stack bereits der Fall. Die Ziel-DB muss
 das Schema aus app/migrations/ bereits enthalten (households/users/weeks/
 invites/recipes/household_key_wraps-Tabellen vorhanden, inkl. Migration
-009_weeks_encryption.sql und 010_name_encryption.sql).
+009_weeks_encryption.sql, 010_name_encryption.sql und 011_email_blind_index.sql).
 
 Hinweis: recipes.image_path verweist nur auf einen Dateinamen. Die
 eigentliche Bilddatei wird von diesem Skript NICHT wiederhergestellt --
@@ -316,16 +342,29 @@ async function main() {
       }
     }
 
+    // AP6.4: users.email ist jetzt jsonb (die alte "lower(email) = ANY($1::text[])"-Pruefung
+    // scheitert seit dem Typ-Umbau mit "function lower(jsonb) does not exist") UND der
+    // tatsaechliche DB-Constraint ist seit Migration 011 users_email_lookup_uidx auf
+    // email_lookup, nicht mehr die email-Spalte selbst -- siehe Kommentar am Dateikopf fuer die
+    // vollstaendige Begruendung inkl. dokumentierter Einschraenkung fuer aeltere Exporte ohne
+    // email_lookup.
     if (srcUsers.length > 0) {
-      const emails = srcUsers.map(u => u.email.toLowerCase());
-      const collisions = await client.query(
-        `SELECT email FROM users WHERE lower(email) = ANY($1::text[])`, [emails]);
-      if (collisions.rowCount > 0) {
-        await client.query('ROLLBACK');
-        console.error('Fehler: E-Mail-Kollision mit bereits vorhandenen Nutzern in der Ziel-DB. ' +
-          'Kein Restore durchgefuehrt, kein Datensatz veraendert. Kollidierende Adresse(n): ' +
-          collisions.rows.map(r => r.email).join(', '));
-        process.exit(1);
+      const lookupValues = srcUsers.map(u => u.email_lookup).filter(v => v != null).map(unb64);
+      if (lookupValues.length > 0) {
+        const collisions = await client.query(
+          `SELECT id FROM users WHERE email_lookup = ANY($1::bytea[])`, [lookupValues]);
+        if (collisions.rowCount > 0) {
+          await client.query('ROLLBACK');
+          console.error(`Fehler: E-Mail-Kollision (email_lookup) mit ${collisions.rowCount} bereits ` +
+            'vorhandenen Nutzer(n) in der Ziel-DB. Kein Restore durchgefuehrt, kein Datensatz veraendert.');
+          process.exit(1);
+        }
+      }
+      if (lookupValues.length < srcUsers.length) {
+        console.error(`Warnung: ${srcUsers.length - lookupValues.length} Nutzer im Quelldokument ` +
+          'ohne email_lookup (Export von vor AP6.4) -- fuer diese kann keine Vorab-Kollisionspruefung ' +
+          'durchgefuehrt werden (siehe Kommentar am Dateikopf). Ein echter Duplikat-Fall wuerde erst ' +
+          'beim naechsten Boot-Backfill als Einzelfehler sichtbar, kein stiller Datenverlust.');
       }
     }
 
@@ -371,10 +410,15 @@ async function main() {
     // ------------------------------------------------------------------
     const userIdMap = new Map();
     for (const u of srcUsers) {
+      // AP6.4: email ist jetzt jsonb (JSON.stringify(u.email), identisches Muster wie u.name) --
+      // email_lookup wird 1:1 als Bytes uebernommen (unb64(), NULL falls im Quelldokument nicht
+      // vorhanden -- selbstheilt dann ueber den naechsten Boot-Backfill, sofern email noch
+      // Klartext ist, siehe Kommentar am Dateikopf).
       const res = await client.query(
-        `INSERT INTO users (household_id, email, name, password_hash, role, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-        [newHouseholdId, u.email, JSON.stringify(u.name), u.password_hash, u.role, u.created_at]);
+        `INSERT INTO users (household_id, email, email_lookup, name, password_hash, role, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        [newHouseholdId, JSON.stringify(u.email), unb64(u.email_lookup), JSON.stringify(u.name),
+          u.password_hash, u.role, u.created_at]);
       userIdMap.set(u.id, res.rows[0].id);
     }
 

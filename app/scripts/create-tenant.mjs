@@ -76,13 +76,31 @@
  * Optionale Flags: --admin-name "Anzeigename" (Default: lokaler Teil der
  * E-Mail-Adresse, wie im Registrierungs-Handler), --admin-password "..."
  * (Default: zufaellig generiert und einmalig ausgegeben).
+ *
+ * NACHTRAG (AP6.4, projects/wochenplaner-termine-verschluesselung/plan.md,
+ * Migration 011_email_blind_index.sql, MORROW ap6.3-datenmodell.md):
+ *   - users.email ist jetzt jsonb statt text (identisches Klartext-String-
+ *     Uebergangsformat wie users.name seit Migration 010) -- ein per CLI
+ *     angelegter Mandant bekommt IMMER einen Klartext-jsonb-String (dieses
+ *     Skript hat keinen Zugriff auf einen Haushalts-Schluessel), daher
+ *     JSON.stringify(email) statt des rohen Strings, identisches Muster wie
+ *     bereits fuer householdName/adminName weiter unten.
+ *   - NEU: users.email_lookup (bytea) MUSS bei jedem INSERT sofort gesetzt
+ *     werden (HMAC-SHA256 der normalisierten E-Mail mit EMAIL_HMAC_KEY,
+ *     siehe lib/email-lookup.mjs) -- sonst kann sich der neu angelegte
+ *     Admin-Nutzer nicht einloggen (auth_lookup_by_email() matcht
+ *     ausschliesslich ueber email_lookup, siehe Migration 011). Dieses
+ *     Skript braucht dafuer zusaetzlich die Umgebungsvariable
+ *     EMAIL_HMAC_KEY (dasselbe Prozess-Secret wie server.js).
  * ============================================================================ */
 
 import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
+import { normalizeEmail, computeEmailLookup } from '../lib/email-lookup.mjs';
 
 const DATABASE_URL_APP = process.env.DATABASE_URL_APP;
+const EMAIL_HMAC_KEY = process.env.EMAIL_HMAC_KEY;
 
 // Dieselben Validierungsregeln wie im Registrierungs-Handler (server.js),
 // damit ein per CLI angelegter Mandant sich in nichts von einem organisch
@@ -148,9 +166,16 @@ async function main() {
       'DB-Verbindung laufen wie die App selbst (siehe docker-compose.yml).');
     process.exit(1);
   }
+  // AP6.4: dieselbe Mindestlaenge/Pruefung wie server.js (siehe dortige Pruefung von
+  // EMAIL_HMAC_KEY) -- ein zu kurzer/fehlender Schluessel wuerde sonst stillschweigend einen
+  // falschen/schwachen email_lookup-Wert erzeugen, mit dem sich der neue Nutzer nie einloggen kann.
+  if (!EMAIL_HMAC_KEY || EMAIL_HMAC_KEY.length < 32) {
+    console.error('Fehler: Umgebungsvariable EMAIL_HMAC_KEY fehlt oder ist zu kurz (mindestens 32 Zeichen).');
+    process.exit(1);
+  }
 
   const householdName = trim(args.name, MAX_NAME_LENGTH);
-  const email = trim(args['admin-email'], 200).toLowerCase();
+  const email = normalizeEmail(trim(args['admin-email'], 200));
   const adminName = trim(args['admin-name'], MAX_NAME_LENGTH) || email.split('@')[0];
   let password = args['admin-password'];
   const passwordWasGenerated = !password;
@@ -189,16 +214,20 @@ async function main() {
     await client.query('INSERT INTO households(id, name) VALUES ($1,$2)', [householdId, JSON.stringify(householdName)]);
 
     const passwordHash = await bcrypt.hash(String(password), 12);
+    // AP6.4: email_lookup MUSS bei diesem INSERT sofort gesetzt werden (siehe Kommentar am
+    // Dateikopf) -- users_email_lookup_uidx (Migration 011) ist jetzt der einzige DB-seitige
+    // Duplikat-Schutz fuer E-Mail-Adressen ueber alle Mandanten hinweg.
+    const emailLookup = computeEmailLookup(EMAIL_HMAC_KEY, email);
     let user;
     try {
       user = await client.query(
-        `INSERT INTO users(household_id, email, name, password_hash, role)
-         VALUES ($1,$2,$3,$4,'owner') RETURNING id, name, email, role, household_id`,
-        [householdId, email, JSON.stringify(adminName), passwordHash]);
+        `INSERT INTO users(household_id, email, email_lookup, name, password_hash, role)
+         VALUES ($1,$2,$3,$4,$5,'owner') RETURNING id, name, email, role, household_id`,
+        [householdId, JSON.stringify(email), emailLookup, JSON.stringify(adminName), passwordHash]);
     } catch (err) {
       await client.query('ROLLBACK');
       if (err.code === '23505') {
-        console.error(`Fehler: Diese E-Mail-Adresse (${email}) ist bereits registriert (globaler ` +
+        console.error('Fehler: Die angegebene E-Mail-Adresse ist bereits registriert (globaler ' +
           'UNIQUE-Index ueber alle Mandanten). Kein Haushalt wurde angelegt.');
         process.exit(1);
       }

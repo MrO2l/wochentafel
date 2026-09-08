@@ -13,7 +13,8 @@
     "export-tenant": "node scripts/export-tenant.mjs",
     "import-tenant": "node scripts/import-tenant.mjs",
     "wipe-meal-freetext": "node scripts/wipe-meal-freetext.mjs",
-    "audit-encryption-status": "node scripts/audit-encryption-status.mjs"
+    "audit-encryption-status": "node scripts/audit-encryption-status.mjs",
+    "backfill-email-lookup": "node scripts/backfill-email-lookup.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

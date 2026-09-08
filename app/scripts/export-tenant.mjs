@@ -72,6 +72,20 @@
  * abschliessende Log-Zeile formatiert den Haushaltsnamen jetzt ueber describeHouseholdName()
  * (siehe unten), damit ein Ciphertext-Envelope dort nicht als nichtssagendes "[object Object]"
  * erscheint.
+ *
+ * NACHTRAG (AP6.4, Migration 011_email_blind_index.sql, MORROW ap6.3-datenmodell.md):
+ * users.email ist jetzt ebenfalls jsonb (analog users.name, siehe oben) UND es gibt eine neue
+ * bytea-Spalte users.email_lookup (der E-Mail-Blindindex, HMAC-SHA256 mit dem Prozess-Secret
+ * EMAIL_HMAC_KEY -- siehe Migration 011, Spaltenkommentar). email_lookup wird HIER 1:1 als
+ * base64-Text mit exportiert (b64(), reine Transportkodierung, identisches Prinzip wie bei den
+ * bytea-Spalten von household_key_wraps oben) -- KRITISCH fuer einen spaeteren Restore: ohne
+ * diesen Wert waere ein importierter Nutzer, dessen email bereits per Client-Sweep zu einem
+ * Ciphertext-Envelope geworden ist, dauerhaft nicht mehr einloggbar (der Server kann email_lookup
+ * dann serverseitig NICHT mehr aus der (verschluesselten) email-Spalte nachberechnen, siehe
+ * Begleitdokument Abschnitt 3.1/4.2 -- der Boot-Backfill in server.js greift nur, solange email
+ * noch ein Klartext-jsonb-String ist). Dieses Skript berechnet/interpretiert email_lookup an
+ * keiner Stelle selbst (kein Zugriff auf EMAIL_HMAC_KEY noetig, konsistent mit dem "kein
+ * Kryptografie-Schritt"-Prinzip dieses Skripts, siehe Kommentar oben).
  * ============================================================================ */
 
 import pg from 'pg';
@@ -109,8 +123,8 @@ Verwendung:
 
 Schreibt ein JSON-Dokument mit allen Daten des angegebenen Haushalts
 (households/users/weeks/invites/recipes/household_key_wraps) nach STDOUT.
-weeks.data_ciphertext/data_nonce und die bytea-Spalten von
-household_key_wraps sind base64-kodiert (reine Transportkodierung, keine
+weeks.data_ciphertext/data_nonce, users.email_lookup und die bytea-Spalten
+von household_key_wraps sind base64-kodiert (reine Transportkodierung, keine
 Ent-/Verschluesselung -- siehe Kommentar am Dateikopf). Bilddateien zu
 recipes.image_path sind NICHT enthalten (separates Volume-Backup, siehe
 Kommentar am Dateikopf). Fehler-/Statusmeldungen gehen
@@ -162,9 +176,15 @@ async function main() {
       process.exit(1);
     }
 
-    const usersRes = await client.query(
-      `SELECT id, household_id, email, name, password_hash, role, created_at
+    // AP6.4: email_lookup (bytea) zusaetzlich zur bestehenden email-Spalte exportiert -- siehe
+    // Kommentar am Dateikopf, WARUM das fuer einen vollstaendigen Restore kritisch ist.
+    const usersRaw = await client.query(
+      `SELECT id, household_id, email, email_lookup, name, password_hash, role, created_at
          FROM users WHERE household_id = $1 ORDER BY id`, [householdId]);
+    const usersRes = { rowCount: usersRaw.rowCount, rows: usersRaw.rows.map(u => ({
+      ...u,
+      email_lookup: b64(u.email_lookup),
+    })) };
 
     // weeks: data_ciphertext/data_nonce/key_version (Migration 009) zusaetzlich
     // zur alten data-Spalte exportiert. Genau eine der beiden Seiten ist pro

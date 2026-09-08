@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import multer from 'multer';
+import { normalizeEmail, computeEmailLookup, runEmailLookupBackfill } from './lib/email-lookup.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,6 +20,13 @@ const DATABASE_URL          = process.env.DATABASE_URL;
 const DATABASE_URL_APP      = process.env.DATABASE_URL_APP;
 const WOCHENPLAN_APP_PASSWORD = process.env.WOCHENPLAN_APP_PASSWORD;
 const SESSION_SECRET        = process.env.SESSION_SECRET;
+// AP6.4 (users.email_lookup Blindindex, MORROW ap6.3-datenmodell.md, migrations/
+// 011_email_blind_index.sql): eigenstaendiges Prozess-Secret, ANALOG zum SESSION_SECRET-Precedent
+// oben, aber NICHT damit zu verwechseln -- unterschiedlicher Zweck (HMAC-Schluessel fuer den
+// Auth-Lookup vs. Session-Cookie-Signierung), unterschiedliches Risiko bei Verlust (siehe Pruefung
+// unten). NIE in der Datenbank abgelegt, NIE geloggt -- lib/email-lookup.mjs liest diesen Wert
+// nirgends selbst aus process.env, sondern bekommt ihn ausschliesslich hier explizit uebergeben.
+const EMAIL_HMAC_KEY        = process.env.EMAIL_HMAC_KEY;
 const TRUST_PROXY           = process.env.TRUST_PROXY === 'true';
 const ALLOW_REGISTRATION    = process.env.ALLOW_REGISTRATION !== 'false';
 const SECURE_COOKIES        = process.env.SECURE_COOKIES === 'true' || TRUST_PROXY;
@@ -55,6 +63,18 @@ if (!WOCHENPLAN_APP_PASSWORD || WOCHENPLAN_APP_PASSWORD.length < 8) {
 }
 if (!SESSION_SECRET || SESSION_SECRET.length < 16) {
   console.error('SESSION_SECRET fehlt oder ist zu kurz (mindestens 16 Zeichen).');
+  process.exit(1);
+}
+// AP6.4: Mindestlaenge bewusst hoeher als bei SESSION_SECRET (16) -- ein HMAC-SHA256-Schluessel
+// sollte laut gaengiger Kryptografie-Empfehlung mindestens die Digest-Laenge (32 Byte) an Entropie
+// mitbringen; 32 Zeichen aus einer ausreichend zufaelligen Quelle (siehe .env.example-Hinweis
+// "openssl rand -base64 32" fuer die bestehenden Secrets, ART3MIS sollte denselben Befehl fuer
+// EMAIL_HMAC_KEY verwenden) sind dafuer ein angemessenes Minimum. Fail-closed wie bei SESSION_
+// SECRET/WOCHENPLAN_APP_PASSWORD -- kein Start mit einem fehlenden/zu kurzen HMAC-Schluessel,
+// sonst wuerde computeEmailLookup() unten mit "undefined" als Schluessel arbeiten.
+if (!EMAIL_HMAC_KEY || EMAIL_HMAC_KEY.length < 32) {
+  console.error('EMAIL_HMAC_KEY fehlt oder ist zu kurz (mindestens 32 Zeichen) -- AP6.4, ' +
+    'siehe migrations/011_email_blind_index.sql und lib/email-lookup.mjs.');
   process.exit(1);
 }
 
@@ -153,6 +173,50 @@ function pgQuoteLiteral(value) {
 }
 async function ensureAppRolePassword() {
   await migratorPool.query(`ALTER ROLE wochenplan_app WITH PASSWORD ${pgQuoteLiteral(WOCHENPLAN_APP_PASSWORD)}`);
+}
+
+/* ------------------------------------------------------------------ *
+ * AP6.4 (users.email_lookup Blindindex, MORROW ap6.3-datenmodell.md Abschnitt 3.2): verbindlicher,
+ * idempotenter Boot-Backfill-Schritt -- laeuft bei JEDEM Serverstart direkt nach migrate(), VOR dem
+ * Start des HTTP-Listeners (siehe Aufruf-Kette ganz unten in dieser Datei). Self-healing ueber
+ * "WHERE email_lookup IS NULL" (lib/email-lookup.mjs): auf einem bereits vollstaendig befuellten
+ * Bestand ist dieser Schritt ein reines No-Op, kein Grund, ihn nur einmalig laufen zu lassen.
+ *
+ * KRITISCH (Begleitdokument Abschnitt 2, MORROWs eigenstaendiger Fund): auth_lookup_by_email()/
+ * auth_lookup_recovery_wrap() (Migration 011) matchen ab sofort ausschliesslich ueber email_lookup
+ * -- ein Bestandsnutzer mit noch NULL-wertigem email_lookup kann sich NICHT einloggen. Dieser
+ * Schritt ist der verbindliche Schutz dagegen: er laeuft VOR app.listen() (siehe unten), es gibt
+ * dadurch strukturell kein Zeitfenster, in dem der Server Login-Traffic mit unvollstaendigem
+ * email_lookup-Bestand bedient.
+ *
+ * Laeuft ueber migratorPool (Owner-/Migrator-Rolle), NICHT appPool -- Abweichung von A3CHs eigener
+ * Erwartung beim ersten Entwurf, hier festgehalten: die RLS-Policy auf users (003_rls_policies.sql,
+ * "household_id = current_setting('app.current_household_id', true)::bigint") laesst ueber die
+ * eingeschraenkte Laufzeit-Rolle wochenplan_app OHNE gesetzten Sitzungskontext ausnahmslos NULL
+ * Zeilen sichtbar/aktualisierbar sein -- fuer einen haushaltsUEBERGREIFENDEN Bulk-Backfill (alle
+ * Haushalte in einem Rutsch) ist daher zwingend die RLS-bypassende Owner-Rolle noetig, exakt wie
+ * migrate()/ensureAppRolePassword() oben und der etablierte Owner-Rollen-Praezedenzfall in
+ * scripts/export-tenant.mjs ("Backup ist ein administrativer Vorgang, kein App-Laufzeitzugriff").
+ * ------------------------------------------------------------------ */
+async function backfillEmailLookupOnBoot() {
+  const summary = await runEmailLookupBackfill({
+    query: (sql, params) => migratorPool.query(sql, params),
+    emailHmacKey: EMAIL_HMAC_KEY,
+    dryRun: false,
+    log: console
+  });
+  if (summary.failed > 0) {
+    // Bewusst KEIN process.exit(1) hier: ein fehlgeschlagener Backfill EINZELNER Zeilen soll nicht
+    // den gesamten Serverstart verhindern (App-weiter Fail-Closed waere fuer einen Einzelfall
+    // unverhaeltnismaessig, siehe Begleitdokument Abschnitt 4.1 -- Verfuegbarkeits-, kein
+    // Datenverlustrisiko). Die betroffenen Nutzer bleiben bis zur naechsten erfolgreichen
+    // Backfill-Runde bzw. manuellen Klaerung ausgesperrt -- deutlich sichtbare Log-Warnung statt
+    // eines stillen Teilfehlers.
+    console.warn(
+      `WARNUNG: Email-Lookup-Backfill hatte ${summary.failed} Fehler beim Serverstart -- ` +
+      'betroffene Nutzer (siehe user_id in den Log-Zeilen oben) koennen sich bis zur Klaerung ' +
+      'nicht einloggen. Server startet trotzdem weiter (uebrige Nutzer sind unbetroffen).');
+  }
 }
 
 /* Rezeptkarten-Bildverzeichnis anlegen, falls es noch nicht existiert
@@ -642,6 +706,29 @@ function parseNameField(raw, maxLen) {
 function nameJsonbParam(value) { return JSON.stringify(value); }
 
 /* ------------------------------------------------------------------ *
+ * AP6.4 (users.email verschluesseln -- ANZEIGE-Kopie, MORROW ap6.3-datenmodell.md Abschnitt 1.2,
+ * migrations/011_email_blind_index.sql): identisches Envelope-Muster wie users.name/
+ * households.name oben (AP6.2) -- jsonb-Wert vom Typ string = Klartext/Uebergangszustand, jsonb-
+ * Wert vom Typ object mit __enc:true = Ciphertext-Envelope, verschluesselt mit dem HAUSHALTS-
+ * Schluessel. Eigene Helfer statt Wiederverwendung von isEncryptedNameEnvelope()/
+ * buildNameEnvelope() -- Pruefslogik ist identisch, ein gemeinsamer Funktionsname waere hier aber
+ * irrefuehrend (betrifft email, nicht name), exakt dieselbe Begruendung wie bei den Name-Helfern.
+ *
+ * WICHTIG (Begleitdokument Abschnitt 1.2, siehe auch computeEmailLookup()/EMAIL_HMAC_KEY oben):
+ * dieser Envelope ist ein STRUKTURELL UNABHAENGIGER Mechanismus vom email_lookup-Blindindex --
+ * andere Schluessel (Haushalts-Schluessel vs. EMAIL_HMAC_KEY-Prozess-Secret), andere Zwecke
+ * (Anzeige nach Unlock vs. Auth-Lookup). Kein Endpunkt unten darf email_lookup aus einem hier
+ * verarbeiteten Envelope ableiten -- email_lookup wird ausschliesslich bei der Registrierung
+ * (aus der eingegebenen Klartext-E-Mail) bzw. beim Backfill gesetzt, nie hier.
+ * ------------------------------------------------------------------ */
+function isEncryptedEmailEnvelope(value) {
+  return !!value && typeof value === 'object' && value.__enc === true;
+}
+function buildEmailEnvelope(nonce, ciphertext, keyVersion) {
+  return { __enc: true, v: 1, keyVersion, nonce: nonce.toString('base64'), ciphertext: ciphertext.toString('base64') };
+}
+
+/* ------------------------------------------------------------------ *
  * Verschluesselungs-Bootstrap bei der Registrierung (AP2.1) -- prueft
  * ausschliesslich FORM/GROESSE der beiden Wraps (password/recovery_code),
  * die der Client beim Anlegen eines NEUEN Haushalts mitschickt (siehe
@@ -1126,7 +1213,12 @@ app.get('/api/config', (req, res) => res.json({ allowRegistration: ALLOW_REGISTR
 
 app.post('/api/auth/register', authLimiter, wrap(async (req, res) => {
   if (!ALLOW_REGISTRATION) return res.status(403).json({ error: 'Registrierung ist deaktiviert' });
-  const email = String(req.body.email || '').trim().toLowerCase();
+  // AP6.4: normalizeEmail() (lib/email-lookup.mjs) statt der frueheren Inline-Normalisierung --
+  // identische Normalisierung (lower(trim(email))) wie beim spaeter berechneten email_lookup, siehe
+  // computeEmailLookup()-Aufruf unten UND Migration 011, Spaltenkommentar users.email_lookup. Muss
+  // Bit-fuer-Bit uebereinstimmen, sonst faende der Login-Lookup einen bei der Registrierung leicht
+  // anders normalisierten Nutzer nie wieder.
+  const email = normalizeEmail(req.body.email);
   const password = String(req.body.password || '');
   const inviteCode = String(req.body.inviteCode || '').trim().toUpperCase();
 
@@ -1218,12 +1310,19 @@ app.post('/api/auth/register', authLimiter, wrap(async (req, res) => {
 
     const hash = await bcrypt.hash(password, 12);
     const role = inviteCode ? 'member' : 'owner';
+    // AP6.4: email_lookup MUSS bei jeder Neuregistrierung sofort gesetzt werden (siehe Migration
+    // 011, Spaltenkommentar) -- sonst greift die Duplikat-Erkennung ueber den 23505-Unique-
+    // Violation-Fehlercode unten (users_email_lookup_uidx) fuer diesen neuen Nutzer nicht. email
+    // selbst bleibt an dieser Stelle bewusst ein Klartext-jsonb-String (nameJsonbParam(email), kein
+    // Envelope) -- identisches Uebergangsverhalten wie name im Einladungs-Zweig oben, wird beim
+    // naechsten Boot-Sweep-Aufruf (public/app.js, resolveUserEmail()) clientseitig nachverschluesselt.
+    const emailLookup = computeEmailLookup(EMAIL_HMAC_KEY, email);
     let user;
     try {
       user = await client.query(
-        `INSERT INTO users(household_id, email, name, password_hash, role)
-         VALUES ($1,$2,$3,$4,$5) RETURNING id, name, email, role, household_id`,
-        [householdId, email, nameJsonbParam(name), hash, role]);
+        `INSERT INTO users(household_id, email, email_lookup, name, password_hash, role)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, name, email, role, household_id`,
+        [householdId, nameJsonbParam(email), emailLookup, nameJsonbParam(name), hash, role]);
     } catch (err) {
       await client.query('ROLLBACK');
       if (err.code === '23505') return res.status(409).json({ error: 'Diese E-Mail-Adresse ist bereits registriert' });
@@ -1286,20 +1385,23 @@ app.post('/api/auth/register', authLimiter, wrap(async (req, res) => {
 }));
 
 app.post('/api/auth/login', authLimiter, wrap(async (req, res) => {
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const email = normalizeEmail(req.body.email);
   const password = String(req.body.password || '');
   const wait = throttle(email);
   if (wait) return res.status(429).json({ error: `Zu viele Fehlversuche. Bitte ${wait} Sekunden warten.` });
 
-  // auth_lookup_by_email() ist eine SECURITY DEFINER-Funktion (Migration 003):
-  // sie kapselt genau diesen einen, haushaltsuebergreifenden E-Mail-Lookup,
-  // der noetig ist, BEVOR ein Sitzungskontext existiert. Eine direkte
-  // SELECT ... FROM users JOIN households ...-Abfrage ueber die
-  // eingeschraenkte Rolle wochenplan_app wuerde mit aktiver RLS immer 0
-  // Zeilen liefern (current_setting('app.current_household_id', true) ist
-  // zu diesem Zeitpunkt NULL) -- Login waere fuer alle Nutzer gebrochen.
+  // auth_lookup_by_email() ist eine SECURITY DEFINER-Funktion (Migration 003, seit Migration 011
+  // auf email_lookup statt Klartext-E-Mail umgestellt): sie kapselt genau diesen einen,
+  // haushaltsuebergreifenden Lookup, der noetig ist, BEVOR ein Sitzungskontext existiert. Eine
+  // direkte SELECT ... FROM users JOIN households ...-Abfrage ueber die eingeschraenkte Rolle
+  // wochenplan_app wuerde mit aktiver RLS immer 0 Zeilen liefern (current_setting('app.current_
+  // household_id', true) ist zu diesem Zeitpunkt NULL) -- Login waere fuer alle Nutzer gebrochen.
   // Siehe ap1.2-rls-konzept.md Abschnitt 6.
-  const q = await appPool.query('SELECT * FROM auth_lookup_by_email($1)', [email]);
+  // AP6.4: der Server berechnet den HMAC HIER aus der eingehenden Klartext-E-Mail und uebergibt
+  // ausschliesslich den HMAC-Wert (Buffer/bytea), NIE die Klartext-E-Mail selbst, an die SQL-
+  // Funktion (Begleitdokument Abschnitt 1, Punkt 5).
+  const emailLookup = computeEmailLookup(EMAIL_HMAC_KEY, email);
+  const q = await appPool.query('SELECT * FROM auth_lookup_by_email($1)', [emailLookup]);
   const row = q.rows[0];
   const ok = row ? await bcrypt.compare(password, row.password_hash) : await bcrypt.compare(password, '$2a$12$' + 'x'.repeat(53));
   if (!row || !ok) { noteFailure(email); return res.status(401).json({ error: 'E-Mail oder Passwort stimmt nicht' }); }
@@ -1381,11 +1483,14 @@ function randomDummyRecoveryResponse() {
 }
 
 app.post('/api/auth/recover', recoverLimiter, wrap(async (req, res) => {
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const email = normalizeEmail(req.body.email);
   const wait = throttle(`recover:${email}`);
   if (wait) return res.status(429).json({ error: `Zu viele Versuche. Bitte ${wait} Sekunden warten.` });
 
-  const q = await appPool.query('SELECT * FROM auth_lookup_recovery_wrap($1)', [email]);
+  // AP6.4: HMAC serverseitig aus der Klartext-E-Mail berechnen, NUR den HMAC an die SQL-Funktion
+  // uebergeben -- identisches Muster wie /api/auth/login oben.
+  const emailLookup = computeEmailLookup(EMAIL_HMAC_KEY, email);
+  const q = await appPool.query('SELECT * FROM auth_lookup_recovery_wrap($1)', [emailLookup]);
   const row = q.rows[0];
   if (!row) {
     noteFailure(`recover:${email}`);
@@ -1449,7 +1554,7 @@ const { throttle: pwResetThrottle, noteFailure: pwResetNoteFailure, clearFailure
   createLoginThrottle({ escalating: true });
 
 app.post('/api/auth/password-reset', passwordResetLimiter, wrap(async (req, res) => {
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const email = normalizeEmail(req.body.email);
   const throttleKey = `pwreset:${email}`;
   const wait = pwResetThrottle(throttleKey);
   if (wait) return res.status(429).json({ error: `Zu viele Versuche. Bitte ${wait} Sekunden warten.` });
@@ -1461,7 +1566,10 @@ app.post('/api/auth/password-reset', passwordResetLimiter, wrap(async (req, res)
   const verifierRaw = decodeBase64Field(req.body?.verifier, RECOVERY_VERIFIER_BYTES);
   if (!passwordWrap || !verifierRaw) return res.status(400).json({ error: 'Ungueltige oder fehlende Daten' });
 
-  const q = await appPool.query('SELECT * FROM auth_lookup_recovery_wrap($1)', [email]);
+  // AP6.4: HMAC serverseitig aus der Klartext-E-Mail berechnen, NUR den HMAC an die SQL-Funktion
+  // uebergeben -- identisches Muster wie /api/auth/login/recover oben.
+  const emailLookup = computeEmailLookup(EMAIL_HMAC_KEY, email);
+  const q = await appPool.query('SELECT * FROM auth_lookup_recovery_wrap($1)', [emailLookup]);
   const row = q.rows[0];
   // Generische Fehlermeldung fuer "E-Mail unbekannt" UND "verifier falsch" -- verhindert E-Mail-
   // Enumeration (ap1.2-datenmodell.md Abschnitt 7a, Schritt 4). Ein Dummy-Hash-Vergleich haelt die
@@ -1872,6 +1980,12 @@ app.get('/api/me', wrap(async (req, res) => {
   // pending-Wrap (siehe Bootstrap-Kommentar bei /api/crypto/bootstrap-existing unten). app.js/
   // boot() unterscheidet anhand dessen, ob es das normale Entsperren-Dialog (Passwort) oder das
   // Aktivierungs-Dialog (Aktivierungscode) zeigen muss.
+  // AP6.4: u.email kann seit Migration 011 -- analog zu u.name seit Migration 010 -- entweder ein
+  // Klartext-jsonb-String oder ein bereits verschluesselter Ciphertext-Envelope sein. Reiner
+  // Passthrough hier (kein Server-seitiges Interpretieren/Entschluesseln, exakt wie bei name) --
+  // app.js/resolveUserEmail() entschluesselt fuer die Anzeige und sweept einen noch vorgefundenen
+  // Klartext-Wert still nach (PUT /api/account/email unten). email_lookup wird hier bewusst NICHT
+  // mit ausgewaehlt -- dieser Endpunkt dient der Anzeige, nicht dem Auth-Lookup.
   const q = await withTenantClient(req.session.householdId, client => client.query(
     `SELECT u.id, u.name, u.email, u.role, u.household_id AS "householdId", h.name AS "householdName",
             h.encryption_status AS "encryptionStatus",
@@ -1950,6 +2064,10 @@ app.post('/api/invites', requireAuth, inviteLimiter, rejectForeignHouseholdId, w
 // worden sein koennte. Ein kuenftiger zweiter Aufrufer dieses Endpunkts (z. B. eine sichtbare
 // Mitgliederliste in der Konto-Ansicht) muesste member.name dagegen mit isEncryptedNameEnvelope()
 // pruefen und clientseitig entschluesseln, bevor er ihn anzeigt.
+// AP6.4: identische Begruendung gilt jetzt auch fuer member.email (Migration 011) -- waehrend
+// encryption_status noch 'plaintext' ist, kann email ebenfalls noch kein Envelope sein, da es
+// noch keinen Haushalts-Schluessel gibt. Ein kuenftiger zweiter Aufrufer muesste analog
+// isEncryptedEmailEnvelope() pruefen.
 app.get('/api/household/members', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
   const q = await withTenantClient(req.session.householdId, client => client.query(
     `SELECT id, name, email FROM users WHERE household_id=$1 ORDER BY id`, [req.session.householdId]));
@@ -2165,6 +2283,40 @@ app.put('/api/account/name', requireAuth, rejectForeignHouseholdId, wrap(async (
         [nameJsonbParam(stored), req.session.householdId]);
     }
   });
+  res.json({ ok: true });
+}));
+
+/* ------------------------------------------------------------------ *
+ * AP6.4 (users.email verschluesseln -- ANZEIGE-Kopie, MORROW ap6.3-datenmodell.md): Schreibpfad
+ * fuer die STILLE Nachverschluesselung einer noch als Klartext vorgefundenen E-Mail-Adresse (siehe
+ * app.js, resolveUserEmail()) -- eigener, dedizierter Endpunkt statt Erweiterung von PUT /api/
+ * account/name oben, weil email ein fachlich unabhaengiges Feld mit eigener Semantik ist (analog
+ * zur bestehenden Konvention dieser Datei: /api/account/password und /api/account/name sind
+ * ebenfalls je eigene, einzweckige Endpunkte).
+ *
+ * Identisches Prinzip wie beim Namen-Sweep: der Client verschluesselt lokal mit dem bereits
+ * entpackten Haushalts-Schluessel und schreibt hier ausschliesslich ein fertiges Envelope-Objekt
+ * zurueck, nie einen Klartext-String -- die Umwandlung Klartext->Envelope ist strukturell nur
+ * clientseitig moeglich, der Server kennt den Haushalts-Schluessel nie. Aktualisiert IMMER nur die
+ * eigene users-Zeile (req.session.userId) -- ein Mitglied kann nie die E-Mail-ANZEIGE eines anderen
+ * Mitglieds schreiben (email_lookup eines FREMDEN Kontos ist davon ohnehin vollstaendig unberuehrt,
+ * siehe naechster Absatz).
+ *
+ * KRITISCH -- NICHT mit dem serverseitigen email_lookup-Backfill verwechseln (Begleitdokument
+ * Abschnitt 1.2, siehe auch Kommentar bei buildEmailEnvelope() oben): dieser Endpunkt schreibt
+ * AUSSCHLIESSLICH die jsonb-Spalte users.email (Anzeige-Envelope). email_lookup wird hier NIE
+ * gelesen, berechnet oder veraendert -- v1 hat bewusst keine Rotationsfaehigkeit fuer EMAIL_HMAC_
+ * KEY (Begleitdokument Abschnitt 4.3), ein Endpunkt, der email_lookup aus einem Envelope ableiten
+ * koennte, wuerde diese Abgrenzung unterlaufen.
+ * ------------------------------------------------------------------ */
+app.put('/api/account/email', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const emailEnvelope = req.body.email !== undefined ? parseEncryptedPayload(req.body.email) : null;
+  if (!emailEnvelope) return res.status(400).json({ error: 'Ungueltiges oder fehlendes Envelope fuer email' });
+
+  const stored = buildEmailEnvelope(emailEnvelope.nonce, emailEnvelope.ciphertext, emailEnvelope.keyVersion);
+  await withTenantClient(req.session.householdId, client => client.query(
+    'UPDATE users SET email=$1 WHERE id=$2 AND household_id=$3',
+    [nameJsonbParam(stored), req.session.userId, req.session.householdId]));
   res.json({ ok: true });
 }));
 
@@ -3261,6 +3413,10 @@ app.use((err, req, res, next) => {
 
 migrate()
   .then(() => ensureAppRolePassword())
+  // AP6.4: Backfill MUSS vor app.listen() abgeschlossen sein (siehe Kommentar bei
+  // backfillEmailLookupOnBoot() oben) -- deshalb hier in der Kette, VOR ensureRecipeImageDir()/
+  // app.listen(), nicht nebenlaeufig gestartet.
+  .then(() => backfillEmailLookupOnBoot())
   .then(() => ensureRecipeImageDir())
   .then(() => app.listen(PORT, () => console.log(`Wochenplaner laeuft auf Port ${PORT}`)))
   .catch(err => { console.error(err); process.exit(1); });

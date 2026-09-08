@@ -3455,6 +3455,57 @@ async function resolveUserNames() {
   }
 }
 
+/* ---------------- AP6.4: users.email entschluesseln + still nachverschluesseln ----------------
+ * Analog zu resolveUserNames() (AP6.2) oben, aber fuer state.user.email (Migration 011_email_
+ * blind_index.sql, MORROW ap6.3-datenmodell.md) -- eigene Funktion statt Erweiterung von
+ * resolveUserNames(), weil email ein fachlich unabhaengiges Feld mit eigenem Server-Endpunkt
+ * (PUT /api/account/email) ist.
+ *
+ * KRITISCH -- NICHT mit dem serverseitigen email_lookup-Blindindex verwechseln (Begleitdokument
+ * Abschnitt 1.2): dieser Sweep betrifft AUSSCHLIESSLICH die ANZEIGE-Kopie in der jsonb-Spalte
+ * users.email (E2E-Envelope mit dem Haushalts-Schluessel, wie name). email_lookup (server.js,
+ * Boot-Backfill/scripts/backfill-email-lookup.mjs) ist ein STRUKTURELL UNABHAENGIGER Mechanismus
+ * mit einem eigenen Prozess-Secret (EMAIL_HMAC_KEY) -- wird von dieser Funktion NIE gelesen,
+ * berechnet oder gesendet.
+ *
+ * Nur sinnvoll aufrufbar, NACHDEM der Haushalts-Schluessel bereits im Speicher liegt (identische
+ * Aufrufvoraussetzung wie resolveUserNames(), siehe kombinierter Aufruf in
+ * continueBootAuthenticated() unten) -- ist kein Schluessel vorhanden (Haushalt komplett
+ * 'plaintext'), bleibt state.user.email unveraendert Klartext, exakt wie vor diesem Arbeitspaket.
+ */
+async function resolveUserEmail() {
+  if (!WPCrypto.hasHouseholdKey()) return;
+  const householdKey = WPCrypto.getHouseholdKey();
+  const wasPlaintext = typeof state.user.email === 'string';
+
+  if (!wasPlaintext) {
+    if (!state.user.email || typeof state.user.email !== 'object' || !state.user.email.__enc) return; // unbekannte Form, unveraendert lassen
+    try {
+      state.user.email = await WPCrypto.decryptJSON(householdKey, state.user.email.nonce, state.user.email.ciphertext);
+    } catch (err) {
+      // Sollte praktisch nie vorkommen (derselbe Haushalts-Schluessel hat auch name/weeks.data
+      // bereits erfolgreich entschluesselt) -- Sicherheitsnetz statt Absturz, analog resolveUserNames().
+      console.error('Konnte verschluesselte E-Mail-Adresse nicht entschluesseln:', err);
+      state.user.email = '(nicht entschlüsselbar)';
+    }
+    return;
+  }
+
+  // Legacy-Klartext (Bestandsformat vor dem Sweep, oder gerade erst per Registrierung/Einladung
+  // angelegt): Anzeige bleibt unveraendert lesbar, zusaetzlich still nachverschluesseln -- analog
+  // zum Namen-Sweep. Ein Fehlschlag beim Zurueckschreiben wird nur geloggt, nicht dem Nutzer
+  // gemeldet -- der naechste Login versucht es automatisch erneut (kein Datenverlust, die
+  // DB-Zeile bleibt bis dahin unveraendert Klartext).
+  try {
+    const enc = await WPCrypto.encryptJSON(householdKey, state.user.email);
+    await api('PUT', '/api/account/email', {
+      email: { encrypted: true, keyVersion: state.crypto?.keyVersion || 1, nonce: enc.nonce, ciphertext: enc.ciphertext }
+    });
+  } catch (err) {
+    console.error('Stille E-Mail-Nachverschluesselung fehlgeschlagen (naechster Login versucht es erneut):', err);
+  }
+}
+
 /* ---------------- Start ---------------- */
 function setView(view) {
   if (state.data) syncFromDOM();
@@ -3531,6 +3582,9 @@ async function continueBootAuthenticated(me, freshPassword) {
   // 'plaintext'-Haushalt ohne Schluessel unveraendert) und verschluesselt Bestandsnamen bei dieser
   // Gelegenheit still nach (MORROW-Vorschlag ap6.1-datenmodell.md Abschnitt 3.2, siehe dort).
   await resolveUserNames();
+  // AP6.4: analog zu resolveUserNames() oben -- muss ebenfalls VOR initAccountView() laufen
+  // (liest state.user.email fuer #acctWho) und vor jeder anderen Anzeige der eigenen E-Mail-Adresse.
+  await resolveUserEmail();
   $('#householdName').textContent = state.user.householdName;
   initAccountView(); // AP2.2b: einmalige Verdrahtung der neuen Konto-Ansicht, siehe dortiger Kommentar
 
