@@ -6,6 +6,26 @@ Einkauf und zwei Dutzend weitere wiederkehrende Termine.
 
 Läuft als Docker-Container mit PostgreSQL. Mehrere Haushalte sind sauber getrennt,
 jeder Haushalt hat eigene Mitglieder, eigene Wochen und eine eigene Standardwoche.
+Termine und Essenspläne lassen sich Ende-zu-Ende-verschlüsselt ablegen, siehe
+[Technik](#technik) und [Sicherheit](#sicherheit).
+
+---
+
+## Technik
+
+* **Backend**: Node.js (≥ 20) mit [Express](https://expressjs.com/), siehe [`app/server.js`](app/server.js).
+* **Datenbank**: PostgreSQL, Schema und Migrationen unter [`app/migrations/`](app/migrations/),
+  werden beim Start automatisch angewendet.
+* **Oberfläche**: serverseitig gerenderte HTML-Seiten unter [`app/public/`](app/public/), ohne
+  Frontend-Framework.
+* **Ende-zu-Ende-Verschlüsselung**: Termine und Essenspläne (Wochen- und Vorlagendaten)
+  lassen sich clientseitig mit [libsodium](app/public/vendor/libsodium/) (Argon2id-Schlüsselableitung,
+  XChaCha20-Poly1305-AEAD) verschlüsseln, siehe [`app/public/crypto.js`](app/public/crypto.js).
+  Der Haushalts-Schlüssel verlässt dabei nie den Browser und liegt dem Server zu keinem
+  Zeitpunkt vor — Details siehe Abschnitt [Sicherheit](#sicherheit).
+* **Betrieb**: Docker Compose (App-, DB- und optionaler Caddy-Proxy-Container), siehe
+  [`docker-compose.yml`](docker-compose.yml) und [`.env.example`](.env.example) für die
+  Konfiguration.
 
 ---
 
@@ -220,3 +240,19 @@ Bewusst nicht enthalten, aber ohne Umbau ergänzbar:
   arbeiten können, ohne dass eine Meldung erscheint.
 * **Kalender-Anbindung** (ICS-Export der Woche oder Import bestehender Termine).
 * **Erinnerungen** per Push oder E-Mail, etwa Sonntagabend die Vorschau auf die Woche.
+
+---
+
+## Lizenz
+
+Dieses Projekt ist **source-available** unter der
+[PolyForm Noncommercial License 1.0.0](LICENSE) — der Quellcode ist frei einsehbar
+und für **private und nicht-kommerzielle Zwecke frei nutzbar**. Kommerzielle Nutzung
+erfordert eine **separate Vereinbarung** mit dem Rechteinhaber.
+
+Wichtig zur Einordnung: Das ist rechtlich **kein „Open Source"** im Sinne der
+[Open Source Definition der OSI](https://opensource.org/osd) — diese verlangt zwingend
+auch die kommerzielle Nutzung ohne Einschränkung. „Source-available" trifft es korrekt:
+der Code ist offen einsehbar, aber die Nutzung ist über die Lizenz eingeschränkt.
+
+Für kommerzielle Anfragen: **9ru16du4@anonaddy.me**
