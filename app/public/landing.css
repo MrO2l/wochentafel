@@ -32,6 +32,8 @@ a{ color:var(--primary) }
   display:flex; align-items:center; justify-content:center; flex:none;
 }
 .landing-brand .brand-mark .ic{ width:1.4rem; height:1.4rem; color:#fff }
+.landing-header-actions{ display:flex; align-items:center; gap:.6rem }
+.landing-header-actions .bi-github{ font-size:1rem; vertical-align:-.1em }
 
 /* ---------------- Hero ---------------- */
 .landing-hero{ padding:3.5rem 1rem 3rem; text-align:center }
@@ -229,17 +231,45 @@ a{ color:var(--primary) }
 }
 .scrolly-figure img{ display:block; width:100%; height:auto; background:var(--secondary) }
 
-/* ---------------- Abschluss-CTA ---------------- */
-.landing-cta{
-  background:var(--primary); color:#fff; text-align:center; padding:3rem 1rem; margin-top:1rem;
+/* ---------------- Verschluesselungs-Hinweis ----------------
+ * Ersetzt den vormaligen .landing-cta-Block (siehe landing.html-Kommentar an der
+ * Einbindungsstelle). Eigener, dezent abgesetzter Hintergrund (--secondary, dieselbe
+ * "funktionale Block"-Rolle wie bei der Druck-Karte oben) macht den Abschnitt als
+ * eigenstaendiges "Kapitel" erkennbar, ohne eine dritte Farbwelt einzufuehren. Text bleibt
+ * linksbuendig (Fliesstext + Tabelle sind hier keine zentrierten Kurztexte wie bei der
+ * fruehereren CTA) -- nur Ueberschrift/Lead folgen der bestehenden .landing-section-Zentrierung.
+ */
+.landing-security{ background:var(--secondary) }
+.landing-security .container{ max-width:820px }
+.landing-security p{ line-height:1.6; margin:0 0 1.2rem }
+.landing-security p:last-child{ margin-bottom:0 }
+
+.security-table-wrap{ overflow-x:auto; margin:0 0 .6rem }
+.security-table{
+  width:100%; border-collapse:collapse; background:var(--background);
+  border:1px solid var(--border-color); border-radius:var(--radius); overflow:hidden;
 }
-.landing-cta h2{ color:#fff; font-weight:800; font-size:1.6rem; margin:0 0 .6rem }
-.landing-cta p{ opacity:.92; max-width:520px; margin:0 auto 1.4rem }
-.landing-cta .btn-light-cta{
-  background:#fff; color:var(--primary); border:0; border-radius:var(--radius);
-  padding:.65rem 1.6rem; font-weight:700; font-size:1rem; display:inline-block;
+.security-table caption{
+  caption-side:top; text-align:left; font-weight:700; color:var(--primary);
+  padding:.2rem 0 .6rem; font-size:.95rem;
 }
-.landing-cta .btn-light-cta:hover{ background:var(--secondary); color:var(--primary) }
+.security-table th, .security-table td{
+  text-align:left; padding:.65rem .9rem; border-bottom:1px solid var(--border-color);
+  font-size:.92rem; vertical-align:top;
+}
+.security-table thead th{
+  background:var(--primary); color:#fff; font-weight:700; border-bottom:0;
+}
+.security-table tbody tr:last-child td{ border-bottom:0 }
+.sec-badge{
+  display:inline-block; border-radius:1rem; padding:.15rem .65rem; font-size:.82rem; font-weight:600;
+}
+.sec-badge--yes{
+  background:#E3EEE0; background:color-mix(in srgb, var(--primary) 18%, var(--background));
+  color:var(--primary-dark);
+}
+.sec-badge--no{ background:var(--secondary); color:var(--text-body) }
+.security-footnote{ font-size:.85rem; opacity:.8 }
 
 /* ---------------- Footer ---------------- */
 .landing-footer{

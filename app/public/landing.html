@@ -43,15 +43,26 @@
   <symbol id="i-buch" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10.5 5 8.5 4.3 5 4.3v13c3.5 0 5.5.7 7 2.2"/><path d="M12 6.5c1.5-1.5 3.5-2.2 7-2.2v13c-3.5 0-5.5.7-7 2.2z"/><path d="M12 6.5v13"/></g></symbol>
 </svg>
 
-<!-- ================= Kopfbereich: Marke + Login-Link (erste von zwei Pflicht-Login-
-     Verlinkungen). ================= -->
+<!-- ================= Kopfbereich: Marke + GitHub-Link + Login-Link. =================
+     Nutzerentscheidung (2026-09-08): keine separate Anmelde-CTA mehr im Hero/am Seitenende
+     (siehe Kommentare dort) -- dieser Anmelden-Button bleibt unveraendert die einzige
+     verbleibende Handlungsaufforderung zur Anmeldung/Registrierung auf der ganzen Seite.
+     GitHub-Link direkt davor uebernimmt die Sichtbarkeit des vorher nur unauffaelligen
+     Footer-Links -- gleiche Button-Groesse/-Form (btn-sm), aber outline statt gefuellt,
+     damit die primaere Handlung (Anmelden) optisch klar fuehrend bleibt. -->
 <header class="landing-header">
   <div class="container">
     <div class="landing-brand">
       <span class="brand-mark" aria-hidden="true"><svg class="ic"><use href="#i-termin"></use></svg></span>
       Wochentafel
     </div>
-    <a href="login.html" class="btn btn-primary btn-sm">Anmelden</a>
+    <div class="landing-header-actions">
+      <a href="https://github.com/MrO2l/wochentafel" target="_blank" rel="noopener noreferrer"
+         class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-github" aria-hidden="true"></i> GitHub
+      </a>
+      <a href="login.html" class="btn btn-primary btn-sm">Anmelden</a>
+    </div>
   </div>
 </header>
 
@@ -70,9 +81,10 @@
       Termine, Schule, Essensplan, Einkaufsliste und Rezepte an einem Ort — gemeinsam am Rechner
       ausfüllen, auf A4 ausdrucken und ans Küchenbrett hängen, oder unterwegs vom Handy nachschauen.
     </p>
-    <a href="login.html" class="btn btn-primary btn-lg">Jetzt anmelden</a>
   </div>
 </section>
+<!-- Nutzerentscheidung (2026-09-08): keine eigene Hero-CTA mehr -- der Anmelden-Button in der
+     Kopfzeile oben reicht als Handlungsaufforderung; siehe auch Kommentar dort. -->
 
 <!-- ================= Feature-Kacheln (5, siehe plan.md Grobstruktur) ================= -->
 <section class="landing-section" aria-labelledby="features-h2">
@@ -196,19 +208,81 @@
   </div>
 </section>
 
-<!-- ================= Abschluss-CTA (zweite Pflicht-Login-Verlinkung) ================= -->
-<section class="landing-cta">
+<!-- ================= Verschlüsselungs-Hinweis =================
+     Ersetzt die vormalige Abschluss-CTA-Sektion an dieser Stelle (Nutzerentscheidung
+     2026-09-08, keine zweite Anmelde-Aufforderung mehr, siehe Kopfbereich-Kommentar oben) --
+     inhaltlich passender Abschluss vor dem Footer als eine leere Stelle. Sachlicher Hinweis
+     zur clientseitigen Ende-zu-Ende-Verschluesselung, technische Fakten recherchiert in
+     migrations/009_weeks_encryption.sql und server.js (A3CH, 2026-09-08) statt geraten --
+     Tabelleninhalt bewusst NUR das, was dort tatsaechlich als Ciphertext-Spalte/-Envelope
+     bzw. als Klartext-Spalte/-Response existiert. Wird von ZANDOR vor Live-Schaltung auf
+     technische Korrektheit gegengeprueft (siehe Rueckmeldung an ANORAK). Bewusst KEINE
+     Uebertreibungen/absoluten Sicherheitsversprechen ("100% sicher" o.ae.) -- nur, was sich
+     im Code belegen laesst. -->
+<section class="landing-section landing-security" aria-labelledby="security-h2">
   <div class="container">
-    <h2>Bereit für die nächste Woche?</h2>
-    <p>Kostenlos für den eigenen Haushalt einrichten — Anmeldung dauert eine Minute.</p>
-    <a href="login.html" class="btn-light-cta">Jetzt anmelden</a>
+    <h2 id="security-h2">Deine Daten: Ende-zu-Ende-verschlüsselt</h2>
+    <p class="section-lead">
+      Termine, Essenspläne und Einkaufslisten werden bereits auf deinem Gerät verschlüsselt,
+      bevor sie zum Server geschickt werden — mit einem aus deinem Passwort abgeleiteten
+      Schlüssel (Argon2id) und AEAD-Verschlüsselung (XChaCha20-Poly1305). Bei neu angelegten
+      Haushalten gilt das von Anfang an; bestehende Konten werden bei der nächsten Anmeldung
+      automatisch umgestellt.
+    </p>
+
+    <div class="security-table-wrap">
+      <table class="security-table">
+        <caption>Was ist verschlüsselt / was nicht</caption>
+        <thead>
+          <tr><th scope="col">Bereich</th><th scope="col">Status</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Wochenübersicht (Termine, Essensplan, Einkaufsliste, Wochenziele)</td>
+            <td><span class="sec-badge sec-badge--yes">Ende-zu-Ende-verschlüsselt</span></td>
+          </tr>
+          <tr>
+            <td>Wochen-Vorlage</td>
+            <td><span class="sec-badge sec-badge--yes">Ende-zu-Ende-verschlüsselt</span></td>
+          </tr>
+          <tr>
+            <td>Rezepte (Titel, Zutaten, Zubereitung, Bild)</td>
+            <td><span class="sec-badge sec-badge--no">Klartext auf dem Server</span></td>
+          </tr>
+          <tr>
+            <td>Name, E-Mail-Adresse, Haushaltsname</td>
+            <td><span class="sec-badge sec-badge--no">Klartext auf dem Server</span></td>
+          </tr>
+          <tr>
+            <td>Passwort</td>
+            <td><span class="sec-badge sec-badge--no">Nicht Teil der Ende-zu-Ende-Verschlüsselung, aber auch nicht im Klartext gespeichert — als Hash abgelegt</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="security-footnote">
+      Rezepte, Kontodaten und Haushaltsname sind für den normalen Betrieb (Login, Rezeptsuche,
+      Mitgliederverwaltung) auf dem Server im Klartext nötig und daher bewusst von der
+      Verschlüsselung ausgenommen. Ist die Verschlüsselung für einen Haushalt aktiv, speichert
+      der Server für die Bereiche oben, die als „Ende-zu-Ende-verschlüsselt" markiert sind, nur
+      noch unlesbare Ciphertext-Bytes; selbst bei einem kompromittierten Server lässt sich daraus
+      ohne das Passwort kein Wochenplan rekonstruieren.
+    </p>
+
+    <p>
+      Weil der Server dein Passwort und den daraus abgeleiteten Schlüssel nie im Klartext kennt,
+      gibt es keinen klassischen „Passwort vergessen"-Link per E-Mail. Stattdessen erhält jeder
+      Haushalt bei der Einrichtung einen einmalig angezeigten, für den ganzen Haushalt gültigen
+      Wiederherstellungscode, mit dem sich der Zugang bei Bedarf wiederherstellen lässt. Diesen
+      Code gibt es nur bei der Einrichtung zu sehen — er sollte an einem sicheren Ort aufbewahrt
+      werden.
+    </p>
   </div>
 </section>
 
 <footer class="landing-footer">
   <div class="container">
-    &copy; Wochentafel · <a href="login.html">Anmelden</a> ·
-    <a href="https://github.com/MrO2l/wochentafel" target="_blank" rel="noopener noreferrer">Quellcode auf GitHub</a>
+    &copy; Wochentafel · <a href="login.html">Anmelden</a>
   </div>
 </footer>
 
