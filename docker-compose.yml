@@ -87,6 +87,7 @@ services:
       # Downtime der db) siehe ap3.1-deployment-automatisierung.md.
       WOCHENPLAN_APP_PASSWORD: ${WOCHENPLAN_APP_PASSWORD:?WOCHENPLAN_APP_PASSWORD fehlt in .env}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET fehlt in .env}
+      EMAIL_HMAC_KEY: ${EMAIL_HMAC_KEY:?EMAIL_HMAC_KEY fehlt in .env}
       TRUST_PROXY: ${TRUST_PROXY:-false}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
       PORT: 3000
