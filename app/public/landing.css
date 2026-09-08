@@ -269,6 +269,14 @@ a{ color:var(--primary) }
   color:var(--primary-dark);
 }
 .sec-badge--no{ background:var(--secondary); color:var(--text-body) }
+/* Zwischenstufe fuer Bereiche, die weder vollstaendig "Ende-zu-Ende-verschluesselt" noch
+   schlicht "Klartext" sind (z.B. E-Mail-Blindindex) -- eigene, dritte Badge-Farbe (Mix aus
+   den beiden bestehenden Badge-Farben), damit sie sich optisch klar von beiden abhebt. */
+.sec-badge--partial{
+  background:color-mix(in srgb, var(--primary) 18%, var(--secondary));
+  color:var(--primary-dark);
+}
+.footnote-ref{ font-size:.8rem; text-decoration:none; margin-left:.15rem }
 .security-footnote{ font-size:.85rem; opacity:.8 }
 
 /* ---------------- Footer ---------------- */

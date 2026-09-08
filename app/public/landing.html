@@ -218,16 +218,24 @@
      bzw. als Klartext-Spalte/-Response existiert. Wird von ZANDOR vor Live-Schaltung auf
      technische Korrektheit gegengeprueft (siehe Rueckmeldung an ANORAK). Bewusst KEINE
      Uebertreibungen/absoluten Sicherheitsversprechen ("100% sicher" o.ae.) -- nur, was sich
-     im Code belegen laesst. -->
+     im Code belegen laesst.
+     UPDATE 2026-09-08 (A3CH): Nach Produktiv-Deployment von Phase 6 aktualisiert --
+     migrations/010_name_encryption.sql (users.name/households.name jetzt E2E-verschluesselt,
+     gleiches Envelope-Muster wie bei den Wochen) und migrations/011_email_blind_index.sql
+     (users.email_lookup als HMAC-SHA256-Blindindex ersetzt den bisherigen Klartext-Unique-
+     Index; die E-Mail selbst liegt zusaetzlich als E2E-Envelope vor, nur zur Anzeige nach
+     Unlock). Einordnung des verbleibenden E-Mail-Zugestaendnisses (Server sieht die
+     Klartext-E-Mail kurzzeitig bei Login/Registrierung/Reset zur HMAC-Berechnung) mit
+     ZANDOR abgestimmt. -->
 <section class="landing-section landing-security" aria-labelledby="security-h2">
   <div class="container">
     <h2 id="security-h2">Deine Daten: Ende-zu-Ende-verschlüsselt</h2>
     <p class="section-lead">
-      Termine, Essenspläne und Einkaufslisten werden bereits auf deinem Gerät verschlüsselt,
-      bevor sie zum Server geschickt werden — mit einem aus deinem Passwort abgeleiteten
-      Schlüssel (Argon2id) und AEAD-Verschlüsselung (XChaCha20-Poly1305). Bei neu angelegten
-      Haushalten gilt das von Anfang an; bestehende Konten werden bei der nächsten Anmeldung
-      automatisch umgestellt.
+      Termine, Essenspläne, Einkaufslisten sowie dein Name und der Haushaltsname werden
+      bereits auf deinem Gerät verschlüsselt, bevor sie zum Server geschickt werden — mit
+      einem aus deinem Passwort abgeleiteten Schlüssel (Argon2id) und AEAD-Verschlüsselung
+      (XChaCha20-Poly1305). Bei neu angelegten Haushalten gilt das von Anfang an; bestehende
+      Konten werden bei der nächsten Anmeldung automatisch umgestellt.
     </p>
 
     <div class="security-table-wrap">
@@ -246,12 +254,19 @@
             <td><span class="sec-badge sec-badge--yes">Ende-zu-Ende-verschlüsselt</span></td>
           </tr>
           <tr>
+            <td>Name, Haushaltsname</td>
+            <td><span class="sec-badge sec-badge--yes">Ende-zu-Ende-verschlüsselt</span></td>
+          </tr>
+          <tr>
             <td>Rezepte (Titel, Zutaten, Zubereitung, Bild)</td>
             <td><span class="sec-badge sec-badge--no">Klartext auf dem Server</span></td>
           </tr>
           <tr>
-            <td>Name, E-Mail-Adresse, Haushaltsname</td>
-            <td><span class="sec-badge sec-badge--no">Klartext auf dem Server</span></td>
+            <td>E-Mail-Adresse</td>
+            <td>
+              <span class="sec-badge sec-badge--partial">Blindindex + verschlüsselt zur Anzeige</span>
+              <a href="#email-hinweis" class="footnote-ref" aria-label="siehe Hinweis zur E-Mail-Adresse">†</a>
+            </td>
           </tr>
           <tr>
             <td>Passwort</td>
@@ -261,12 +276,24 @@
       </table>
     </div>
     <p class="security-footnote">
-      Rezepte, Kontodaten und Haushaltsname sind für den normalen Betrieb (Login, Rezeptsuche,
-      Mitgliederverwaltung) auf dem Server im Klartext nötig und daher bewusst von der
-      Verschlüsselung ausgenommen. Ist die Verschlüsselung für einen Haushalt aktiv, speichert
-      der Server für die Bereiche oben, die als „Ende-zu-Ende-verschlüsselt" markiert sind, nur
-      noch unlesbare Ciphertext-Bytes; selbst bei einem kompromittierten Server lässt sich daraus
-      ohne das Passwort kein Wochenplan rekonstruieren.
+      Rezepte sind für die Rezeptsuche und -anzeige weiterhin auf dem Server im Klartext nötig
+      und daher bewusst von der Verschlüsselung ausgenommen. Ist die Verschlüsselung für einen
+      Haushalt aktiv, speichert der Server für die Bereiche oben, die als
+      „Ende-zu-Ende-verschlüsselt" markiert sind — also auch Name und Haushaltsname — nur noch
+      unlesbare Ciphertext-Bytes; selbst bei einem kompromittierten Server lässt sich daraus ohne
+      das Passwort nichts rekonstruieren.
+    </p>
+    <p class="security-footnote" id="email-hinweis">
+      † Bei der E-Mail-Adresse gilt das nur eingeschränkt: Für die Anmeldung wird sie über einen
+      Blindindex nachschlagbar gemacht — einen serverseitig aus der Adresse berechneten
+      kryptografischen Prüfwert (HMAC), aus dem sich die E-Mail-Adresse selbst nicht
+      zurückgewinnen lässt. Die tatsächliche Adresse liegt zusätzlich verschlüsselt vor und wird
+      erst nach dem Entsperren zur Anzeige entschlüsselt. Dafür sieht der Server deine
+      E-Mail-Adresse bei Anmeldung, Registrierung, beim Anfordern eines Wiederherstellungscodes
+      und beim Passwort-Reset jedoch kurzzeitig im Klartext, um diesen Prüfwert zu berechnen — strukturell dasselbe Zugeständnis wie beim
+      Passwort, das der Server für den Hash-Vergleich ebenfalls kurz im Klartext sieht. Das
+      schützt zuverlässig gegen Datenbank-Diebstahl, ein Backup-Leck oder SQL-Injection, aber
+      nicht gegen einen Angreifer, der bereits aktiv Code auf dem laufenden Server ausführt.
     </p>
 
     <p>
