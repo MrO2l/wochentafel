@@ -48,6 +48,98 @@
 </head>
 <body class="section-wochenuebersicht" data-section="wochenuebersicht">
 
+<!-- ================= AP-Merge (Login/App-Shell-Zusammenfuehrung, Auftrag ANORAK, von ZANDOR
+     sicherheitsarchitektonisch geprueft/freigegeben): fuenfte, rein clientseitig (ohne
+     Seitenwechsel) umgeschaltete Ansicht -- An-/Abmelden, Registrieren, Passwort-Wiederherstellung.
+     Markup 1:1 aus dem entfallenen login.html uebernommen (siehe Git-Historie), IDs unveraendert
+     (app.js/wireAuthForms() erwartet exakt diese). Grund fuer den Umbau: login.html und index.html
+     waren zwei getrennte Seitenladevorgaenge/JS-Kontexte -- der modul-lokal in crypto.js gehaltene
+     Haushalts-Schluessel (householdKeyBytes) ging beim Navigieren zwischen beiden verloren, was eine
+     doppelte Passworteingabe erzwang (Login + anschliessender "Entsperren"-Dialog). Jetzt bleibt der
+     JS-Kontext beim Anmelden durchgaengig derselbe, siehe app.js/continueBootAuthenticated().
+     Liegt bewusst AUSSERHALB von .app-shell -- anders als die vier bestehenden .app-view-Ansichten
+     (Wochenuebersicht/Einkaufen/Essen & Kochen/Rezeptkarten/Konto) teilt sich diese Ansicht keine
+     Werkzeugleiste/Seitennavigation mit der eigentlichen App (vor dem Einloggen gibt es weder
+     Wochendaten noch einen Haushalt anzuzeigen). Sichtbarkeit wird ueber app.js'
+     showAuthView()/showAppShell()/applyAuthMode() gesteuert, NICHT ueber das reine
+     .app-view/.active-Klassenmuster von setSection(): .app-shell nutzt Bootstraps
+     ".d-flex{display:flex!important}", ein einfaches [hidden]-Attribut wuerde von dieser
+     !important-Regel ueberstimmt (CSS-Kaskade: Autoren-Regeln schlagen [hidden] unabhaengig von
+     Spezifitaet, !important zusaetzlich unabhaengig von Autoren-Herkunft) -- deshalb steuert app.js
+     stattdessen gezielt style.display auf den beiden Wurzel-Containern. ================= -->
+<div class="auth-wrap" id="authWrap">
+  <div class="auth-card tab-content">
+    <h1>Wochentafel</h1>
+    <p class="lead">Ein Plan für die ganze Familie – am Rechner ausfüllen, auf A4 ausdrucken, vom Handy nachschauen.</p>
+
+    <div class="tabs" role="tablist">
+      <button id="tabLogin" type="button" role="tab" aria-selected="true" class="active"
+              data-bs-toggle="tab" data-bs-target="#formLogin" aria-controls="formLogin">Anmelden</button>
+      <button id="tabRegister" type="button" role="tab" aria-selected="false"
+              data-bs-toggle="tab" data-bs-target="#formRegister" aria-controls="formRegister">Neu hier</button>
+      <button id="tabRecover" type="button" role="tab" aria-selected="false"
+              data-bs-toggle="tab" data-bs-target="#formRecover" aria-controls="formRecover">Passwort vergessen</button>
+    </div>
+
+    <form id="formLogin" class="tab-pane active" role="tabpanel" aria-labelledby="tabLogin">
+      <label for="le" class="form-label">E-Mail</label>
+      <input id="le" type="email" class="form-control" autocomplete="username" required>
+      <label for="lp" class="form-label">Passwort</label>
+      <input id="lp" type="password" class="form-control" autocomplete="current-password" required>
+      <button class="legacy-btn primary" type="submit">Anmelden</button>
+    </form>
+
+    <form id="formRegister" class="tab-pane tab-content" role="tabpanel" aria-labelledby="tabRegister">
+      <label for="rn" class="form-label">Dein Name</label>
+      <input id="rn" type="text" class="form-control" autocomplete="name" required>
+      <label for="re" class="form-label">E-Mail</label>
+      <input id="re" type="email" class="form-control" autocomplete="username" required>
+      <label for="rp" class="form-label">Passwort (mindestens 10 Zeichen)</label>
+      <input id="rp" type="password" class="form-control" autocomplete="new-password" minlength="10" required>
+
+      <div class="tabs tabs-mode" role="tablist">
+        <button type="button" id="modeNew" role="tab" aria-selected="true" class="active"
+                data-bs-toggle="tab" data-bs-target="#boxNew" aria-controls="boxNew">Neuer Haushalt</button>
+        <button type="button" id="modeInvite" role="tab" aria-selected="false"
+                data-bs-toggle="tab" data-bs-target="#boxInvite" aria-controls="boxInvite">Einladung</button>
+      </div>
+
+      <div id="boxNew" class="tab-pane active" role="tabpanel" aria-labelledby="modeNew">
+        <label for="rh" class="form-label">Name des Haushalts</label>
+        <input id="rh" type="text" class="form-control" placeholder="Familie Muster">
+      </div>
+      <div id="boxInvite" class="tab-pane" role="tabpanel" aria-labelledby="modeInvite">
+        <label for="ri" class="form-label">Einladungscode</label>
+        <input id="ri" type="text" class="form-control upper" placeholder="A1B2C3D4E5">
+      </div>
+
+      <button class="legacy-btn primary" type="submit">Konto anlegen</button>
+    </form>
+
+    <form id="formRecover" class="tab-pane" role="tabpanel" aria-labelledby="tabRecover">
+      <div id="recoverStep1">
+        <p class="view-lead">Gib deine E-Mail-Adresse und euren Wiederherstellungscode ein.</p>
+        <label for="cve" class="form-label">E-Mail</label>
+        <input id="cve" type="email" class="form-control" autocomplete="username" required>
+        <label for="cvc" class="form-label">Wiederherstellungscode</label>
+        <input id="cvc" type="text" class="form-control upper" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXX" required>
+        <button class="legacy-btn primary" type="submit" id="recoverStep1Submit">Code prüfen</button>
+      </div>
+      <div id="recoverStep2" hidden>
+        <p class="view-lead">Code korrekt — bitte jetzt ein neues Passwort festlegen.</p>
+        <label for="cvnp" class="form-label">Neues Passwort (mindestens 10 Zeichen)</label>
+        <input id="cvnp" type="password" class="form-control" autocomplete="new-password" minlength="10">
+        <label for="cvnp2" class="form-label">Neues Passwort bestätigen</label>
+        <input id="cvnp2" type="password" class="form-control" autocomplete="new-password" minlength="10">
+        <button class="legacy-btn primary" type="button" id="recoverStep2Submit">Passwort zurücksetzen</button>
+      </div>
+    </form>
+
+    <div class="msg" id="msg"></div>
+    <p class="switch-hint" id="regHint"></p>
+  </div>
+</div>
+
 <!-- ================= AP3.2: linksseitiges Piktogramm-Menue + drei getrennte Ansichten
      (Wochenuebersicht / Einkaufen & Besorgungen / Essen & Kochen), uebernommen aus
      mockups/wochenplaner-mockup-v2-linksmenue-vendored.html. Klappt auf schmalen Bildschirmen
@@ -55,7 +147,7 @@
      Werkzeugleiste (Wochenwahl, Drucken, Vorlage, Konto ...) und die Fehler-/Hinweis-Leiste
      gelten weiterhin uebergreifend fuer alle drei Ansichten und wandern daher mit in
      .app-main, statt pro Ansicht dupliziert zu werden. ================= -->
-<div class="app-shell d-flex">
+<div class="app-shell d-flex" id="appShell">
 
   <!-- AP1.2 (Bootstrap-Migrationsplan) -- geprueft und bewusst NICHT auf Bootstraps
        Offcanvas-Komponente umgestellt, Begruendung:
@@ -741,14 +833,16 @@
 </dialog>
 
 <!-- ================= AP2.1 (projects/wochenplaner-termine-verschluesselung/plan.md): "Entsperren"-
-     Dialog -- login.html und index.html sind zwei getrennte Dokumente/JS-Kontexte; der Haushalts-
-     Schluessel darf laut Risikotabelle des Plans NIE ausserhalb des JS-Arbeitsspeichers der jeweils
-     LAUFENDEN Seite liegen (kein localStorage/sessionStorage), kann also nicht einfach von
-     login.html "mitgenommen" werden. Deshalb fragt index.html bei einem bereits verschluesselten
-     Haushalt (encryption_status='active', siehe /api/me) das Passwort HIER erneut ab und leitet den
-     Wrap-Schluessel/entpackt den Haushalts-Schluessel lokal -- analoges, etabliertes UX-Muster wie
-     der "Tresor entsperren"-Schritt bekannter Passwort-Manager-Web-Apps nach bereits bestehender
-     Sitzung. Natives <dialog>, kein Abbrechen moeglich (siehe app.js: kein close()-Aufruf ausser
+     Dialog. Der Haushalts-Schluessel darf laut Risikotabelle des Plans NIE ausserhalb des
+     JS-Arbeitsspeichers der jeweils LAUFENDEN Seite liegen (kein localStorage/sessionStorage) --
+     das gilt unveraendert, AUCH seit der AP-Merge-Zusammenfuehrung von Login und App-Shell in
+     dieses eine Dokument (siehe #authWrap oben): ein neuer Tab, ein Seiten-Reload oder eine bereits
+     bestehende Sitzung ohne vorherigen Login-Durchlauf IN DIESEM Browserkontext (z. B. Lesezeichen
+     direkt auf index.html) starten weiterhin einen frischen JS-Kontext ohne den Schluessel im
+     Speicher. Fuer den normalen Fall -- Login-Formular direkt hier auf dieser Seite ausgefuellt --
+     entfaellt dieser Dialog dagegen: app.js leitet den Wrap-Schluessel dort im selben Tick aus dem
+     noch im Formularfeld stehenden Passwort ab (siehe continueBootAuthenticated()), ohne erneute
+     Abfrage. Natives <dialog>, kein Abbrechen moeglich (siehe app.js: kein close()-Aufruf ausser
      bei Erfolg) -- ohne den Schluessel kann keine Wochenansicht sinnvoll dargestellt werden. -->
 <dialog class="daylist" id="unlockDialog" aria-labelledby="unlockTitle">
   <div class="daylist-head modal-header">
@@ -849,16 +943,26 @@
 <div id="sweepPanel" class="alert alert-info" role="status" hidden
      style="position:fixed; bottom:1rem; right:1rem; z-index:1050; max-width:22rem; box-shadow:0 2px 10px rgba(0,0,0,0.15);"></div>
 
-<!-- ================= AP2.6: einmalige Anzeige eines NEU erzeugten Wiederherstellungscodes --
-     genutzt sowohl vom "Neuen Code erzeugen"-Knopf in der Konto-Ansicht (freiwillig) als auch
-     zwingend direkt nach einem Passwort-Reset via Wiederherstellungscode (ZANDORs Vorgabe 3: keine
-     stille Rotation, siehe app.js boot()/forceRecoveryCodeRegeneration()). Gleiches Muster wie
-     login.html #recoveryCodeDialog (kein Abbrechen vor Bestaetigung). ================= -->
+<!-- ================= AP2.6, erweitert um AP-Merge (Login/App-Shell-Zusammenfuehrung): einmalige
+     Anzeige eines Wiederherstellungscodes -- genutzt von DREI Aufrufern: der Registrierung eines
+     neuen Haushalts (formRegister, erster jemals erzeugter Code), dem "Neuen Code erzeugen"-Knopf
+     in der Konto-Ansicht (freiwillige Rotation) sowie zwingend direkt nach einem Passwort-Reset via
+     Wiederherstellungscode (ZANDORs Vorgabe 3: keine stille Rotation, siehe app.js
+     forceRecoveryCodeRegenerationIfNeeded()).
+     Voraussetzung fuer die AP-Merge-Zusammenfuehrung (ZANDORs Umsetzungsplan, Schritt 2): login.html
+     und index.html definierten diesen Dialog frueher UNABHAENGIG voneinander mit identischen IDs
+     (#recoveryCodeDialog/#recoveryCodeConfirm/#recoveryCodeContinue/#recoveryCodeOut/#rcdTitle) --
+     seit der Zusammenfuehrung in ein Dokument gibt es nur noch DIESEN EINEN Dialog; Titel/Untertitel/
+     Einleitungstext/Checkbox-Beschriftung unterscheiden sich inhaltlich leicht zwischen "erster Code"
+     und "Rotation" (kein bisheriger Code wird ersetzt vs. ein bestehender Code wird ungueltig) --
+     werden daher von app.js/showRecoveryCodeOnce(code, variant) passend zum Aufrufkontext gesetzt
+     (#rcdTitle/#rcdSub/#rcdIntro/#recoveryCodeConfirmLabel), das Markup hier traegt nur den
+     Standardtext (Rotation) als Fallback. Kein Abbrechen vor Bestaetigung (siehe app.js). ================= -->
 <dialog class="daylist" id="recoveryCodeDialog" aria-labelledby="rcdTitle">
   <div class="daylist-head modal-header">
     <div>
       <h2 id="rcdTitle" class="font-heading">Neuer Wiederherstellungscode</h2>
-      <div class="sub">Nur jetzt sichtbar — bitte sicher aufbewahren und an alle Haushaltsmitglieder weitergeben.</div>
+      <div class="sub" id="rcdSub">Nur jetzt sichtbar — bitte sicher aufbewahren und an alle Haushaltsmitglieder weitergeben.</div>
     </div>
   </div>
   <div class="daylist-body modal-body">
@@ -870,12 +974,17 @@
     <p style="font-family:monospace; font-size:1.3em; letter-spacing:0.05em; text-align:center; padding:0.75em; border:1px solid var(--border-color); border-radius:var(--radius);" id="recoveryCodeOut"></p>
     <label style="display:flex; gap:0.5em; align-items:flex-start; margin-top:1em;">
       <input type="checkbox" id="recoveryCodeConfirm">
-      <span>Ich habe den Code sicher gespeichert/weitergegeben.</span>
+      <span id="recoveryCodeConfirmLabel">Ich habe den Code sicher gespeichert/weitergegeben.</span>
     </label>
     <button class="legacy-btn primary" id="recoveryCodeContinue" disabled style="margin-top:1em;">Weiter</button>
   </div>
 </dialog>
 
+<!-- AP-Merge (Login/App-Shell-Zusammenfuehrung): wird jetzt auch hier gebraucht -- die aus
+     login.html uebernommenen Tabs (#authWrap, "Anmelden"/"Neu hier"/"Passwort vergessen" sowie
+     "Neuer Haushalt"/"Einladung") nutzen Bootstraps natives Tab-Pattern (data-bs-toggle="tab",
+     siehe dortiger Kommentar bei #authWrap), das erst durch dieses Skript funktionsfaehig wird. -->
+<script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script src="vendor/libsodium/libsodium.js"></script>
 <script src="vendor/libsodium/libsodium-wrappers.js"></script>
 <script src="crypto.js"></script>

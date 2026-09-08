@@ -2,160 +2,25 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Anmelden – Wochentafel</title>
-<!-- AP0.3 (Bootstrap-Migrationsplan): Bootstrap/Bootstrap Icons/Open Sans lokal vendored, analog
-     index.html (Zeile 8ff. dort) -- fehlte auf dieser Seite bislang komplett (siehe plan.md,
-     "Ausgangslage"), wodurch form-control/form-label sowie das native Bootstrap-Tab-Pattern (siehe
-     unten) hier nicht funktionierten. Reihenfolge wie in index.html: Bootstrap-CSS zuerst, danach
-     style-v2.css/style.css, damit die eigenen Regeln bei gleicher Spezifitaet wie gewohnt gewinnen. -->
-<link rel="stylesheet" href="vendor/bootstrap/css/bootstrap.min.css">
-<link rel="stylesheet" href="vendor/bootstrap-icons/bootstrap-icons.css">
-<link rel="stylesheet" href="vendor/fonts/open-sans/open-sans.css">
-<!-- style-v2.css muss VOR style.css geladen werden: style.css leitet seine eigenen
-     Bildschirm-Variablen (u.a. --accent, --border-color, --radius) inzwischen komplett auf die
-     Design-v2-Variablen aus style-v2.css um (siehe :root-Kommentar dort) und faellt ohne sie auf
-     ungueltige Werte zurueck (z.B. border:none) -- siehe index.html, das dieselbe Reihenfolge
-     nutzt. Bugfix 2026-08-19: fehlte hier bislang, wodurch Eingabefelder/Tab-Buttons auf dieser
-     Seite unsichtbar bzw. falsch positioniert waren. -->
-<link rel="stylesheet" href="style-v2.css">
-<link rel="stylesheet" href="style.css">
+<meta http-equiv="refresh" content="0; url=index.html">
+<title>Wochentafel – Weiterleitung</title>
 </head>
 <body>
-<div class="auth-wrap">
-  <div class="auth-card tab-content">
-    <h1>Wochentafel</h1>
-    <p class="lead">Ein Plan für die ganze Familie – am Rechner ausfüllen, auf A4 ausdrucken, vom Handy nachschauen.</p>
-
-    <!-- AP0.4: natives Bootstrap-Tab-Pattern (data-bs-toggle="tab") statt reiner Handklick-Logik.
-         Bootstraps Tab-Komponente (vendor/bootstrap/js/bootstrap.bundle.min.js, AP0.2) verwaltet
-         role="tab"/aria-selected/tabindex auf den Buttons sowie role="tabpanel" auf dem Ziel-
-         Panel selbststaendig (setzt sie nur, wenn nicht bereits vorhanden -- hier trotzdem
-         explizit im Markup gesetzt, fuer Klarheit/No-JS-Fallback) und bringt Pfeiltasten-/Home-/
-         End-Tastaturnavigation zwischen den Tabs automatisch mit (siehe Kommentar in login.js).
-         Wichtig: der jeweils anfangs aktive Trigger-Button braucht zusaetzlich class="active"
-         (nicht nur aria-selected="true") -- Bootstraps Tab-Komponente ermittelt darueber, welcher
-         zuvor aktive Tab beim naechsten Wechsel deaktiviert werden muss (".active[data-bs-toggle]"-
-         Selektor intern); ohne das blieb beim ersten Tab-Wechsel das alte Panel faelschlich
-         sichtbar (in der Regressionspruefung so aufgefallen und hier korrigiert).
-         Die eigene .tabs-Optik (Taupe-Palette, siehe style.css) bleibt unangetastet: es werden
-         gezielt nur role/data-bs-*-Attribute ergaenzt, keine Bootstrap-eigenen .nav/.nav-tabs-
-         Klassen uebernommen -- das waere eine optische Neugestaltung gewesen, die hier
-         ausdruecklich nicht beauftragt ist. -->
-    <div class="tabs" role="tablist">
-      <button id="tabLogin" type="button" role="tab" aria-selected="true" class="active"
-              data-bs-toggle="tab" data-bs-target="#formLogin" aria-controls="formLogin">Anmelden</button>
-      <button id="tabRegister" type="button" role="tab" aria-selected="false"
-              data-bs-toggle="tab" data-bs-target="#formRegister" aria-controls="formRegister">Neu hier</button>
-      <!-- AP2.1, erweitert in AP2.6 (projects/wochenplaner-termine-verschluesselung/plan.md,
-           ap1.2-datenmodell.md Abschnitt 7a): dritter Tab -- "Passwort vergessen"-Fluss.
-           MORROW/ZANDOR haben inzwischen einen serverseitig pruefbaren "verifier"-Wert entworfen
-           (zweiter, von wrap_key unabhaengiger Argon2id-Output desselben Codes, Domain-Separation
-           ueber ein eigenes Salt) -- der urspruengliche Auth-Bypass-Einwand aus AP2.1 ist damit
-           behoben: der Server prueft SHA-256(verifier) gegen recovery_verifier_hash, sieht aber nie
-           den Code, wrap_key oder den Haushalts-Schluessel selbst. Zwei Schritte in diesem Formular
-           (siehe login.js): zuerst lokale Code-Pruefung (Unwrap-Versuch, kein Server-Roundtrip
-           noetig), erst bei Erfolg erscheint das Feld fuer das neue Passwort. -->
-      <button id="tabRecover" type="button" role="tab" aria-selected="false"
-              data-bs-toggle="tab" data-bs-target="#formRecover" aria-controls="formRecover">Passwort vergessen</button>
-    </div>
-
-    <form id="formLogin" class="tab-pane active" role="tabpanel" aria-labelledby="tabLogin">
-      <label for="le" class="form-label">E-Mail</label>
-      <input id="le" type="email" class="form-control" autocomplete="username" required>
-      <label for="lp" class="form-label">Passwort</label>
-      <input id="lp" type="password" class="form-control" autocomplete="current-password" required>
-      <button class="legacy-btn primary" type="submit">Anmelden</button>
-    </form>
-
-    <form id="formRegister" class="tab-pane tab-content" role="tabpanel" aria-labelledby="tabRegister">
-      <label for="rn" class="form-label">Dein Name</label>
-      <input id="rn" type="text" class="form-control" autocomplete="name" required>
-      <label for="re" class="form-label">E-Mail</label>
-      <input id="re" type="email" class="form-control" autocomplete="username" required>
-      <label for="rp" class="form-label">Passwort (mindestens 10 Zeichen)</label>
-      <input id="rp" type="password" class="form-control" autocomplete="new-password" minlength="10" required>
-
-      <div class="tabs tabs-mode" role="tablist">
-        <button type="button" id="modeNew" role="tab" aria-selected="true" class="active"
-                data-bs-toggle="tab" data-bs-target="#boxNew" aria-controls="boxNew">Neuer Haushalt</button>
-        <button type="button" id="modeInvite" role="tab" aria-selected="false"
-                data-bs-toggle="tab" data-bs-target="#boxInvite" aria-controls="boxInvite">Einladung</button>
-      </div>
-
-      <div id="boxNew" class="tab-pane active" role="tabpanel" aria-labelledby="modeNew">
-        <label for="rh" class="form-label">Name des Haushalts</label>
-        <input id="rh" type="text" class="form-control" placeholder="Familie Muster">
-      </div>
-      <div id="boxInvite" class="tab-pane" role="tabpanel" aria-labelledby="modeInvite">
-        <label for="ri" class="form-label">Einladungscode</label>
-        <input id="ri" type="text" class="form-control upper" placeholder="A1B2C3D4E5">
-      </div>
-
-      <button class="legacy-btn primary" type="submit">Konto anlegen</button>
-    </form>
-
-    <!-- AP2.6: zwei Schritte, siehe login.js. Schritt 1 ist rein lokal (kein Server-Roundtrip fuer
-         die Code-Pruefung selbst noetig -- ein falscher Code scheitert beim AEAD-Unwrap). Erst nach
-         erfolgreichem lokalem Unwrap wird Schritt 2 (neues Passwort) sichtbar; DORT verlaesst
-         ausschliesslich der "verifier" (nicht der Code selbst) den Browser, siehe
-         ap1.2-datenmodell.md Abschnitt 7a. -->
-    <form id="formRecover" class="tab-pane" role="tabpanel" aria-labelledby="tabRecover">
-      <div id="recoverStep1">
-        <p class="view-lead">Gib deine E-Mail-Adresse und euren Wiederherstellungscode ein.</p>
-        <label for="cve" class="form-label">E-Mail</label>
-        <input id="cve" type="email" class="form-control" autocomplete="username" required>
-        <label for="cvc" class="form-label">Wiederherstellungscode</label>
-        <input id="cvc" type="text" class="form-control upper" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXX" required>
-        <button class="legacy-btn primary" type="submit" id="recoverStep1Submit">Code prüfen</button>
-      </div>
-      <div id="recoverStep2" hidden>
-        <p class="view-lead">Code korrekt — bitte jetzt ein neues Passwort festlegen.</p>
-        <label for="cvnp" class="form-label">Neues Passwort (mindestens 10 Zeichen)</label>
-        <input id="cvnp" type="password" class="form-control" autocomplete="new-password" minlength="10">
-        <label for="cvnp2" class="form-label">Neues Passwort bestätigen</label>
-        <input id="cvnp2" type="password" class="form-control" autocomplete="new-password" minlength="10">
-        <button class="legacy-btn primary" type="button" id="recoverStep2Submit">Passwort zurücksetzen</button>
-      </div>
-    </form>
-
-    <div class="msg" id="msg"></div>
-    <p class="switch-hint" id="regHint"></p>
-  </div>
-</div>
-
-<!-- AP2.1: einmalige Anzeige des beim Setup neu erzeugten Wiederherstellungscodes (nur fuer den
-     "Neuer Haushalt"-Registrierungszweig, siehe login.js). Natives <dialog>, gleiches Muster wie
-     die uebrigen Overlays der App (index.html, #daylist etc.) -- Browser liefert Backdrop/
-     Fokus-Falle automatisch. Bewusst KEIN Abbrechen per ESC/Backdrop-Klick vor der Bestaetigung
-     (siehe login.js: cancel-Event wird abgefangen), damit der Code nicht versehentlich uebersehen
-     wird, bevor die Seite verlassen wird. -->
-<dialog class="daylist" id="recoveryCodeDialog" aria-labelledby="rcdTitle">
-  <div class="daylist-head modal-header">
-    <div>
-      <h2 id="rcdTitle" class="font-heading">Dein Wiederherstellungscode</h2>
-      <div class="sub">Nur jetzt sichtbar — bitte sicher aufbewahren (z. B. Passwort-Manager oder Ausdruck).</div>
-    </div>
-  </div>
-  <div class="daylist-body modal-body">
-    <p>
-      Dieser Code gilt für euren <strong>ganzen Haushalt</strong> und entsperrt eure Termine unabhängig
-      vom Passwort — z. B. wenn ihr das Passwort vergesst. Ohne Passwort <em>und</em> ohne diesen Code
-      können eure verschlüsselten Termine <strong>niemand mehr</strong> lesen, auch wir als Betreiber nicht.
-    </p>
-    <p style="font-family:monospace; font-size:1.3em; letter-spacing:0.05em; text-align:center; padding:0.75em; border:1px solid var(--border-color); border-radius:var(--radius);" id="recoveryCodeOut"></p>
-    <label style="display:flex; gap:0.5em; align-items:flex-start; margin-top:1em;">
-      <input type="checkbox" id="recoveryCodeConfirm">
-      <span>Ich habe den Code sicher gespeichert.</span>
-    </label>
-    <button class="legacy-btn primary" id="recoveryCodeContinue" disabled style="margin-top:1em;">Weiter</button>
-  </div>
-</dialog>
-
-<script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
-<script src="vendor/libsodium/libsodium.js"></script>
-<script src="vendor/libsodium/libsodium-wrappers.js"></script>
-<script src="crypto.js"></script>
-<script src="login.js"></script>
+<!-- AP-Merge (Login/App-Shell-Zusammenfuehrung, Auftrag ANORAK, von ZANDOR sicherheitsarchitektonisch
+     geprueft/freigegeben): index.html ist jetzt der alleinige Einstiegspunkt fuer An-/Abmelden,
+     Registrieren, Passwort-Wiederherstellung UND die eigentliche App (siehe dortiger Kommentar bei
+     #authWrap sowie app.js/wireAuthForms()). Grund: login.html und index.html waren zwei getrennte
+     Seitenladevorgaenge/JS-Kontexte, wodurch der modul-lokal im Speicher gehaltene Haushalts-
+     Schluessel (crypto.js, householdKeyBytes) beim Navigieren zwischen beiden verloren ging -- das
+     erzwang eine stoerende doppelte Passworteingabe (einmal beim Login, ein zweites Mal im
+     "Entsperren"-Dialog nach dem Seitenwechsel). Dieser duenne Redirect-Stub bleibt nur fuer alte
+     Lesezeichen/externe Links auf login.html bestehen -- login.js ist komplett entfallen, seine
+     gesamte Logik lebt jetzt in app.js/index.html als fuenfte, clientseitig (ohne Seitenwechsel)
+     umgeschaltete Ansicht.
+     Bewusst NUR <meta http-equiv="refresh">, kein <script>: ein inline <script>-Block waere unter
+     der bestehenden CSP (server.js, script-src 'self' 'wasm-unsafe-eval', kein 'unsafe-inline')
+     ohnehin blockiert; der sichtbare Link darunter ist der Fallback fuer den (raren) Fall, dass ein
+     Browser/eine Konfiguration die Meta-Weiterleitung nicht ausfuehrt. -->
+<p><a href="index.html">Weiter zu Wochentafel</a></p>
 </body>
 </html>

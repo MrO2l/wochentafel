@@ -56,6 +56,68 @@ function todayColumnIndex() {
   return isoOf(toMonday(t)) === state.weekStart ? (t.getDay() + 6) % 7 : -1;
 }
 
+/* ---------------- AP-Merge (Login/App-Shell-Zusammenfuehrung) ----------------
+ * index.html ist jetzt der alleinige Einstiegspunkt (siehe #authWrap dort): #authWrap (Login/
+ * Registrierung/Passwort-Wiederherstellung) und #appShell (die eigentliche App) liegen im selben
+ * Dokument/JS-Kontext und werden hier rein per style.display umgeschaltet -- kein Seitenwechsel
+ * mehr, kein Verlust des in crypto.js modul-lokal gehaltenen Haushalts-Schluessels.
+ * applyAuthMode() macht NUR die DOM-Sichtbarkeit; showAuthView()/showAppShell() zusaetzlich die
+ * Browserverlaufs-Eintraege (rein kosmetisch fuer Zurueck/Vorwaerts, siehe popstate-Listener unten
+ * -- KEIN Sicherheitsmechanismus, eine gueltige Sitzung wird durch reine Verlaufsnavigation nie
+ * beendet).
+ * Bewusst NICHT ueber das [hidden]-Attribut (wie z. B. #recoverStep2): #appShell traegt Bootstraps
+ * ".d-flex{display:flex!important}" -- Autoren-!important-Regeln schlagen [hidden] (User-Agent-
+ * Stylesheet, ohne !important) immer, unabhaengig von Selektor-Spezifitaet. style.setProperty(...,
+ * 'important') auf dem Element selbst gewinnt dagegen zuverlaessig gegen jede externe !important-
+ * Regel (hoechste Spezifitaet unter gleicher Wichtigkeitsstufe).
+ */
+function applyAuthMode(isAuthMode) {
+  document.body.classList.toggle('auth-mode', isAuthMode);
+  $('#authWrap').style.display = isAuthMode ? '' : 'none';
+  const shell = $('#appShell');
+  if (isAuthMode) shell.style.setProperty('display', 'none', 'important');
+  else shell.style.removeProperty('display');
+}
+// true, sobald in DIESEM Seitenaufruf tatsaechlich die Login-/Auth-Ansicht sichtbar war -- steuert,
+// ob der Wechsel zur App-Shell einen neuen Verlaufseintrag braucht (echter Uebergang, den ein
+// Zurueck-Klick rueckgaengig machen koennen soll) oder nur den initialen Eintrag ersetzt (Nutzer war
+// beim Laden bereits angemeldet, es gab nie eine sichtbare Login-Ansicht in diesem Aufruf).
+let authViewShown = false;
+function showAuthView(replace) {
+  applyAuthMode(true);
+  authViewShown = true;
+  history[replace ? 'replaceState' : 'pushState']({ view: 'login' }, '', '#login');
+}
+function showAppShell() {
+  applyAuthMode(false);
+  history[authViewShown ? 'pushState' : 'replaceState']({ view: 'app' }, '', '#app');
+}
+// Randfall Browser Zurueck/Vorwaerts (rein kosmetisch, siehe Kommentar oben): synchronisiert nur die
+// sichtbare Ansicht mit dem TATSAECHLICHEN Auth-Zustand (state.user), unabhaengig vom im
+// history-Eintrag gespeicherten "view"-Wert -- eine weiterhin gueltige Sitzung darf durch reine
+// Verlaufsnavigation nie beendet werden, auch wenn der Verlauf gerade auf den "Login"-Eintrag
+// zurueckspringt.
+window.addEventListener('popstate', () => { applyAuthMode(!state.user); });
+
+// Faengt Fehler ab, die in wireAuthForms()' Login-/Registrierungs-Handlern NACH dem Aufruf von
+// continueBootAuthenticated() auftreten (z. B. loadWeek() schlaegt direkt nach einem erfolgreichen
+// Login fehl) -- zu diesem Zeitpunkt kann #appShell bereits sichtbar UND #authWrap bereits
+// ausgeblendet sein (showAppShell() laeuft frueh in continueBootAuthenticated(), vor Woche laden/
+// Sweep/Verdrahtung). Eine Fehlermeldung in das dann unsichtbare #msg zu schreiben waere fuer den
+// Nutzer nicht wahrnehmbar -- je nachdem, WELCHE Ansicht gerade sichtbar ist, landet die Meldung
+// daher entweder im Auth-Formular (#msg) oder wie beim normalen boot()-Fehlerfall in der
+// Werkzeugleiste (setStatus()).
+function reportAuthFlowError(err) {
+  console.error(err);
+  if (document.body.classList.contains('auth-mode')) {
+    const m = $('#msg');
+    m.textContent = err.message;
+    m.className = 'msg err';
+  } else {
+    setStatus('Fehler beim Laden', 'error');
+  }
+}
+
 async function api(method, url, body) {
   const res = await fetch(url, {
     method,
@@ -63,7 +125,13 @@ async function api(method, url, body) {
     body: body ? JSON.stringify(body) : undefined,
     credentials: 'same-origin'
   });
-  if (res.status === 401) { location.href = 'login.html'; throw new Error('Nicht angemeldet'); }
+  // AP-Merge: Ziel bei abgelaufener/fehlender Sitzung ist jetzt index.html selbst (der alleinige
+  // Einstiegspunkt) statt des entfallenen login.html -- ein voller Seiten-Reload ist hier bewusst
+  // richtig (nicht nur ein In-Page-Wechsel zu #authWrap): er setzt zuverlaessig JEDEN Rest an
+  // In-Memory-Zustand zurueck (u. a. den Haushalts-Schluessel in crypto.js), was bei einem
+  // serverseitig bereits ungueltig gewordenen Zustand sicherer ist als der Versuch, alle
+  // Einzelteile von `state` manuell zurueckzusetzen.
+  if (res.status === 401) { location.href = 'index.html'; throw new Error('Nicht angemeldet'); }
   const json = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(json.error || 'Fehler'); e.status = res.status; e.payload = json; throw e; }
   return json;
@@ -74,10 +142,271 @@ async function api(method, url, body) {
 // nicht mehr parsen koennen.
 async function apiForm(method, url, formData) {
   const res = await fetch(url, { method, body: formData, credentials: 'same-origin' });
-  if (res.status === 401) { location.href = 'login.html'; throw new Error('Nicht angemeldet'); }
+  if (res.status === 401) { location.href = 'index.html'; throw new Error('Nicht angemeldet'); }
   const json = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(json.error || 'Fehler'); e.status = res.status; e.payload = json; throw e; }
   return json;
+}
+// Schlanke eigene fetch()-Hilfsfunktion nur fuer GET /api/me im initialen boot()-Check (siehe dort):
+// bewusst NICHT api(), deren 401-Behandlung einen Redirect ausloest -- hier ist ein 401 aber der
+// ERWARTETE, normale "nicht angemeldet"-Fall (zeigt die Login-Ansicht), kein Sitzungsfehler.
+async function fetchMe() {
+  const res = await fetch('/api/me', { credentials: 'same-origin' });
+  const json = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, json };
+}
+// Ebenso eigene, schlanke POST-Hilfsfunktion fuer die drei Auth-Formulare (Login/Registrierung/
+// Passwort-Wiederherstellung, siehe wireAuthForms()) -- aus demselben Grund nicht api(): 401 ist bei
+// "/api/auth/login" (falsches Passwort) und "/api/auth/recover"/"/api/auth/password-reset" (falscher
+// Code) eine erwartete Fehlerantwort, die im Formular angezeigt werden soll, kein Session-Ablauf.
+async function authPost(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                 body: JSON.stringify(body), credentials: 'same-origin' });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || 'Es hat nicht geklappt');
+  return json;
+}
+
+/* ---------------- AP-Merge: Login/Registrierung/Passwort-Wiederherstellung ----------------
+ * Ehemals login.html/login.js (entfallen, siehe Git-Historie) -- 1:1 uebernommene Logik, jetzt
+ * gegen das Markup von #authWrap (index.html) verdrahtet. wireAuthForms() wird EINMALIG aus boot()
+ * aufgerufen, unabhaengig vom Ergebnis des anschliessenden /api/me-Checks (die Formulare muessen
+ * bedienbar sein, sobald die Seite laedt -- auch ganz ohne bestehende Sitzung).
+ */
+function wireAuthForms() {
+  const authMsg = (text, cls) => { const m = $('#msg'); m.textContent = text; m.className = 'msg ' + cls; };
+  let inviteMode = false;
+
+  // Tab-Umschaltung (role="tab"/aria-selected/Panel-Sichtbarkeit/Tastaturnavigation) uebernimmt
+  // Bootstraps native Tab-Komponente (data-bs-toggle="tab" im Markup, siehe index.html/#authWrap) --
+  // dieser Code reagiert nur noch auf das von ihr ausgeloeste "shown.bs.tab"-Ereignis, um die eigene
+  // App-Logik (Fehlermeldung zuruecksetzen, inviteMode-Flag) synchron zu halten.
+  $('#tabLogin').addEventListener('shown.bs.tab', () => { $('#msg').className = 'msg'; });
+  $('#tabRegister').addEventListener('shown.bs.tab', () => { $('#msg').className = 'msg'; });
+  $('#tabRecover').addEventListener('shown.bs.tab', () => { $('#msg').className = 'msg'; });
+  $('#modeNew').addEventListener('shown.bs.tab', () => { inviteMode = false; });
+  $('#modeInvite').addEventListener('shown.bs.tab', () => { inviteMode = true; });
+
+  // AP-Merge-Kern (ZANDORs Umsetzungsplan, Schritt 4): nach erfolgreichem POST /api/auth/login im
+  // SELBEN Tick GET /api/me, danach sofort unlockHousehold() mit dem Passwort, das noch im
+  // Formularfeld steht -- kein zweiter "Entsperren"-Dialog mehr. continueBootAuthenticated()
+  // schaltet die DOM-Ansicht erst um, NACHDEM der Haushalts-Schluessel (falls vorhanden) entpackt
+  // wurde, und faehrt danach mit dem restlichen Boot-Vorgang (Woche laden, Sweep, Event-Verdrahtung)
+  // fort -- exakt einmal pro Seitenaufruf, siehe boot().
+  $('#formLogin').onsubmit = async e => {
+    e.preventDefault();
+    const password = $('#lp').value;
+    try {
+      await authPost('/api/auth/login', { email: $('#le').value, password });
+      const me = await api('GET', '/api/me');
+      await continueBootAuthenticated(me, password);
+      // Bewusst reportAuthFlowError() statt authMsg() im catch: ein Fehler (z. B. falsches
+      // Passwort) VOR continueBootAuthenticated() landet damit weiterhin in #msg (Auth-Ansicht
+      // noch sichtbar), ein Fehler DANACH (z. B. loadWeek() schlaegt direkt nach dem Login fehl,
+      // #appShell bereits sichtbar) landet stattdessen sichtbar in der Werkzeugleiste statt
+      // unbemerkt im dann bereits ausgeblendeten #authWrap.
+    } catch (err) { reportAuthFlowError(err); }
+  };
+
+  /* ---------------- AP2.1: Verschluesselungs-Bootstrap bei der Registrierung ----------------
+   * Nur fuer den Zweig "Neuer Haushalt" (kein Einladungscode) -- Bootstrap fuer ein Mitglied, das
+   * einer bereits verschluesselten Bestandsfamilie beitritt, ist AP2.3 (server.js weist das mit
+   * einer klaren Fehlermeldung ab, siehe dortiger Kommentar).
+   *
+   * Reihenfolge bewusst: ALLES Kryptografische (Haushalts-Schluessel, beide Wraps, Wieder-
+   * herstellungscode) entsteht HIER, bevor der Server ueberhaupt kontaktiert wird -- der Server
+   * bekommt nur das fertige Ergebnis (Ciphertext-Bytes), nie den Haushalts-Schluessel, das Passwort-
+   * abgeleitete Zwischenergebnis oder den Wiederherstellungscode selbst.
+   */
+  async function buildCryptoBootstrap(password) {
+    await WPCrypto.ready;
+    const householdKey = await WPCrypto.generateHouseholdKey();
+    // AP-Merge-Fix (ZANDORs Umsetzungsplan, Schritt 5 -- Nebenfund): der frisch erzeugte Haushalts-
+    // Schluessel wurde hier frueher am Funktionsende verworfen statt uebernommen, weil nach der
+    // damaligen Seitennavigation (login.html -> index.html) ohnehin ein zweiter, teurer Argon2id-
+    // Lauf im "Entsperren"-Dialog folgte. Beides entfaellt jetzt: Schluessel sofort uebernehmen,
+    // continueBootAuthenticated() erkennt WPCrypto.hasHouseholdKey() und ueberspringt jeden weiteren
+    // Bootstrap-/Entsperren-Dialog.
+    WPCrypto.setHouseholdKey(householdKey);
+
+    const pwSalt = await WPCrypto.generateSalt();
+    const kdfParams = WPCrypto.defaultKdfParams();
+    const pwWrapKey = await WPCrypto.deriveWrapKey(password, pwSalt, kdfParams);
+    const pwWrap = await WPCrypto.wrapKey(householdKey, pwWrapKey);
+
+    const recoveryCode = await WPCrypto.generateRecoveryCode();
+    const normalizedCode = WPCrypto.normalizeRecoveryCode(recoveryCode);
+    const rcSalt = await WPCrypto.generateSalt();
+    const rcWrapKey = await WPCrypto.deriveWrapKey(normalizedCode, rcSalt, kdfParams);
+    const rcWrap = await WPCrypto.wrapKey(householdKey, rcWrapKey);
+
+    // AP2.6 (ap1.2-datenmodell.md Abschnitt 2.2a, MORROW/ZANDOR): zweiter, von wrap_key
+    // UNABHAENGIGER Argon2id-Output DESSELBEN Codes -- eigenes Salt (Domain-Separation), sonst
+    // identische Kostenparameter. Dieser "verifier" ist der EINZIGE der vier hier erzeugten Werte,
+    // der jemals (roh, per TLS) den Browser verlaesst -- beim Passwort-Reset weiter unten. Der
+    // Server hasht ihn selbst (SHA-256) und kann damit spaeter die Code-Kenntnis pruefen, ohne
+    // wrap_key oder den Haushalts-Schluessel je zu sehen.
+    const verifierSalt = await WPCrypto.generateSalt();
+    const verifier = await WPCrypto.deriveWrapKey(normalizedCode, verifierSalt, kdfParams);
+
+    return {
+      recoveryCode,
+      crypto: {
+        passwordWrap: { wrappedKey: WPCrypto.toB64(pwWrap.wrappedKey), wrapNonce: WPCrypto.toB64(pwWrap.nonce),
+          kdfSalt: WPCrypto.toB64(pwSalt), kdfAlgo: kdfParams.algo,
+          kdfTimeCost: kdfParams.opslimit, kdfMemoryCost: kdfParams.memlimit, kdfParallelism: kdfParams.parallelism },
+        recoveryWrap: { wrappedKey: WPCrypto.toB64(rcWrap.wrappedKey), wrapNonce: WPCrypto.toB64(rcWrap.nonce),
+          kdfSalt: WPCrypto.toB64(rcSalt), kdfAlgo: kdfParams.algo,
+          kdfTimeCost: kdfParams.opslimit, kdfMemoryCost: kdfParams.memlimit, kdfParallelism: kdfParams.parallelism },
+        recoveryVerifier: { verifierSalt: WPCrypto.toB64(verifierSalt), verifier: WPCrypto.toB64(verifier) }
+      }
+    };
+  }
+
+  $('#formRegister').onsubmit = async e => {
+    e.preventDefault();
+    const password = $('#rp').value;
+    const body = { name: $('#rn').value, email: $('#re').value, password };
+    if (inviteMode) {
+      body.inviteCode = $('#ri').value.trim().toUpperCase();
+    } else {
+      body.householdName = $('#rh').value.trim() || ('Haushalt ' + $('#rn').value);
+      try {
+        const bootstrap = await buildCryptoBootstrap(password);
+        body.crypto = bootstrap.crypto;
+        body._recoveryCode = bootstrap.recoveryCode; // nur lokal verwendet, siehe unten -- NIE Teil des Requests
+      } catch (err) {
+        authMsg('Verschluesselung konnte nicht vorbereitet werden: ' + err.message, 'err');
+        return;
+      }
+    }
+    const recoveryCode = body._recoveryCode;
+    delete body._recoveryCode;
+    try {
+      const result = await authPost('/api/auth/register', body);
+      if (result.householdEncrypted && recoveryCode) {
+        await showRecoveryCodeOnce(recoveryCode, 'first');
+      }
+      const me = await api('GET', '/api/me');
+      // Kein Passwort-Parameter hier (anders als beim Login oben): buildCryptoBootstrap() hat den
+      // Haushalts-Schluessel bereits per WPCrypto.setHouseholdKey() uebernommen (nur Zweig "Neuer
+      // Haushalt") -- continueBootAuthenticated() erkennt das und ueberspringt jeden Entsperren-/
+      // Bootstrap-Dialog. Im Einladungs-Zweig (inviteMode) gibt es dagegen bislang gar keine
+      // Client-Verschluesselung (state.crypto.encryptionStatus bleibt 'plaintext', siehe
+      // server.js) -- dort greift wie bisher der promptBootstrapExisting()-Fluss.
+      await continueBootAuthenticated(me);
+      // Siehe Kommentar bei formLogin oben: reportAuthFlowError() statt authMsg(), damit ein Fehler
+      // NACH dem DOM-Wechsel zur App-Shell nicht unbemerkt im dann ausgeblendeten #authWrap landet.
+    } catch (err) { reportAuthFlowError(err); }
+  };
+
+  /* ---------------- AP2.6: Passwort-Reset via Wiederherstellungscode (ap1.2-datenmodell.md
+   * Abschnitt 7a) ----------------
+   * Schritt 1 (dieser Handler): rein lokal -- POST /api/auth/recover liefert die AEAD-geschuetzten
+   * Wrap-Felder + recoveryVerifierSalt (NICHT recovery_verifier_hash, der bleibt server-intern).
+   * Der Client entpackt lokal den Haushalts-Schluessel (wirft bei falschem Code automatisch, kein
+   * Server-Roundtrip fuer DIESE Pruefung noetig) und leitet zusaetzlich den "verifier" ab (zweiter,
+   * unabhaengiger Argon2id-Output desselben Codes, eigenes Salt). Schritt 2 (siehe
+   * #recoverStep2Submit unten) sendet ausschliesslich diesen verifier (nie den Code selbst, nie
+   * wrap_key, nie den Haushalts-Schluessel) an POST /api/auth/password-reset.
+   */
+  let recoverState = null; // { email, householdKey, verifier } -- ausschliesslich zwischen Schritt 1 und 2 gehalten
+
+  $('#formRecover').onsubmit = async e => {
+    e.preventDefault();
+    const email = $('#cve').value.trim().toLowerCase();
+    const codeInput = WPCrypto.normalizeRecoveryCode($('#cvc').value);
+    authMsg('Prüfe …', '');
+    $('#recoverStep1Submit').disabled = true;
+    try {
+      const wrapInfo = await authPost('/api/auth/recover', { email });
+
+      await WPCrypto.ready;
+      const kdfParams = {
+        algo: wrapInfo.kdfAlgo, opslimit: wrapInfo.kdfTimeCost, memlimit: wrapInfo.kdfMemoryCost,
+        parallelism: wrapInfo.kdfParallelism
+      };
+      const wrapKeyBytes = await WPCrypto.deriveWrapKey(codeInput, WPCrypto.fromB64(wrapInfo.kdfSalt), kdfParams);
+      let householdKey;
+      try {
+        householdKey = await WPCrypto.unwrapKey(
+          WPCrypto.fromB64(wrapInfo.wrappedKey), WPCrypto.fromB64(wrapInfo.wrapNonce), wrapKeyBytes);
+      } catch {
+        authMsg('Dieser Wiederherstellungscode passt nicht zu dieser E-Mail-Adresse (oder ist falsch eingegeben).', 'err');
+        return;
+      }
+
+      // Zweiter, unabhaengiger Argon2id-Output desselben Codes (eigenes Salt) -- das ist der Wert,
+      // den Schritt 2 an den Server schickt. Die lokale AEAD-Unwrap-Pruefung oben ist bereits der
+      // vollstaendige Nachweis "Code korrekt" fuer den Nutzer -- der verifier dient ausschliesslich
+      // dazu, dass der SERVER dieselbe Kenntnis unabhaengig pruefen kann.
+      const verifier = await WPCrypto.deriveWrapKey(codeInput, WPCrypto.fromB64(wrapInfo.recoveryVerifierSalt), kdfParams);
+
+      recoverState = { email, householdKey, verifier };
+      authMsg('Code korrekt — bitte jetzt ein neues Passwort festlegen.', 'ok');
+      $('#recoverStep1').hidden = true;
+      $('#recoverStep2').hidden = false;
+      $('#cvnp').focus();
+    } catch (err) {
+      authMsg(err.message, 'err');
+    } finally {
+      $('#recoverStep1Submit').disabled = false;
+    }
+  };
+
+  $('#recoverStep2Submit').onclick = async () => {
+    if (!recoverState) return;
+    const newPassword = $('#cvnp').value;
+    const newPassword2 = $('#cvnp2').value;
+    if (newPassword.length < 10) { authMsg('Das neue Passwort muss mindestens 10 Zeichen haben.', 'err'); return; }
+    if (newPassword !== newPassword2) { authMsg('Die beiden Passwörter stimmen nicht überein.', 'err'); return; }
+
+    $('#recoverStep2Submit').disabled = true;
+    authMsg('Setze neues Passwort …', '');
+    try {
+      const kdfParams = WPCrypto.defaultKdfParams();
+      const newSalt = await WPCrypto.generateSalt();
+      const newWrapKey = await WPCrypto.deriveWrapKey(newPassword, newSalt, kdfParams);
+      const newWrapped = await WPCrypto.wrapKey(recoverState.householdKey, newWrapKey);
+
+      await authPost('/api/auth/password-reset', {
+        email: recoverState.email,
+        verifier: WPCrypto.toB64(recoverState.verifier),
+        newPassword,
+        passwordWrap: {
+          wrappedKey: WPCrypto.toB64(newWrapped.wrappedKey), wrapNonce: WPCrypto.toB64(newWrapped.nonce),
+          kdfSalt: WPCrypto.toB64(newSalt), kdfAlgo: kdfParams.algo,
+          kdfTimeCost: kdfParams.opslimit, kdfMemoryCost: kdfParams.memlimit, kdfParallelism: kdfParams.parallelism
+        }
+      });
+
+      // ZANDORs Vorgabe 3: keine stille Verifier-Rotation. Stattdessen hinterlassen wir einen
+      // harmlosen Merker (KEIN Schluesselmaterial -- nur die E-Mail-Adresse als Erinnerung, siehe
+      // forceRecoveryCodeRegenerationIfNeeded()) fuer den naechsten Login: dort wird der Nutzer
+      // zwingend zur Neu-Erzeugung des Wiederherstellungscodes aufgefordert, bevor die App normal
+      // nutzbar wird. localStorage ist hier bewusst unkritisch (anders als der Haushalts-
+      // Schluessel, der NIE in eine Web-Storage-API darf).
+      localStorage.setItem('wp_force_recovery_regen', recoverState.email);
+
+      recoverState = null;
+      $('#cvnp').value = ''; $('#cvnp2').value = ''; $('#cvc').value = '';
+      $('#recoverStep2').hidden = true;
+      $('#recoverStep1').hidden = false;
+      $('#tabLogin').click(); // zurueck zum Login-Tab -- bewusst KEIN automatischer Login, siehe server.js
+      authMsg('Passwort erfolgreich zurückgesetzt. Bitte jetzt mit dem neuen Passwort anmelden.', 'ok');
+    } catch (err) {
+      authMsg(err.message, 'err');
+    } finally {
+      $('#recoverStep2Submit').disabled = false;
+    }
+  };
+
+  fetch('/api/config').then(r => r.json()).then(cfg => {
+    if (!cfg.allowRegistration) {
+      $('#tabRegister').disabled = true;
+      $('#regHint').textContent = 'Neue Konten sind auf diesem Server deaktiviert. Lass dich von einem Familienmitglied einladen.';
+    }
+  });
 }
 
 /* ---------------- AP2.1: Ende-zu-Ende-Verschluesselung ----------------
@@ -99,7 +428,7 @@ async function unlockHousehold(password) {
 // Zeigt den "Entsperren"-Dialog (index.html) und loest das zurueckgegebene Promise erst auf,
 // nachdem unlockHousehold() tatsaechlich erfolgreich war -- boot() wartet darauf, bevor irgendeine
 // Woche geladen wird (siehe dort). ESC/Backdrop-Abbruch bewusst blockiert (siehe Kommentar bei
-// showRecoveryCodeOnce() in login.js, identisches Muster): ohne Schluessel liesse sich keine
+// showRecoveryCodeOnce() weiter unten, identisches Muster): ohne Schluessel liesse sich keine
 // Woche sinnvoll darstellen, ein abgebrochener Dialog wuerde die App in einem toten Zustand lassen.
 function promptUnlock() {
   return new Promise(resolve => {
@@ -157,7 +486,7 @@ function buildWrapPayload(wrappedKey, nonce, salt, kdfParams) {
 // uebertragen, ap1.2-datenmodell.md Abschnitt 2.3/4.2) -- danach werden Wiederherstellungscode
 // UND die Aktivierungscodes fuer die anderen Mitglieder einmalig angezeigt. Loest erst auf, wenn
 // die Bestaetigungs-Checkbox tatsaechlich abgehakt wurde (siehe showRecoveryCodeOnce()-Kommentar
-// in login.js, identisches Prinzip); der Haushalts-Schluessel liegt danach bereits im Speicher.
+// weiter unten, identisches Prinzip); der Haushalts-Schluessel liegt danach bereits im Speicher.
 function promptBootstrapExisting() {
   return new Promise(resolve => {
     const dlg = $('#bootstrapDialog');
@@ -195,7 +524,7 @@ function promptBootstrapExisting() {
 
         // AP2.6 (ap1.2-datenmodell.md Abschnitt 2.2a): zweiter, unabhaengiger Argon2id-Output
         // desselben Codes mit eigenem Salt -- der "verifier", siehe Kommentar in
-        // login.js/buildCryptoBootstrap() fuer die identische Herleitung beim Neu-Haushalt-Fall.
+        // wireAuthForms()/buildCryptoBootstrap() fuer die identische Herleitung beim Neu-Haushalt-Fall.
         const verifierSalt = await WPCrypto.generateSalt();
         const verifier = await WPCrypto.deriveWrapKey(normalizedCode, verifierSalt, kdfParams);
 
@@ -307,13 +636,14 @@ function promptActivatePending() {
         // Sofortiger Re-Wrap mit dem eigenen, bereits bekannten Login-Passwort -- das
         // Aktivierungsgeheimnis selbst wird nach diesem Schritt nicht mehr gebraucht (der
         // pending-Wrap wird serverseitig auf revoked_at gesetzt, siehe /api/crypto/activate).
-        // Das Passwort liegt hier bereits vor: der Login-Vorgang selbst (login.html) hat es
-        // bereits per bcrypt server-authentifiziert, wird aber -- wie beim urspruenglichen
-        // Registrierungs-Bootstrap (AP2.1) -- ein zweites Mal fuer die KDF gebraucht. Da
-        // login.html/index.html getrennte JS-Kontexte sind (siehe Kommentar bei unlockHousehold()),
-        // fragen wir es hier ein zweites Mal ab -- ueber dasselbe Formularfeld wie beim normalen
-        // Entsperren-Dialog waere ein Bruch der Aktivierungs-UX; stattdessen nutzen wir den bereits
-        // eingegebenen Aktivierungscode NICHT als Passwort-Ersatz, sondern fragen explizit nach.
+        // AP-Merge (ZANDORs Umsetzungsplan, Schritt 3, Randfall "pendingWrap"): dieser Dialog bleibt
+        // bewusst UNVERAENDERT -- anders als beim normalen Entsperren (promptUnlock(), siehe
+        // continueBootAuthenticated()) wird das Passwort hier weiterhin explizit ueber
+        // promptPasswordForRewrap() erneut abgefragt, statt es aus dem (inzwischen im selben
+        // JS-Kontext liegenden) Login-Formularfeld zu uebernehmen. Grund: dieser Fluss betrifft nur
+        // das seltene, einmalige "Nachzuegler-Mitglied wird erstmals aktiviert"-Szenario; das
+        // bereits eingegebene Aktivierungscode-Feld ist zudem KEIN Passwort-Ersatz, ueber dasselbe
+        // Formularfeld wie beim normalen Entsperren-Dialog waere ein Bruch der Aktivierungs-UX.
         const newKdfParams = WPCrypto.defaultKdfParams();
         const salt = await WPCrypto.generateSalt();
         const password = await promptPasswordForRewrap();
@@ -2851,7 +3181,13 @@ function initAccountView() {
     // das Verlassen der Seite verzoegert, bleibt der Schluessel damit nicht laenger als noetig
     // im Speicher.
     WPCrypto.clearHouseholdKey();
-    location.href = 'login.html';
+    // AP-Merge: Ziel ist jetzt index.html (der alleinige Einstiegspunkt) statt des entfallenen
+    // login.html. Bewusst ein voller Seiten-Reload statt eines reinen In-Page-Wechsels zu
+    // #authWrap (obwohl technisch moeglich): setzt zuverlaessig JEDEN Rest an clientseitigem
+    // Zustand zurueck (state.data/state.recipes/alle Event-Handler-Closures usw.), statt jedes
+    // einzelne Feld von Hand zuruecksetzen zu muessen -- konsistent mit dem 401-Handling in api()
+    // oben, das aus demselben Grund ebenfalls auf index.html neu laedt.
+    location.href = 'index.html';
   };
 
   // AP2.6: Passwort-Aendern/Wiederherstellungscode-Karten brauchen einen bereits entsperrten
@@ -2923,13 +3259,51 @@ function initAccountPasswordForm() {
   };
 }
 
-// Zeigt einen (neu erzeugten) Wiederherstellungscode EINMALIG an -- gemeinsam genutzt von
-// initAccountRecoveryRegen() (freiwillig, ueber die Konto-Ansicht) und
-// forceRecoveryCodeRegeneration() (zwingend nach einem Passwort-Reset, siehe boot()). Identisches
-// Blockier-Muster wie login.js/showRecoveryCodeOnce(): kein Abbrechen vor Bestaetigung.
-function showRecoveryCodeOnce(code) {
+// AP-Merge (ZANDORs Umsetzungsplan, Schritt 2 -- Voraussetzung fuer die Zusammenfuehrung): login.html
+// und index.html definierten #recoveryCodeDialog frueher unabhaengig voneinander mit identischen
+// IDs. Seit der Zusammenfuehrung gibt es nur noch DIESEN EINEN Dialog (index.html) fuer DREI
+// Aufrufkontexte -- Text/Beschriftung unterscheiden sich inhaltlich leicht (erster jemals erzeugter
+// Code vs. Rotation eines bestehenden Codes), daher hier je Variante hinterlegt statt im Markup fest
+// codiert.
+const RECOVERY_DIALOG_TEXT = {
+  // Registrierung eines neuen Haushalts (wireAuthForms()/#formRegister) -- der allererste Code,
+  // es gibt noch keinen "bisherigen" Code, der ersetzt wuerde.
+  first: {
+    title: 'Dein Wiederherstellungscode',
+    sub: 'Nur jetzt sichtbar — bitte sicher aufbewahren (z. B. Passwort-Manager oder Ausdruck).',
+    intro: 'Dieser Code gilt für euren <strong>ganzen Haushalt</strong> und entsperrt eure Termine ' +
+      'unabhängig vom Passwort — z. B. wenn ihr das Passwort vergesst. Ohne Passwort <em>und</em> ' +
+      'ohne diesen Code können eure verschlüsselten Termine <strong>niemand mehr</strong> lesen, ' +
+      'auch wir als Betreiber nicht.',
+    confirmLabel: 'Ich habe den Code sicher gespeichert.'
+  },
+  // Freiwillige Rotation (initAccountRecoveryRegen()) ODER zwingende Rotation nach einem
+  // Passwort-Reset (forceRecoveryCodeRegenerationIfNeeded()) -- ersetzt einen bereits bestehenden
+  // Code, Standardtext (deckungsgleich mit dem bisherigen Markup).
+  regenerate: {
+    title: 'Neuer Wiederherstellungscode',
+    sub: 'Nur jetzt sichtbar — bitte sicher aufbewahren und an alle Haushaltsmitglieder weitergeben.',
+    intro: 'Dieser Code gilt für euren <strong>ganzen Haushalt</strong> und ersetzt jeden bisherigen ' +
+      'Code — der alte Code funktioniert ab sofort nicht mehr. Ohne Passwort <em>und</em> ohne ' +
+      'diesen Code können eure verschlüsselten Termine <strong>niemand mehr</strong> lesen, auch ' +
+      'wir als Betreiber nicht.',
+    confirmLabel: 'Ich habe den Code sicher gespeichert/weitergegeben.'
+  }
+};
+
+// Zeigt einen Wiederherstellungscode EINMALIG an -- gemeinsam genutzt von der Registrierung
+// (wireAuthForms(), variant='first'), initAccountRecoveryRegen() (freiwillig, ueber die
+// Konto-Ansicht) und forceRecoveryCodeRegenerationIfNeeded() (zwingend nach einem Passwort-Reset,
+// beide variant='regenerate', der Default). Kein Abbrechen vor Bestaetigung (ESC/Backdrop
+// abgefangen) -- der Code darf nicht versehentlich uebersehen werden, bevor der Dialog verschwindet.
+function showRecoveryCodeOnce(code, variant = 'regenerate') {
   return new Promise(resolve => {
+    const text = RECOVERY_DIALOG_TEXT[variant];
     const dlg = $('#recoveryCodeDialog');
+    $('#rcdTitle').textContent = text.title;
+    $('#rcdSub').textContent = text.sub;
+    $('#rcdIntro').innerHTML = text.intro;
+    $('#recoveryCodeConfirmLabel').textContent = text.confirmLabel;
     $('#recoveryCodeOut').textContent = code;
     const checkbox = $('#recoveryCodeConfirm');
     const btn = $('#recoveryCodeContinue');
@@ -2995,10 +3369,10 @@ function initAccountRecoveryRegen() {
 }
 
 // AP2.6, Teil B (ZANDORs Vorgabe 3): direkt nach einem erfolgreichen Passwort-Reset via
-// Wiederherstellungscode (login.js) hinterlaesst login.js einen harmlosen Merker in localStorage
-// (KEIN Schluesselmaterial, siehe dortiger Kommentar) -- beim naechsten normalen Login wird der
-// Nutzer dadurch HIER zwingend zur Neu-Erzeugung des Codes aufgefordert, bevor die App normal
-// nutzbar wird (keine stille/automatische Rotation, siehe ap1.2-datenmodell.md Abschnitt 7a).
+// Wiederherstellungscode hinterlaesst wireAuthForms()/#recoverStep2Submit einen harmlosen Merker in
+// localStorage (KEIN Schluesselmaterial, siehe dortiger Kommentar) -- beim naechsten normalen Login
+// wird der Nutzer dadurch HIER zwingend zur Neu-Erzeugung des Codes aufgefordert, bevor die App
+// normal nutzbar wird (keine stille/automatische Rotation, siehe ap1.2-datenmodell.md Abschnitt 7a).
 async function forceRecoveryCodeRegenerationIfNeeded() {
   const marker = localStorage.getItem('wp_force_recovery_regen');
   if (!marker || marker !== state.user.email) return;
@@ -3017,37 +3391,75 @@ function setView(view) {
   if (state.data) renderAll();
 }
 
-async function boot() {
-  injectSprite();
-  buildPalette();
-  buildLegend();
-
-  const me = await api('GET', '/api/me');
+/* ---------------- AP-Merge: gemeinsame Fortsetzung nach erfolgreicher Authentifizierung ----------------
+ * Ehemals der zweite (groessere) Teil von boot() direkt nach "GET /api/me" -- jetzt ausgelagert,
+ * damit boot() (bereits bestehende Sitzung beim Laden) UND der Login-/Registrierungs-Erfolgsfall
+ * (wireAuthForms(), noch im selben Tick wie "POST /api/auth/login"/"POST /api/auth/register") exakt
+ * denselben, garantiert nur EINMAL pro Seitenaufruf laufenden Fortsetzungscode nutzen -- inklusive
+ * der kompletten, sonst dupliziert zu pflegenden Event-Verdrahtung ganz unten.
+ * freshPassword: nur vom Login-Handler gesetzt (das Passwort steht dort noch im Formularfeld) --
+ * ermoeglicht das direkte Entsperren ohne zweiten Dialog (ZANDORs Umsetzungsplan, Schritt 4).
+ */
+async function continueBootAuthenticated(me, freshPassword) {
   state.user = me.user;
   state.crypto = me.crypto;
   $('#householdName').textContent = me.user.householdName;
   initAccountView(); // AP2.2b: einmalige Verdrahtung der neuen Konto-Ansicht, siehe dortiger Kommentar
 
-  // AP2.1/AP2.3: index.html ist ein eigenes Dokument/JS-Kontext gegenueber login.html -- der
-  // Haushalts-Schluessel kann daher nicht "mitgebracht" werden (siehe Kommentar bei
-  // #unlockDialog). Drei sich gegenseitig ausschliessende Faelle, siehe /api/me:
+  // AP2.1/AP2.3, erweitert um AP-Merge (ZANDORs Umsetzungsplan, Schritte 3+4+5): vier sich
+  // gegenseitig ausschliessende Faelle, siehe /api/me:
+  //  0. WPCrypto.hasHouseholdKey() bereits true: der Schluessel liegt schon im Speicher, OHNE dass
+  //     hier noch etwas abgefragt werden muesste -- entweder, weil buildCryptoBootstrap() ihn bei
+  //     einer Neu-Haushalt-Registrierung bereits per setHouseholdKey() uebernommen hat (Schritt 5),
+  //     oder weil dieser Aufruf selbst aus dem Login-Formular kommt und Fall 2 direkt darunter
+  //     bereits erfolgreich entsperrt hat. Kein weiterer Dialog.
   //  1. state.crypto.encryptionStatus==='plaintext': Bestandshaushalt, der die Verschluesselung
-  //     ueberhaupt noch nicht aktiviert hat -- Bootstrap-Fluss (AP2.3).
-  //  2. state.crypto.wrappedKey vorhanden: dieses Konto hat bereits einen eigenen password-Wrap
-  //     (frisch registrierter Haushalt ODER bereits aktiviertes/aktivierendes Bestandsmitglied) --
-  //     normales Entsperren wie in AP2.1.
+  //     ueberhaupt noch nicht aktiviert hat -- Bootstrap-Fluss (AP2.3), UNVERAENDERT (auch direkt
+  //     nach einem gerade erst ausgefuellten Login-Formular, siehe ZANDORs Plan Schritt 3).
+  //  2. state.crypto.wrappedKey vorhanden: dieses Konto hat bereits einen eigenen password-Wrap.
+  //     Kommt "freshPassword" mit (Login-Formular gerade erst abgeschickt), wird DIREKT entsperrt --
+  //     kein zweiter "Entsperren"-Dialog mehr (AP-Merge-Kern, Schritt 4). Schlaegt das unerwartet
+  //     fehl (siehe Fallback unten), oder gibt es kein freshPassword (neuer Tab/Reload/bereits
+  //     bestehende Sitzung ohne vorherigen Login-Durchlauf in DIESEM Aufruf -- die korrekte
+  //     Sicherheitsgarantie laut ZANDORs Plan Schritt 3), bleibt der normale Entsperren-Dialog.
   //  3. state.crypto.pendingWrap vorhanden (aber kein wrappedKey): Nachzuegler-Mitglied eines
-  //     bereits von einem ANDEREN Mitglied aktivierten Haushalts -- Aktivierungs-Fluss (AP2.3).
-  // Ohne einen dieser drei Zustaende bleibt der Haushalt plaintext und keiner der Dialoge wird
+  //     bereits von einem ANDEREN Mitglied aktivierten Haushalts -- Aktivierungs-Fluss (AP2.3),
+  //     UNVERAENDERT.
+  // Ohne einen dieser vier Zustaende bleibt der Haushalt plaintext und keiner der Dialoge wird
   // gezeigt (unveraendertes Verhalten wie vor AP2.1).
-  if (state.crypto?.encryptionStatus === 'plaintext') {
+  if (WPCrypto.hasHouseholdKey()) {
+    // Fall 0, siehe oben -- nichts zu tun.
+  } else if (state.crypto?.encryptionStatus === 'plaintext') {
     await promptBootstrapExisting();
   } else if (state.crypto?.wrappedKey) {
-    await promptUnlock();
+    if (freshPassword) {
+      try {
+        await unlockHousehold(freshPassword);
+      } catch {
+        // In der Praxis sollte das nicht vorkommen: der Server hat dasselbe Passwort im selben
+        // Request bereits per bcrypt bestaetigt (Login-Formularfeld und Wrap-Ableitung teilen sich
+        // dasselbe Passwort). Als Sicherheitsnetz gegen einen unerwarteten Sonderfall (z. B. ein
+        // Wrap, der nicht zum aktuellen Passwort passt) wird hier NICHT stillschweigend
+        // weitergemacht, sondern der regulaere Entsperren-Dialog gezeigt -- besser eine
+        // zusaetzliche Abfrage als eine App-Shell ohne nutzbaren Haushalts-Schluessel.
+        await promptUnlock();
+      }
+    } else {
+      await promptUnlock();
+    }
   } else if (state.crypto?.pendingWrap) {
     await promptActivatePending();
   }
 
+  // AP-Merge (ZANDORs Umsetzungsplan, Schritt 4): DOM-Ansicht von Login/Auth auf die App-Shell
+  // umschalten -- bewusst ERST HIER, nachdem der Haushalts-Schluessel (falls fuer diesen Haushalt
+  // ueberhaupt noetig) bereits gesichert im Speicher liegt bzw. der Bootstrap-/Aktivierungs-Fluss
+  // abgeschlossen ist. Fuer den "bereits beim Laden angemeldet"-Fall (boot() unten) ist die
+  // App-Shell ohnehin die einzig sinnvolle Ziel-Ansicht -- #authWrap wurde dort nie gezeigt.
+  showAppShell();
+
+  // Ab hier unveraendert gegenueber der bisherigen boot()-Reihenfolge (vor der AP-Merge-
+  // Aufspaltung in boot()/continueBootAuthenticated()).
   // AP2.6: siehe Kommentar bei forceRecoveryCodeRegenerationIfNeeded() -- muss NACH dem Entsperren
   // (Haushalts-Schluessel im Speicher) und VOR dem Sweep laufen (ein noch gueltiger Wrap ist keine
   // Voraussetzung fuer den Sweep, aber die Reihenfolge "erst Sicherheit, dann Komfort" ist hier
@@ -3248,6 +3660,35 @@ async function boot() {
     e.preventDefault(); e.returnValue = '';
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden && state.dirty) save(); });
+}
+
+/* ---------------- AP-Merge: Einstiegspunkt ----------------
+ * index.html ist jetzt der alleinige Einstiegspunkt fuer authentifizierte wie unauthentifizierte
+ * Nutzer (ZANDORs Umsetzungsplan, Schritt 1+3): wireAuthForms() macht die Login-/Registrierungs-/
+ * Wiederherstellungs-Formulare unabhaengig vom Sitzungsstatus sofort bedienbar, GET /api/me
+ * entscheidet danach, welche Ansicht gezeigt wird -- 401 (keine Sitzung) zeigt #authWrap, jede
+ * andere Antwort fuehrt direkt in continueBootAuthenticated() (siehe dort fuer die weitere
+ * Verzweigung nach Verschluesselungsstatus).
+ */
+async function boot() {
+  // Synchron VOR dem ersten "await" (also garantiert vor dem ersten Rendern des Browsers, siehe
+  // MDN "Wiederaufnahmepunkte in async-Funktionen"): #appShell sofort ausblenden. Ohne das waeren
+  // #authWrap UND #appShell waehrend der GET /api/me-Ping-Pong-Zeit (Netzwerk-Rundlauf, siehe
+  // fetchMe() unten) kurzzeitig BEIDE sichtbar uebereinander im DOM -- #authWrap ist per eigener
+  // CSS-Regel (.auth-wrap{display:flex}) von Haus aus sichtbar, #appShell traegt Bootstraps
+  // ".d-flex" und waere ohne diesen Aufruf ebenfalls von Anfang an sichtbar.
+  applyAuthMode(true);
+  injectSprite();
+  buildPalette();
+  buildLegend();
+  wireAuthForms();
+
+  const meRes = await fetchMe();
+  if (!meRes.ok) {
+    if (meRes.status === 401) { showAuthView(true); return; }
+    throw new Error(meRes.json?.error || 'Fehler beim Laden');
+  }
+  await continueBootAuthenticated(meRes.json);
 }
 
 boot().catch(err => { console.error(err); setStatus('Fehler beim Laden', 'error'); });

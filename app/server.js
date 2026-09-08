@@ -1798,12 +1798,15 @@ app.delete('/api/admin/households/:id', requireAdminAuth, requireAdminCsrf, wrap
 app.get('/api/me', wrap(async (req, res) => {
   if (!req.session.userId) return res.status(401).json({ error: 'Nicht angemeldet' });
   // AP2.1: LEFT JOIN auf den eigenen aktiven password-Wrap (falls vorhanden) + households.
-  // encryption_status -- der Client (app.js/boot()) braucht das bei JEDEM Seitenaufruf, um zu
-  // wissen, ob/wie er das Passwort erneut abfragen und den Haushalts-Schluessel lokal entpacken
-  // muss (login.html und index.html sind zwei getrennte Dokumente/JS-Kontexte -- der Schluessel
-  // darf laut Risikotabelle des Plans NIE ausserhalb des JS-Arbeitsspeichers der jeweils
-  // LAUFENDEN Seite liegen, kann also nicht einfach von login.html "mitgenommen" werden, siehe
-  // Kommentar in boot()/unlockHousehold() in app.js).
+  // encryption_status -- der Client (app.js/boot()/continueBootAuthenticated()) braucht das bei
+  // JEDEM Seitenaufruf, um zu wissen, ob/wie er das Passwort erneut abfragen und den Haushalts-
+  // Schluessel lokal entpacken muss. Der Schluessel darf laut Risikotabelle des Plans NIE
+  // ausserhalb des JS-Arbeitsspeichers der jeweils LAUFENDEN Seite liegen (kein localStorage/
+  // sessionStorage) -- AP-Merge (Login/App-Shell-Zusammenfuehrung, public/index.html) haelt Login
+  // und App zwar seither im selben Dokument/JS-Kontext, ein neuer Tab/Reload/eine bereits
+  // bestehende Sitzung OHNE vorherigen Login-Durchlauf in DIESEM Browserkontext startet aber
+  // weiterhin einen frischen JS-Kontext ohne den Schluessel im Speicher -- siehe Kommentar bei
+  // continueBootAuthenticated()/unlockHousehold() in app.js.
   // AP2.3: zusaetzlich ein zweiter LEFT JOIN auf den eigenen AUSSTEHENDEN ('pending') Wrap --
   // ein Nachzuegler-Mitglied eines bereits von einem anderen Mitglied aktivierten Haushalts
   // (encryption_status='activating'/'active') hat noch KEINEN password-Wrap, aber einen
@@ -3134,8 +3137,11 @@ app.get('/api/health', wrap(async (req, res) => {
 // ausgeliefert wird, das war zuvor rein zufaellig "index.html". Minimal-invasiv: nur dieser eine
 // Wert geaendert, keine neue Route/kein neues Framework noetig. index.html/login.html (sowie das
 // getrennte Admin-Subsystem admin.html/admin-login.html) bleiben unter ihren bisherigen,
-// expliziten Dateinamen unveraendert erreichbar -- geprueft (login.js/app.js/admin.js leiten
-// durchgaengig ueber explizite Dateinamen weiter, nichts im Code haengt an der nackten Root).
+// expliziten Dateinamen unveraendert erreichbar -- geprueft (app.js/admin.js leiten durchgaengig
+// ueber explizite Dateinamen weiter, nichts im Code haengt an der nackten Root). AP-Merge
+// (Login/App-Shell-Zusammenfuehrung, public/index.html): login.html ist seither nur noch ein
+// duenner Redirect-Stub auf index.html (der alleinige Einstiegspunkt fuer An-/Abmelden UND die
+// App, siehe dortiger Kommentar bei #authWrap) -- login.js ist komplett entfallen.
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h', index: 'landing.html' }));
 
 app.use((req, res) => res.status(404).json({ error: 'Nicht gefunden' }));
