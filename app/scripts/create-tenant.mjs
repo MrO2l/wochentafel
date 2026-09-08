@@ -178,7 +178,15 @@ async function main() {
       `SELECT nextval(pg_get_serial_sequence('households', 'id')) AS id`);
     const householdId = idRes.rows[0].id;
     await client.query(`SELECT set_config('app.current_household_id', $1, true)`, [String(householdId)]);
-    await client.query('INSERT INTO households(id, name) VALUES ($1,$2)', [householdId, householdName]);
+    // AP6.2 (Migration 010_name_encryption.sql, MORROW AP6.1-Datenmodell): households.name/
+    // users.name sind jetzt jsonb statt text -- ein roher JS-String wird von Postgres NICHT
+    // automatisch gequotet und faellt mit "invalid input syntax for type json" durch, daher hier
+    // explizit JSON.stringify(). Ein per CLI angelegter Mandant ist IMMER Klartext (dieses Skript
+    // hat keinen Zugriff auf einen Haushalts-Schluessel, der hier gar nicht existiert) -- als
+    // jsonb-STRING gespeichert, exakt wie ein organisch ueber /api/auth/register registrierter
+    // Klartext-Name (server.js, nameJsonbParam()). Gleiches Muster wie
+    // JSON.stringify(r.ingredients) in import-tenant.mjs weiter unten.
+    await client.query('INSERT INTO households(id, name) VALUES ($1,$2)', [householdId, JSON.stringify(householdName)]);
 
     const passwordHash = await bcrypt.hash(String(password), 12);
     let user;
@@ -186,7 +194,7 @@ async function main() {
       user = await client.query(
         `INSERT INTO users(household_id, email, name, password_hash, role)
          VALUES ($1,$2,$3,$4,'owner') RETURNING id, name, email, role, household_id`,
-        [householdId, email, adminName, passwordHash]);
+        [householdId, email, JSON.stringify(adminName), passwordHash]);
     } catch (err) {
       await client.query('ROLLBACK');
       if (err.code === '23505') {

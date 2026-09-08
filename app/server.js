@@ -593,6 +593,55 @@ function buildTemplateEnvelope(nonce, ciphertext, keyVersion) {
 }
 
 /* ------------------------------------------------------------------ *
+ * AP6.2 (users.name/households.name verschluesseln, MORROW AP6.1-Datenmodell,
+ * migrations/010_name_encryption.sql): identisches Envelope-Muster wie
+ * households.template_data oben -- __enc:true-Diskriminator INNERHALB derselben
+ * jsonb-Spalte (Typ-Umbau text->jsonb statt eigenes Spaltenpaar wie bei weeks.data,
+ * da name ein Singleton-Skalarfeld je Haushalt/Nutzer ist). Verschluesselt wird mit
+ * dem HAUSHALTS-Schluessel (nicht passwortabgeleitet) -- damit kann jedes Mitglied
+ * nach dem eigenen Unlock automatisch auch die Namen der anderen lesen (GET
+ * /api/household/members), ohne zusaetzlichen Schluesselaustausch (ZANDOR-Vorgabe).
+ * Eigene Helfer statt Wiederverwendung von isEncryptedTemplateEnvelope()/
+ * buildTemplateEnvelope(): Pruefslogik ist identisch, ein gemeinsamer Funktionsname
+ * waere hier aber irrefuehrend (betrifft name, nicht template_data).
+ * ------------------------------------------------------------------ */
+function isEncryptedNameEnvelope(value) {
+  return !!value && typeof value === 'object' && value.__enc === true;
+}
+function buildNameEnvelope(nonce, ciphertext, keyVersion) {
+  return { __enc: true, v: 1, keyVersion, nonce: nonce.toString('base64'), ciphertext: ciphertext.toString('base64') };
+}
+
+// Liest ein Namensfeld (users.name/households.name) aus einem Request-Body-Feld: entweder ein
+// Klartext-String (Bestandsclient bzw. Registrierung ohne bereits erzeugten Haushalts-Schluessel)
+// oder ein bereits verschluesseltes Envelope-Request-Objekt {encrypted:true, keyVersion, nonce,
+// ciphertext} (analog zu parseEncryptedPayload() oben, vom Client mit dem lokal erzeugten/
+// entpackten Haushalts-Schluessel gebildet, siehe app.js buildCryptoBootstrap()). Liefert
+// {value: String|Objekt|null} -- value ist der fertige jsonb-Spaltenwert (noch NICHT
+// JSON.stringify()t, siehe nameJsonbParam() unten), null bedeutet "leer/nicht angegeben" (kein
+// Fehler, der Aufrufer entscheidet ueber Pflichtcharakter/Default). {error:true} bedeutet: ein
+// Objekt wurde geschickt, ist aber strukturell kein gueltiges Envelope -- das IST ein Fehlerfall
+// (400), weil ein Objekt hier eindeutig Verschluesselungsabsicht signalisiert.
+function parseNameField(raw, maxLen) {
+  if (raw !== undefined && raw !== null && typeof raw === 'object') {
+    const enc = parseEncryptedPayload(raw);
+    if (!enc) return { error: true };
+    return { value: buildNameEnvelope(enc.nonce, enc.ciphertext, enc.keyVersion) };
+  }
+  const trimmed = str(raw, maxLen).trim();
+  return { value: trimmed || null };
+}
+
+// A3CH-Stolperstein (siehe Migration 010, Spaltenkommentare zu households.name/users.name): ein
+// roher JS-String als Parameter fuer eine jsonb-Spalte wird von Postgres NICHT automatisch
+// gequotet und faellt mit "invalid input syntax for type json" durch -- muss immer durch
+// JSON.stringify() laufen. Ein rohes Envelope-Objekt wuerde node-postgres zwar implizit korrekt
+// serialisieren (kein Array, siehe recipes.ingredients-Gegenbeispiel), aber explizites
+// JSON.stringify() macht das Verhalten unabhaengig von dieser node-postgres-Eigenheit und ist an
+// jeder Schreibstelle konsistent.
+function nameJsonbParam(value) { return JSON.stringify(value); }
+
+/* ------------------------------------------------------------------ *
  * Verschluesselungs-Bootstrap bei der Registrierung (AP2.1) -- prueft
  * ausschliesslich FORM/GROESSE der beiden Wraps (password/recovery_code),
  * die der Client beim Anlegen eines NEUEN Haushalts mitschickt (siehe
@@ -1078,10 +1127,20 @@ app.get('/api/config', (req, res) => res.json({ allowRegistration: ALLOW_REGISTR
 app.post('/api/auth/register', authLimiter, wrap(async (req, res) => {
   if (!ALLOW_REGISTRATION) return res.status(403).json({ error: 'Registrierung ist deaktiviert' });
   const email = String(req.body.email || '').trim().toLowerCase();
-  const name = str(req.body.name, 80).trim() || email.split('@')[0];
   const password = String(req.body.password || '');
-  const householdName = str(req.body.householdName, 80).trim();
   const inviteCode = String(req.body.inviteCode || '').trim().toUpperCase();
+
+  // AP6.2: name/householdName akzeptieren jetzt entweder einen Klartext-String (Bestandsclient,
+  // Einladungs-Beitritt ohne eigenen Haushalts-Schluessel) oder ein bereits verschluesseltes
+  // Envelope-Objekt (crypto-faehiger Client im Neu-Haushalt-Zweig, der den Haushalts-Schluessel
+  // schon VOR diesem Request lokal erzeugt hat, siehe app.js buildCryptoBootstrap()/formRegister).
+  const nameField = parseNameField(req.body.name, 80);
+  if (nameField.error) return res.status(400).json({ error: 'Name hat ein ungueltiges Format' });
+  const name = nameField.value != null ? nameField.value : email.split('@')[0];
+
+  const householdNameField = parseNameField(req.body.householdName, 80);
+  if (householdNameField.error) return res.status(400).json({ error: 'Haushaltsname hat ein ungueltiges Format' });
+  const householdName = householdNameField.value;
 
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Bitte eine gueltige E-Mail-Adresse angeben' });
   if (password.length < 10) return res.status(400).json({ error: 'Das Passwort muss mindestens 10 Zeichen haben' });
@@ -1121,7 +1180,7 @@ app.post('/api/auth/register', authLimiter, wrap(async (req, res) => {
       await setTenantContext(client, newHouseholdId);
       const h = await client.query(
         'INSERT INTO households(id, name) VALUES ($1,$2) RETURNING id',
-        [newHouseholdId, householdName]);
+        [newHouseholdId, nameJsonbParam(householdName)]);
       householdId = h.rows[0].id;
     }
 
@@ -1164,7 +1223,7 @@ app.post('/api/auth/register', authLimiter, wrap(async (req, res) => {
       user = await client.query(
         `INSERT INTO users(household_id, email, name, password_hash, role)
          VALUES ($1,$2,$3,$4,$5) RETURNING id, name, email, role, household_id`,
-        [householdId, email, name, hash, role]);
+        [householdId, email, nameJsonbParam(name), hash, role]);
     } catch (err) {
       await client.query('ROLLBACK');
       if (err.code === '23505') return res.status(409).json({ error: 'Diese E-Mail-Adresse ist bereits registriert' });
@@ -1883,6 +1942,14 @@ app.post('/api/invites', requireAuth, inviteLimiter, rejectForeignHouseholdId, w
 // Liefert die Mitgliederliste des eigenen Haushalts (id/name/email) -- Grundlage dafuer, dass das
 // bootstrappende Mitglied weiss, fuer wen es je einen pending-Wrap erzeugen muss, und welches
 // Aktivierungsgeheimnis zu wem gehoert (Anzeige im Bootstrap-Dialog, app.js).
+// AP6.2: name kann seit Migration 010 ein Envelope-Objekt statt eines Klartext-Strings sein --
+// hier strukturell unkritisch, weil app.js diesen Endpunkt ausschliesslich aus
+// promptBootstrapExisting() aufruft, und zwar NUR waehrend state.crypto.encryptionStatus noch
+// 'plaintext' ist (siehe continueBootAuthenticated()) -- in diesem Zustand existiert household-
+// weit noch gar kein Haushalts-Schluessel, mit dem irgendein Mitgliedsname bereits verschluesselt
+// worden sein koennte. Ein kuenftiger zweiter Aufrufer dieses Endpunkts (z. B. eine sichtbare
+// Mitgliederliste in der Konto-Ansicht) muesste member.name dagegen mit isEncryptedNameEnvelope()
+// pruefen und clientseitig entschluesseln, bevor er ihn anzeigt.
 app.get('/api/household/members', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
   const q = await withTenantClient(req.session.householdId, client => client.query(
     `SELECT id, name, email FROM users WHERE household_id=$1 ORDER BY id`, [req.session.householdId]));
@@ -2066,6 +2133,42 @@ app.put('/api/account/password', requireAuth, rejectForeignHouseholdId, wrap(asy
 }));
 
 /* ------------------------------------------------------------------ *
+ * AP6.2 (users.name/households.name verschluesseln, MORROW AP6.1-Datenmodell):
+ * Schreibpfad fuer die STILLE Nachverschluesselung von Bestandsnamen (siehe app.js,
+ * resolveUserNames()) -- der Client verschluesselt lokal mit dem bereits entpackten
+ * Haushalts-Schluessel und schreibt hier ausschliesslich fertige Envelope-Objekte zurueck, nie
+ * einen Klartext-String: die Umwandlung Klartext->Envelope ist strukturell nur clientseitig
+ * moeglich, der Server kennt den Haushalts-Schluessel nie (ap6.1-datenmodell.md Abschnitt 3.1).
+ * Beide Felder sind optional und unabhaengig voneinander -- ein Aufruf kann nur name, nur
+ * householdName oder beides mitschicken (z. B. weil nur eines der beiden Felder beim jeweiligen
+ * Nutzer noch als Klartext vorlag). name aktualisiert IMMER nur die eigene users-Zeile
+ * (req.session.userId) -- ein Mitglied kann nie den Namen eines anderen Mitglieds schreiben.
+ * householdName ist dagegen bewusst ein gemeinsames Feld (jedes Mitglied darf es sweepen, exakt
+ * wie beim bestehenden PUT /api/template-Grant auf households, siehe Migration 005/009).
+ * ------------------------------------------------------------------ */
+app.put('/api/account/name', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  const nameEnvelope = req.body.name !== undefined ? parseEncryptedPayload(req.body.name) : null;
+  const householdNameEnvelope = req.body.householdName !== undefined ? parseEncryptedPayload(req.body.householdName) : null;
+  if (req.body.name !== undefined && !nameEnvelope) return res.status(400).json({ error: 'Ungueltiges Envelope fuer name' });
+  if (req.body.householdName !== undefined && !householdNameEnvelope) return res.status(400).json({ error: 'Ungueltiges Envelope fuer householdName' });
+  if (!nameEnvelope && !householdNameEnvelope) return res.status(400).json({ error: 'Kein Feld zum Aktualisieren angegeben' });
+
+  await withTenantClient(req.session.householdId, async client => {
+    if (nameEnvelope) {
+      const stored = buildNameEnvelope(nameEnvelope.nonce, nameEnvelope.ciphertext, nameEnvelope.keyVersion);
+      await client.query('UPDATE users SET name=$1 WHERE id=$2 AND household_id=$3',
+        [nameJsonbParam(stored), req.session.userId, req.session.householdId]);
+    }
+    if (householdNameEnvelope) {
+      const stored = buildNameEnvelope(householdNameEnvelope.nonce, householdNameEnvelope.ciphertext, householdNameEnvelope.keyVersion);
+      await client.query('UPDATE households SET name=$1 WHERE id=$2',
+        [nameJsonbParam(stored), req.session.householdId]);
+    }
+  });
+  res.json({ ok: true });
+}));
+
+/* ------------------------------------------------------------------ *
  * AP2.6, Teil B (ZANDORs Vorgabe 3) -- Wiederherstellungscode NEU erzeugen.
  * Bewusst ein eigener, EXPLIZITER Endpunkt statt einer automatischen/stillen
  * Rotation nach einem Passwort-Reset: eine stille Rotation wuerde den
@@ -2118,6 +2221,12 @@ app.post('/api/crypto/recovery-code', requireAuth, rejectForeignHouseholdId, wra
  * Wochen
  * ------------------------------------------------------------------ */
 app.get('/api/weeks', requireAuth, rejectForeignHouseholdId, wrap(async (req, res) => {
+  // AP6.2: "updatedBy" kann seit Migration 010 ein Envelope-Objekt statt eines Klartext-Strings
+  // sein (u.name ist jetzt jsonb, reiner Passthrough -- node-postgres deserialisiert den
+  // Spaltenwert bereits automatisch in String oder Objekt). Aktuell in der UI nicht dargestellt
+  // (app.js liest dieses Feld derzeit nirgends), daher bewusst keine weitere serverseitige
+  // Behandlung hier -- ein kuenftiger Konsument muesste isEncryptedNameEnvelope() pruefen, bevor
+  // er den Wert anzeigt.
   const q = await withTenantClient(req.session.householdId, client => client.query(
     `SELECT to_char(w.week_start,'YYYY-MM-DD') AS "weekStart", w.updated_at AS "updatedAt", u.name AS "updatedBy"
        FROM weeks w LEFT JOIN users u ON u.id = w.updated_by

@@ -131,6 +131,15 @@
  *     nicht: Owner-/Migrator-Rolle, kein Zugriff auf Nutzerpasswort oder
  *     Wiederherstellungscode). Alle bytea-Werte werden ausschliesslich als
  *     Bytes bewegt (base64-Text <-> Buffer).
+ *
+ * NACHTRAG (AP6.2, projects/wochenplaner-termine-verschluesselung/plan.md,
+ * Migration 010_name_encryption.sql, MORROW AP6.1-Datenmodell):
+ *   - households.name/users.name sind jetzt jsonb statt text (Klartext-String ODER
+ *     Ciphertext-Envelope, identisches __enc:true-Muster wie template_data). srcHousehold.name/
+ *     u.name werden UNVERAENDERT durchgereicht (kein Interpretieren, kein Entschluesseln, gleiches
+ *     Prinzip wie bei template_data oben) -- lediglich JSON.stringify() vor dem INSERT noetig,
+ *     siehe Kommentar bei den beiden betroffenen INSERT-Stellen (Postgres quotiert einen rohen
+ *     JS-String sonst nicht automatisch, "invalid input syntax for type json").
  * ============================================================================ */
 
 import pg from 'pg';
@@ -178,7 +187,7 @@ Voraussetzung: Umgebungsvariable DATABASE_URL (Owner-/Migrator-Rolle) muss
 gesetzt sein -- im Docker-Compose-Stack bereits der Fall. Die Ziel-DB muss
 das Schema aus app/migrations/ bereits enthalten (households/users/weeks/
 invites/recipes/household_key_wraps-Tabellen vorhanden, inkl. Migration
-009_weeks_encryption.sql).
+009_weeks_encryption.sql und 010_name_encryption.sql).
 
 Hinweis: recipes.image_path verweist nur auf einen Dateinamen. Die
 eigentliche Bilddatei wird von diesem Skript NICHT wiederhergestellt --
@@ -330,19 +339,28 @@ async function main() {
     // template_data wird UNVERAENDERT durchgereicht (Klartext-Objekt ODER
     // Ciphertext-Envelope, siehe Kommentar am Dateikopf) -- kein Interpretieren.
     const encryptionStatus = srcHousehold.encryption_status || 'plaintext';
+    // AP6.2 (Migration 010_name_encryption.sql, MORROW AP6.1-Datenmodell): households.name/
+    // users.name sind jetzt jsonb statt text. srcHousehold.name/u.name (unten) sind nach dem
+    // JSON.parse() der STDIN-Eingabe entweder ein JS-String (Legacy-Klartext) oder ein Envelope-
+    // Objekt ({__enc:true, nonce, ciphertext, keyVersion}) -- dasselbe Feld, das export-tenant.mjs
+    // unveraendert aus der jsonb-Spalte ausgelesen hat. Ein roher JS-String wird von Postgres NICHT
+    // automatisch gequotet ("invalid input syntax for type json"), daher hier explizit
+    // JSON.stringify() fuer BEIDE Faelle -- reine Byte-/JSON-Bewegung, dieses Skript ent-/
+    // verschluesselt nichts (siehe Kommentar am Dateikopf), analog zu JSON.stringify(r.ingredients)
+    // weiter unten.
     let newHouseholdId;
     if (forcedHouseholdId !== null) {
       await client.query(
         `INSERT INTO households (id, name, template_data, encryption_status, created_at, migrated_from_instance, migrated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [forcedHouseholdId, srcHousehold.name, srcHousehold.template_data, encryptionStatus,
+        [forcedHouseholdId, JSON.stringify(srcHousehold.name), srcHousehold.template_data, encryptionStatus,
           srcHousehold.created_at, srcHousehold.migrated_from_instance, srcHousehold.migrated_at]);
       newHouseholdId = forcedHouseholdId;
     } else {
       const res = await client.query(
         `INSERT INTO households (name, template_data, encryption_status, created_at, migrated_from_instance, migrated_at)
          VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-        [srcHousehold.name, srcHousehold.template_data, encryptionStatus, srcHousehold.created_at,
+        [JSON.stringify(srcHousehold.name), srcHousehold.template_data, encryptionStatus, srcHousehold.created_at,
           srcHousehold.migrated_from_instance, srcHousehold.migrated_at]);
       newHouseholdId = res.rows[0].id;
     }
@@ -356,7 +374,7 @@ async function main() {
       const res = await client.query(
         `INSERT INTO users (household_id, email, name, password_hash, role, created_at)
          VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-        [newHouseholdId, u.email, u.name, u.password_hash, u.role, u.created_at]);
+        [newHouseholdId, u.email, JSON.stringify(u.name), u.password_hash, u.role, u.created_at]);
       userIdMap.set(u.id, res.rows[0].id);
     }
 

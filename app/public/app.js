@@ -266,15 +266,30 @@ function wireAuthForms() {
   $('#formRegister').onsubmit = async e => {
     e.preventDefault();
     const password = $('#rp').value;
-    const body = { name: $('#rn').value, email: $('#re').value, password };
+    const nameValue = $('#rn').value;
+    const body = { email: $('#re').value, password };
     if (inviteMode) {
+      // Einladungs-Beitritt: der beitretende Haushalt hat (siehe server.js, Registrierungs-Handler)
+      // noch KEINEN Haushalts-Schluessel, mit dem hier verschluesselt werden koennte -- name bleibt
+      // bewusst Klartext, wird beim naechsten Bootstrap-/Sweep-Durchlauf (AP2.3/AP6.2, siehe
+      // resolveUserNames()) automatisch nachverschluesselt.
+      body.name = nameValue;
       body.inviteCode = $('#ri').value.trim().toUpperCase();
     } else {
-      body.householdName = $('#rh').value.trim() || ('Haushalt ' + $('#rn').value);
+      const householdNameValue = $('#rh').value.trim() || ('Haushalt ' + nameValue);
       try {
         const bootstrap = await buildCryptoBootstrap(password);
         body.crypto = bootstrap.crypto;
         body._recoveryCode = bootstrap.recoveryCode; // nur lokal verwendet, siehe unten -- NIE Teil des Requests
+        // AP6.2 (MORROW AP6.1-Datenmodell): Name/Haushaltsname werden bereits HIER verschluesselt --
+        // buildCryptoBootstrap() hat den frischen Haushalts-Schluessel oben bereits per
+        // WPCrypto.setHouseholdKey() uebernommen, kein zusaetzlicher Request noetig. keyVersion ist
+        // hier immer 1 (frisch erzeugter Schluessel eines neuen Haushalts, keine Rotation).
+        const householdKey = WPCrypto.getHouseholdKey();
+        const nameEnc = await WPCrypto.encryptJSON(householdKey, nameValue);
+        const hnEnc = await WPCrypto.encryptJSON(householdKey, householdNameValue);
+        body.name = { encrypted: true, keyVersion: 1, nonce: nameEnc.nonce, ciphertext: nameEnc.ciphertext };
+        body.householdName = { encrypted: true, keyVersion: 1, nonce: hnEnc.nonce, ciphertext: hnEnc.ciphertext };
       } catch (err) {
         authMsg('Verschluesselung konnte nicht vorbereitet werden: ' + err.message, 'err');
         return;
@@ -3382,6 +3397,64 @@ async function forceRecoveryCodeRegenerationIfNeeded() {
   localStorage.removeItem('wp_force_recovery_regen');
 }
 
+/* ---------------- AP6.2: users.name/households.name entschluesseln + still nachverschluesseln ----------------
+ * Seit Migration 010_name_encryption.sql (MORROW AP6.1-Datenmodell) sind state.user.name/
+ * state.user.householdName entweder ein Klartext-String (Legacy-Bestandsformat) oder ein bereits
+ * verschluesselter Ciphertext-Envelope ({__enc:true, nonce, ciphertext, keyVersion}, mit dem
+ * HAUSHALTS-Schluessel verschluesselt -- exakt dasselbe Muster wie template_data/weeks.data).
+ * Entschluesselt beide Felder IN-PLACE, sodass alle Konsumenten (initAccountView(),
+ * #householdName-Anzeige) danach einfach einen lesbaren String vorfinden, ohne selbst zwischen
+ * Klartext und Envelope unterscheiden zu muessen. Nur sinnvoll aufrufbar, NACHDEM der Haushalts-
+ * Schluessel bereits im Speicher liegt (siehe Aufrufer in continueBootAuthenticated(), nach der
+ * Entsperren-/Bootstrap-/Aktivierungs-Fallunterscheidung) -- ist gar kein Schluessel vorhanden
+ * (Haushalt komplett 'plaintext'), bleiben beide Felder unveraendert Klartext, exakt wie vor
+ * diesem Arbeitspaket.
+ *
+ * Verschluesselt bei dieser Gelegenheit zusaetzlich STILL nach (MORROW-Vorschlag, ap6.1-
+ * datenmodell.md Abschnitt 3.2, hier uebernommen statt eines eigenen, sichtbaren Sweep-Features
+ * wie bei AP2.5): Datenvolumen pro Haushalt/Nutzer ist trivial (zwei Skalarwerte, kein Wochen-
+ * Batch), ein eigenes Fortschritts-UI waere fuer diesen Umfang ueberdimensioniert. Ein Fehlschlag
+ * beim Zurueckschreiben (z. B. Netzwerkfehler) wird nur geloggt, nicht dem Nutzer gemeldet -- der
+ * naechste Login versucht es automatisch erneut, die DB-Zeile bleibt bis dahin unveraendert
+ * Klartext (kein Datenverlust, kein halbfertiger Zwischenzustand moeglich).
+ */
+async function resolveUserNames() {
+  if (!WPCrypto.hasHouseholdKey()) return;
+  const householdKey = WPCrypto.getHouseholdKey();
+  const wasPlaintext = {
+    name: typeof state.user.name === 'string',
+    householdName: typeof state.user.householdName === 'string'
+  };
+
+  async function decryptField(value) {
+    if (!value || typeof value !== 'object' || !value.__enc) return value;
+    try {
+      return await WPCrypto.decryptJSON(householdKey, value.nonce, value.ciphertext);
+    } catch (err) {
+      // Sollte praktisch nie vorkommen (derselbe Haushalts-Schluessel hat auch weeks.data/
+      // template_data bereits erfolgreich entschluesselt) -- Sicherheitsnetz statt Absturz.
+      console.error('Konnte verschluesselten Namen nicht entschluesseln:', err);
+      return '(nicht entschlüsselbar)';
+    }
+  }
+  state.user.name = await decryptField(state.user.name);
+  state.user.householdName = await decryptField(state.user.householdName);
+
+  const sweepBody = {};
+  if (wasPlaintext.name) {
+    const enc = await WPCrypto.encryptJSON(householdKey, state.user.name);
+    sweepBody.name = { encrypted: true, keyVersion: state.crypto?.keyVersion || 1, nonce: enc.nonce, ciphertext: enc.ciphertext };
+  }
+  if (wasPlaintext.householdName) {
+    const enc = await WPCrypto.encryptJSON(householdKey, state.user.householdName);
+    sweepBody.householdName = { encrypted: true, keyVersion: state.crypto?.keyVersion || 1, nonce: enc.nonce, ciphertext: enc.ciphertext };
+  }
+  if (Object.keys(sweepBody).length) {
+    try { await api('PUT', '/api/account/name', sweepBody); }
+    catch (err) { console.error('Stille Namens-Nachverschluesselung fehlgeschlagen (naechster Login versucht es erneut):', err); }
+  }
+}
+
 /* ---------------- Start ---------------- */
 function setView(view) {
   if (state.data) syncFromDOM();
@@ -3403,8 +3476,6 @@ function setView(view) {
 async function continueBootAuthenticated(me, freshPassword) {
   state.user = me.user;
   state.crypto = me.crypto;
-  $('#householdName').textContent = me.user.householdName;
-  initAccountView(); // AP2.2b: einmalige Verdrahtung der neuen Konto-Ansicht, siehe dortiger Kommentar
 
   // AP2.1/AP2.3, erweitert um AP-Merge (ZANDORs Umsetzungsplan, Schritte 3+4+5): vier sich
   // gegenseitig ausschliessende Faelle, siehe /api/me:
@@ -3450,6 +3521,18 @@ async function continueBootAuthenticated(me, freshPassword) {
   } else if (state.crypto?.pendingWrap) {
     await promptActivatePending();
   }
+
+  // AP6.2 (bekannter Umbaupunkt aus ZANDORs Architekturbewertung, urspruenglich app.js:3406):
+  // Name/Haushaltsname duerfen erst AB HIER angezeigt werden -- der Haushalts-Schluessel (falls
+  // fuer diesen Haushalt ueberhaupt vorhanden) liegt ab dieser Stelle garantiert im Speicher, siehe
+  // Fallunterscheidung oben. Vorher wuerde bei einem bereits verschluesselten Haushalt kurzzeitig
+  // der rohe Ciphertext-Envelope statt eines lesbaren Namens angezeigt. resolveUserNames()
+  // entschluesselt state.user.name/state.user.householdName in-place (bleibt bei einem komplett
+  // 'plaintext'-Haushalt ohne Schluessel unveraendert) und verschluesselt Bestandsnamen bei dieser
+  // Gelegenheit still nach (MORROW-Vorschlag ap6.1-datenmodell.md Abschnitt 3.2, siehe dort).
+  await resolveUserNames();
+  $('#householdName').textContent = state.user.householdName;
+  initAccountView(); // AP2.2b: einmalige Verdrahtung der neuen Konto-Ansicht, siehe dortiger Kommentar
 
   // AP-Merge (ZANDORs Umsetzungsplan, Schritt 4): DOM-Ansicht von Login/Auth auf die App-Shell
   // umschalten -- bewusst ERST HIER, nachdem der Haushalts-Schluessel (falls fuer diesen Haushalt

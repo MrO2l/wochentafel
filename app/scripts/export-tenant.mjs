@@ -63,11 +63,27 @@
  * entschluesselt an keiner Stelle etwas und kann es auch nicht: es verbindet
  * ueber die Owner-/Migrator-Rolle ohne Kenntnis irgendeines Nutzerpassworts
  * oder Wiederherstellungscodes.
+ *
+ * NACHTRAG (AP6.2, Migration 010_name_encryption.sql, MORROW AP6.1-Datenmodell):
+ * households.name/users.name sind jetzt jsonb statt text (Klartext-String ODER Ciphertext-
+ * Envelope, identisches __enc:true-Muster wie template_data) -- werden UNVERAENDERT als Teil der
+ * jeweiligen Zeile mit exportiert (kein Interpretieren, kein Entschluesseln noetig, node-postgres
+ * liefert den jsonb-Wert bereits als fertigen JS-String/Objekt). Einzige Anpassung: die
+ * abschliessende Log-Zeile formatiert den Haushaltsnamen jetzt ueber describeHouseholdName()
+ * (siehe unten), damit ein Ciphertext-Envelope dort nicht als nichtssagendes "[object Object]"
+ * erscheint.
  * ============================================================================ */
 
 import pg from 'pg';
 
 const DATABASE_URL = process.env.DATABASE_URL;
+
+// AP6.2: households.name ist seit Migration 010 entweder ein Klartext-String oder ein
+// Ciphertext-Envelope-Objekt -- rein fuer die lesbare Log-Zeile am Ende von main(), keine
+// Auswirkung auf den eigentlichen Export (doc.households wird unveraendert geschrieben).
+function describeHouseholdName(name) {
+  return (name && typeof name === 'object') ? '(verschlüsselt)' : name;
+}
 
 function parseArgs(argv) {
   const args = {};
@@ -220,7 +236,7 @@ async function main() {
 
     process.stdout.write(JSON.stringify(doc));
     console.error(
-      `Export ok: household_id=${householdId} ("${householdsRes.rows[0].name}"), ` +
+      `Export ok: household_id=${householdId} ("${describeHouseholdName(householdsRes.rows[0].name)}"), ` +
       `${usersRes.rowCount} Nutzer, ${weeksRes.rowCount} Wochen, ${invitesRes.rowCount} Einladungen, ` +
       `${recipesRes.rowCount} Rezepte, ${keyWrapsRes.rowCount} Schluessel-Wraps ` +
       `(Haushalt-Verschluesselungsstatus: ${householdsRes.rows[0].encryption_status}).`);
