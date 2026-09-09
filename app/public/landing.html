@@ -226,7 +226,13 @@
      Index; die E-Mail selbst liegt zusaetzlich als E2E-Envelope vor, nur zur Anzeige nach
      Unlock). Einordnung des verbleibenden E-Mail-Zugestaendnisses (Server sieht die
      Klartext-E-Mail kurzzeitig bei Login/Registrierung/Reset zur HMAC-Berechnung) mit
-     ZANDOR abgestimmt. -->
+     ZANDOR abgestimmt.
+     UPDATE 2026-09-09: Rollout-Caveat-Satz ("Bei neu angelegten Haushalten gilt das von
+     Anfang an; bestehende Konten werden bei der naechsten Anmeldung automatisch
+     umgestellt.") entfernt -- Nutzerentscheidung, da der Backfill fuer alle Bestandskonten
+     laengst abgeschlossen ist (siehe AP6.2/AP6.4-Deploy-Logs) und die Migrationshistorie fuer
+     neue Interessenten irrelevant ist. -->
+
 <section class="landing-section landing-security" aria-labelledby="security-h2">
   <div class="container">
     <h2 id="security-h2">Deine Daten: Ende-zu-Ende-verschlüsselt</h2>
@@ -234,8 +240,7 @@
       Termine, Essenspläne, Einkaufslisten sowie dein Name und der Haushaltsname werden
       bereits auf deinem Gerät verschlüsselt, bevor sie zum Server geschickt werden — mit
       einem aus deinem Passwort abgeleiteten Schlüssel (Argon2id) und AEAD-Verschlüsselung
-      (XChaCha20-Poly1305). Bei neu angelegten Haushalten gilt das von Anfang an; bestehende
-      Konten werden bei der nächsten Anmeldung automatisch umgestellt.
+      (XChaCha20-Poly1305).
     </p>
 
     <div class="security-table-wrap">
